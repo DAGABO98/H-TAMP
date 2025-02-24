@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>H-TAMP2</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+  <maintainer email="dgarces@todo.todo">dgarces</maintainer>
+  <license>TODO: License declaration</license>
+
+  <depend>rclpy</depend>
+  <depend>nav2_bringup</depend>
+
+  <!-- Build and run dependencies -->
+  <depend>rclpy</depend>
+  <depend>nav2_bringup</depend>
+  <!-- Add additional dependencies as required by Navigation2, e.g.: -->
+  <depend>nav2_controller</depend>
+  <depend>nav2_planner</depend>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+</package>
