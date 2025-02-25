@@ -1,0 +1,1405 @@
+<sdf version="1.7">
+  <world name="sim_world">
+    <physics name="10ms" type="ode">
+      <max_step_size>0.01</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="libgz-sim-physics-system.so" name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin filename="libgz-sim-user-commands-system.so" name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin filename="libgz-sim-scene-broadcaster-system.so" name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="libdoor.so" name="door">
+    </plugin>
+    <plugin filename="liblift.so" name="lift">
+    </plugin>
+    <scene>
+      <ambient>1 1 1</ambient>
+      <background>0.8 0.8 0.8</background>
+      <grid>false</grid>
+    </scene>
+    <gui fullscreen="0">
+      <window>
+        <width>1000</width>
+        <height>845</height>
+        <style material_theme="Light" material_primary="DeepOrange" material_accent="LightBlue" toolbar_color_light="#f3f3f3" toolbar_text_color_light="#111111" toolbar_color_dark="#414141" toolbar_text_color_dark="#f3f3f3" plugin_toolbar_color_light="#bbdefb" plugin_toolbar_text_color_light="#111111" plugin_toolbar_color_dark="#607d8b" plugin_toolbar_text_color_dark="#eeeeee" />
+        <menus>
+          <drawer default="false">
+          </drawer>
+        </menus>
+      </window>
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.8 0.8 0.8</background_color>
+        <camera_pose>51.201368406120665 -51.916886667913666 10 0 0.6 1.57</camera_pose>
+      </plugin>
+      <plugin filename="EntityContextMenuPlugin" name="Entity context menu">
+        <gz-gui>
+          <property key="state" type="string">floating</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="InteractiveViewControl" name="Interactive view control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CameraTracking" name="Camera Tracking">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="MarkerManager" name="Marker manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="SelectEntities" name="Select Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="Spawn" name="Spawn Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="VisualizationCapabilities" name="Visualization Capabilities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">72</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="left" target="left" />
+            <line own="bottom" target="bottom" />
+          </anchors>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>true</start_paused>
+        <use_event>true</use_event>
+      </plugin>
+      <plugin filename="WorldStats" name="World stats">
+        <gz-gui>
+          <title>World stats</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">110</property>
+          <property type="double" key="width">290</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="right" target="right" />
+            <line own="bottom" target="bottom" />
+          </anchors>
+        </gz-gui>
+        <sim_time>true</sim_time>
+        <real_time>true</real_time>
+        <real_time_factor>true</real_time_factor>
+        <iterations>true</iterations>
+      </plugin>
+      <plugin filename="Shapes" name="Shapes">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">0</property>
+          <property key="y" type="double">0</property>
+          <property key="width" type="double">250</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#666666</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="Lights" name="Lights">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">250</property>
+          <property key="y" type="double">0</property>
+          <property key="width" type="double">150</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#666666</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="TransformControl" name="Transform control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">0</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">250</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="Screenshot" name="Screenshot">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">250</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">50</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CopyPaste" name="CopyPaste">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">300</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">100</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="ComponentInspector" name="Component inspector">
+        <gz-gui>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="EntityTree" name="Entity tree">
+        <gz-gui>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="toggle_charging" name="toggle_charging" />
+      <plugin name="toggle_floors" filename="toggle_floors">
+        <floor name="L1" model_name="FA2_L1">
+          <model name="OpenRobotics/Toilet" />
+          <model name="OpenRobotics/Toilet_2" />
+          <model name="OpenRobotics/Toilet_3" />
+          <model name="OpenRobotics/Toilet_4" />
+          <model name="OpenRobotics/Toilet_5" />
+          <model name="OpenRobotics/Toilet_6" />
+          <model name="OpenRobotics/Toilet_7" />
+          <model name="OpenRobotics/Toilet_8" />
+          <model name="OpenRobotics/Toilet_9" />
+          <model name="OpenRobotics/Toilet_10" />
+          <model name="OpenRobotics/Toilet_11" />
+          <model name="OpenRobotics/Toilet_12" />
+          <model name="OpenRobotics/Toilet_13" />
+          <model name="OpenRobotics/Toilet_14" />
+          <model name="OpenRobotics/Toilet_15" />
+          <model name="OpenRobotics/Toilet_16" />
+          <model name="OpenRobotics/Toilet_17" />
+          <model name="OpenRobotics/Toilet_18" />
+          <model name="OpenRobotics/Toilet_19" />
+          <model name="OpenRobotics/Toilet_20" />
+          <model name="OpenRobotics/Toilet_21" />
+          <model name="OpenRobotics/Toilet_22" />
+          <model name="OpenRobotics/Toilet_23" />
+          <model name="OpenRobotics/Toilet_24" />
+          <model name="OpenRobotics/NurseTable" />
+          <model name="OpenRobotics/NurseTable_2" />
+          <model name="OpenRobotics/Table" />
+          <model name="OpenRobotics/Table_2" />
+          <model name="OpenRobotics/Table_3" />
+          <model name="OpenRobotics/Table_4" />
+          <model name="OpenRobotics/Table_5" />
+          <model name="OpenRobotics/Table_6" />
+          <model name="OpenRobotics/Table_7" />
+          <model name="OpenRobotics/Table_8" />
+          <model name="OpenRobotics/Table_9" />
+          <model name="OpenRobotics/Table_10" />
+          <model name="OpenRobotics/Table_11" />
+          <model name="OpenRobotics/NurseDesk" />
+          <model name="OpenRobotics/NurseTable_3" />
+          <model name="OpenRobotics/BathroomSink" />
+          <model name="OpenRobotics/BathroomSink_2" />
+          <model name="OpenRobotics/BathroomSink_3" />
+          <model name="OpenRobotics/BathroomSink_4" />
+          <model name="OpenRobotics/BathroomSink_5" />
+          <model name="OpenRobotics/BathroomSink_6" />
+          <model name="OpenRobotics/BathroomSink_7" />
+          <model name="OpenRobotics/BathroomSink_8" />
+          <model name="OpenRobotics/BathroomSink_9" />
+          <model name="OpenRobotics/BathroomSink_10" />
+          <model name="OpenRobotics/BathroomSink_11" />
+          <model name="OpenRobotics/BathroomSink_12" />
+          <model name="OpenRobotics/BathroomSink_13" />
+          <model name="OpenRobotics/BathroomSink_14" />
+          <model name="OpenRobotics/BathroomSink_15" />
+          <model name="OpenRobotics/BathroomSink_16" />
+          <model name="OpenRobotics/BathroomSink_17" />
+          <model name="OpenRobotics/BathroomSink_18" />
+          <model name="OpenRobotics/BathroomSink_19" />
+          <model name="OpenRobotics/BathroomSink_20" />
+          <model name="OpenRobotics/BathroomSink_21" />
+          <model name="OpenRobotics/BathroomSink_22" />
+          <model name="OpenRobotics/BathroomSink_23" />
+          <model name="OpenRobotics/BathroomSink_24" />
+          <model name="OpenRobotics/CGMClassic" />
+          <model name="OpenRobotics/CGMClassic_2" />
+          <model name="OpenRobotics/CGMClassic_3" />
+          <model name="OpenRobotics/CGMClassic_4" />
+          <model name="OpenRobotics/CGMClassic_5" />
+          <model name="OpenRobotics/CGMClassic_6" />
+          <model name="OpenRobotics/CGMClassic_7" />
+          <model name="OpenRobotics/CGMClassic_8" />
+          <model name="OpenRobotics/CGMClassic_9" />
+          <model name="OpenRobotics/CGMClassic_10" />
+          <model name="OpenRobotics/CGMClassic_11" />
+          <model name="OpenRobotics/CGMClassic_12" />
+          <model name="OpenRobotics/CGMClassic_13" />
+          <model name="OpenRobotics/CGMClassic_14" />
+          <model name="OpenRobotics/CGMClassic_15" />
+          <model name="OpenRobotics/CGMClassic_16" />
+          <model name="OpenRobotics/CGMClassic_17" />
+          <model name="OpenRobotics/CGMClassic_18" />
+          <model name="OpenRobotics/CGMClassic_19" />
+          <model name="OpenRobotics/CGMClassic_20" />
+          <model name="OpenRobotics/CGMClassic_21" />
+          <model name="OpenRobotics/CGMClassic_22" />
+          <model name="OpenRobotics/CGMClassic_23" />
+          <model name="OpenRobotics/CGMClassic_24" />
+          <model name="OpenRobotics/CGMClassic_25" />
+          <model name="OpenRobotics/CGMClassic_26" />
+          <model name="OpenRobotics/CGMClassic_27" />
+          <model name="OpenRobotics/CGMClassic_28" />
+          <model name="OpenRobotics/CGMClassic_29" />
+          <model name="OpenRobotics/CGMClassic_30" />
+          <model name="OpenRobotics/CGMClassic_31" />
+          <model name="OpenRobotics/CGMClassic_32" />
+          <model name="OpenRobotics/BPCart" />
+          <model name="OpenRobotics/BPCart_2" />
+          <model name="OpenRobotics/BPCart_3" />
+          <model name="OpenRobotics/BPCart_4" />
+          <model name="OpenRobotics/BPCart_5" />
+          <model name="OpenRobotics/BPCart_6" />
+          <model name="OpenRobotics/BPCart_7" />
+          <model name="OpenRobotics/BPCart_8" />
+          <model name="OpenRobotics/BPCart_9" />
+          <model name="OpenRobotics/BPCart_10" />
+          <model name="OpenRobotics/BPCart_11" />
+          <model name="OpenRobotics/BPCart_12" />
+          <model name="OpenRobotics/BPCart_13" />
+          <model name="OpenRobotics/BPCart_14" />
+          <model name="OpenRobotics/BPCart_15" />
+          <model name="OpenRobotics/BPCart_16" />
+          <model name="OpenRobotics/BPCart_17" />
+          <model name="OpenRobotics/BPCart_18" />
+          <model name="OpenRobotics/BPCart_19" />
+          <model name="OpenRobotics/BPCart_20" />
+          <model name="OpenRobotics/CGMClassic_33" />
+          <model name="OpenRobotics/CGMClassic_34" />
+          <model name="OpenRobotics/BPCart_21" />
+          <model name="OpenRobotics/BPCart_22" />
+          <model name="OpenRobotics/BPCart_23" />
+          <model name="OpenRobotics/BPCart_24" />
+          <model name="OpenRobotics/BPCart_25" />
+          <model name="OpenRobotics/BPCart_26" />
+          <model name="OpenRobotics/BPCart_27" />
+          <model name="OpenRobotics/BPCart_28" />
+          <model name="OpenRobotics/BPCart_29" />
+          <model name="OpenRobotics/BPCart_30" />
+          <model name="OpenRobotics/BPCart_31" />
+          <model name="OpenRobotics/BPCart_32" />
+          <model name="OpenRobotics/BPCart_33" />
+          <model name="OpenRobotics/BPCart_34" />
+          <model name="OpenRobotics/BedsideTable" />
+          <model name="OpenRobotics/BedsideTable_2" />
+          <model name="OpenRobotics/BedsideTable_3" />
+          <model name="OpenRobotics/BedsideTable_4" />
+          <model name="OpenRobotics/BedsideTable_5" />
+          <model name="OpenRobotics/BedsideTable_6" />
+          <model name="OpenRobotics/BedsideTable_7" />
+          <model name="OpenRobotics/BedsideTable_8" />
+          <model name="OpenRobotics/BedsideTable_9" />
+          <model name="OpenRobotics/BedsideTable_10" />
+          <model name="OpenRobotics/BedsideTable_11" />
+          <model name="OpenRobotics/BedsideTable_12" />
+          <model name="OpenRobotics/BedsideTable_13" />
+          <model name="OpenRobotics/BedsideTable_14" />
+          <model name="OpenRobotics/BedsideTable_15" />
+          <model name="OpenRobotics/BedsideTable_16" />
+          <model name="OpenRobotics/BedsideTable_17" />
+          <model name="OpenRobotics/BedsideTable_18" />
+          <model name="OpenRobotics/BedsideTable_19" />
+          <model name="OpenRobotics/BedsideTable_20" />
+          <model name="OpenRobotics/BedsideTable_21" />
+          <model name="OpenRobotics/BedsideTable_22" />
+          <model name="OpenRobotics/BedsideTable_23" />
+          <model name="OpenRobotics/BedsideTable_24" />
+          <model name="OpenRobotics/BedsideTable_25" />
+          <model name="OpenRobotics/BedsideTable_26" />
+          <model name="OpenRobotics/BedsideTable_27" />
+          <model name="OpenRobotics/BedsideTable_28" />
+          <model name="OpenRobotics/BedsideTable_29" />
+          <model name="OpenRobotics/BedsideTable_30" />
+          <model name="OpenRobotics/BedsideTable_31" />
+          <model name="OpenRobotics/BedsideTable_32" />
+          <model name="OpenRobotics/BedsideTable_33" />
+          <model name="OpenRobotics/BedsideTable_34" />
+        </floor>
+      </plugin>
+    </gui>
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.09</constant>
+        <linear>0.001</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    <include>
+      <name>OpenRobotics/Toilet</name>
+      <uri>model://Toilet</uri>
+      <pose>39.192067740018615 -33.37264163899075 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_2</name>
+      <uri>model://Toilet</uri>
+      <pose>38.45550260427301 -34.83438090097686 0.0 0 0 -1.5937</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_3</name>
+      <uri>model://Toilet</uri>
+      <pose>39.18192813719154 -43.032795271632914 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_4</name>
+      <uri>model://Toilet</uri>
+      <pose>39.770025101162155 -44.50297350685801 0.0 0 0 -1.5447</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_5</name>
+      <uri>model://Toilet</uri>
+      <pose>29.184728972601135 -42.8425493692223 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_6</name>
+      <uri>model://Toilet</uri>
+      <pose>28.527451680481207 -44.433793178708704 0.0 0 0 -1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_7</name>
+      <uri>model://Toilet</uri>
+      <pose>29.340384710937094 -34.99003663931282 0.0 0 0 -1.5625</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_8</name>
+      <uri>model://Toilet</uri>
+      <pose>28.544746762518535 -33.38149774778909 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_9</name>
+      <uri>model://Toilet</uri>
+      <pose>63.39667944433847 -42.91172969737161 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_10</name>
+      <uri>model://Toilet</uri>
+      <pose>62.79131948568124 -44.46838334278336 0.0 0 0 -1.5923</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_11</name>
+      <uri>model://Toilet</uri>
+      <pose>73.94738540882483 -44.46838334278336 0.0 0 0 -1.5804</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_12</name>
+      <uri>model://Toilet</uri>
+      <pose>73.23825495794364 -42.8425493692223 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_13</name>
+      <uri>model://Toilet</uri>
+      <pose>61.14815834273214 -25.21767354120769 0.0 0 0 0.0062</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_14</name>
+      <uri>model://Toilet</uri>
+      <pose>65.78356120224343 -25.49442694115567 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_15</name>
+      <uri>model://Toilet</uri>
+      <pose>67.32291976561785 -25.45980468973029 0.0 0 0 0.0067</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_16</name>
+      <uri>model://Toilet</uri>
+      <pose>71.56050365091987 -25.442509607692962 0.0 0 0 0.0146</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_17</name>
+      <uri>model://Toilet</uri>
+      <pose>77.94283814560424 -25.442509607692962 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_18</name>
+      <uri>model://Toilet</uri>
+      <pose>55.54419880177971 -22.91726719348937 0.0 0 0 0.0132</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_19</name>
+      <uri>model://Toilet</uri>
+      <pose>54.143200894703924 -22.89997211145204 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_20</name>
+      <uri>model://Toilet</uri>
+      <pose>47.466850005384956 -25.407919443618304 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_21</name>
+      <uri>model://Toilet</uri>
+      <pose>46.290688164794446 -25.304148951394332 0.0 0 0 -1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_22</name>
+      <uri>model://Toilet</uri>
+      <pose>47.760866400019545 -15.87768749403578 0.0 0 0 0.0161</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_23</name>
+      <uri>model://Toilet</uri>
+      <pose>46.35990058029448 -15.203147207229238 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Toilet_24</name>
+      <uri>model://Toilet</uri>
+      <pose>53.7799720845693 -44.53756367093267 0.0 0 0 3.1196</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/NurseTable</name>
+      <uri>model://NurseTable</uri>
+      <pose>59.68933902966142 -37.411765260098186 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/NurseTable_2</name>
+      <uri>model://NurseTable</uri>
+      <pose>59.62015870151211 -31.288921170675177 0.0 0 0 0.0</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table</name>
+      <uri>model://Table</uri>
+      <pose>64.70526578134468 -33.450934774744155 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_2</name>
+      <uri>model://Table</uri>
+      <pose>64.722560863382 -31.98075653951905 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_3</name>
+      <uri>model://Table</uri>
+      <pose>63.56369410482882 -31.600232647347095 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_4</name>
+      <uri>model://Table</uri>
+      <pose>58.651569932720264 -34.384933379461344 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_5</name>
+      <uri>model://Table</uri>
+      <pose>59.447207881138816 -34.384933379461344 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_6</name>
+      <uri>model://Table</uri>
+      <pose>60.225518660169335 -34.384933379461344 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_7</name>
+      <uri>model://Table</uri>
+      <pose>61.021156608587894 -34.384933379461344 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_8</name>
+      <uri>model://Table</uri>
+      <pose>55.970639692829984 -33.0704108825722 0.0 0 0 0.0</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_9</name>
+      <uri>model://Table</uri>
+      <pose>55.970639692829984 -33.866048830990756 0.0 0 0 -0.0056</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_10</name>
+      <uri>model://Table</uri>
+      <pose>55.953344610792655 -34.66168677940932 0.0 0 0 -0.0171</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_11</name>
+      <uri>model://Table</uri>
+      <pose>54.483166375567556 -33.0704108825722 0.0 0 0 3.1335</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/NurseDesk</name>
+      <uri>model://NurseDesk</uri>
+      <pose>52.926512730155814 -35.07676874830521 0.0 0 0 -1.581</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/NurseTable_3</name>
+      <uri>model://NurseTable</uri>
+      <pose>54.91557551385149 -37.27340460379956 0.0 0 0 -3.1367</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink</name>
+      <uri>model://BathroomSink</uri>
+      <pose>29.26523613555412 -33.77957342080412 0.0 0 0 -3.1251</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_2</name>
+      <uri>model://BathroomSink</uri>
+      <pose>28.659876176896894 -34.540589117797296 0.0 0 0 0.0085</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_3</name>
+      <uri>model://BathroomSink</uri>
+      <pose>28.504220438560935 -43.29251028834931 0.0 0 0 -3.1204</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_4</name>
+      <uri>model://BathroomSink</uri>
+      <pose>39.10681164915928 -34.40222846149867 0.0 0 0 -0.0207</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_5</name>
+      <uri>model://BathroomSink</uri>
+      <pose>38.4668615264274 -33.79686850284145 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_6</name>
+      <uri>model://BathroomSink</uri>
+      <pose>39.14140181323394 -44.053525985342496 0.0 0 0 -0.0386</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_7</name>
+      <uri>model://BathroomSink</uri>
+      <pose>39.85053226411514 -43.48275619075993 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_8</name>
+      <uri>model://BathroomSink</uri>
+      <pose>54.17182281154492 -43.794099754782565 0.0 0 0 -1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_9</name>
+      <uri>model://BathroomSink</uri>
+      <pose>62.7853833257983 -43.30980537038664 0.0 0 0 -3.1318</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_10</name>
+      <uri>model://BathroomSink</uri>
+      <pose>63.42533344853018 -44.03623090330517 0.0 0 0 -0.0207</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_11</name>
+      <uri>model://BathroomSink</uri>
+      <pose>73.85497383875524 -43.29251028834931 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_12</name>
+      <uri>model://BathroomSink</uri>
+      <pose>73.19769654663531 -44.00164073923051 0.0 0 0 0.0157</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_13</name>
+      <uri>model://BathroomSink</uri>
+      <pose>78.36927903665452 -26.80917404949984 0.0 0 0 -1.5794</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_14</name>
+      <uri>model://BathroomSink</uri>
+      <pose>71.12215835275298 -26.843764213574495 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_15</name>
+      <uri>model://BathroomSink</uri>
+      <pose>66.90186954948831 -26.826469131537166 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_16</name>
+      <uri>model://BathroomSink</uri>
+      <pose>66.21003418064443 -26.843764213574495 0.0 0 0 -1.584</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_17</name>
+      <uri>model://BathroomSink</uri>
+      <pose>60.70981304456526 -25.909765608857306 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_18</name>
+      <uri>model://BathroomSink</uri>
+      <pose>55.10582141626211 -21.447345657070017 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_19</name>
+      <uri>model://BathroomSink</uri>
+      <pose>54.586936867791536 -21.48193582114467 0.0 0 0 -1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_20</name>
+      <uri>model://BathroomSink</uri>
+      <pose>44.797278687649076 -25.944355772931964 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_21</name>
+      <uri>model://BathroomSink</uri>
+      <pose>48.93109208072711 -24.837406347841487 0.0 0 0 -1.5879</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_22</name>
+      <uri>model://BathroomSink</uri>
+      <pose>47.33981618389 -15.203403906034987 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_23</name>
+      <uri>model://BathroomSink</uri>
+      <pose>46.82093163541941 -15.860649110804198 0.0 0 0 -1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BathroomSink_24</name>
+      <uri>model://BathroomSink</uri>
+      <pose>29.16146564333015 -44.00164073923051 0.0 0 0 0.0139</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic</name>
+      <uri>model://CGMClassic</uri>
+      <pose>24.854701429878816 -35.59568538412651 0.0 0 0 -0.0035</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_2</name>
+      <uri>model://CGMClassic</uri>
+      <pose>26.843764213574495 -32.586116498176274 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_3</name>
+      <uri>model://CGMClassic</uri>
+      <pose>24.871996511916144 -42.1163484477588 0.0 0 0 0.0037</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_4</name>
+      <uri>model://CGMClassic</uri>
+      <pose>26.688108475238536 -45.14321241574637 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_5</name>
+      <uri>model://CGMClassic</uri>
+      <pose>31.04675793480186 -42.06446320164681 0.0 0 0 0.0073</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_6</name>
+      <uri>model://CGMClassic</uri>
+      <pose>32.84557481608692 -45.16050749778369 0.0 0 0 3.1289</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_7</name>
+      <uri>model://CGMClassic</uri>
+      <pose>35.50917788658915 -45.21239274389568 0.0 0 0 -0.0091</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_8</name>
+      <uri>model://CGMClassic</uri>
+      <pose>37.290699685836884 -42.18552877590812 0.0 0 0 3.1366</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_9</name>
+      <uri>model://CGMClassic</uri>
+      <pose>36.63345448106768 -35.682160794313155 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_10</name>
+      <uri>model://CGMClassic</uri>
+      <pose>35.14598116380524 -32.62070666225093 0.0 0 0 0.0082</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_11</name>
+      <uri>model://CGMClassic</uri>
+      <pose>40.940218694519004 -32.63800174428826 0.0 0 0 0.0038</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_12</name>
+      <uri>model://CGMClassic</uri>
+      <pose>42.39310184770678 -35.682160794313155 0.0 0 0 3.1292</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_13</name>
+      <uri>model://CGMClassic</uri>
+      <pose>59.17045448119084 -42.13364352979613 0.0 0 0 0.0039</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_14</name>
+      <uri>model://CGMClassic</uri>
+      <pose>60.900091034326586 -45.19509766185835 0.0 0 0 3.1162</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_15</name>
+      <uri>model://CGMClassic</uri>
+      <pose>65.29333065796457 -42.16823369387079 0.0 0 0 -0.0057</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_16</name>
+      <uri>model://CGMClassic</uri>
+      <pose>66.91916463152563 -45.03940983617168 0.0 0 0 3.1377</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_17</name>
+      <uri>model://CGMClassic</uri>
+      <pose>71.36432158862631 -42.08175828368414 0.0 0 0 -3.1355</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_18</name>
+      <uri>model://CGMClassic</uri>
+      <pose>69.61738995345323 -45.05670491820901 0.0 0 0 -0.0101</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_19</name>
+      <uri>model://CGMClassic</uri>
+      <pose>75.79215137633894 -44.970229508022356 0.0 0 0 -0.011</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_20</name>
+      <uri>model://CGMClassic</uri>
+      <pose>77.48716567804932 -42.237414022020104 0.0 0 0 3.1383</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_21</name>
+      <uri>model://CGMClassic</uri>
+      <pose>77.57367317558668 -22.32945901567522 0.0 0 0 -3.1224</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_22</name>
+      <uri>model://CGMClassic</uri>
+      <pose>71.88320613709689 -22.32945901567522 0.0 0 0 0.0071</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_23</name>
+      <uri>model://CGMClassic</uri>
+      <pose>67.9569337284668 -22.32945901567522 0.0 0 0 -0.0026</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_24</name>
+      <uri>model://CGMClassic</uri>
+      <pose>65.18956016574059 -22.36404917974988 0.0 0 0 -3.1329</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_25</name>
+      <uri>model://CGMClassic</uri>
+      <pose>61.194107428961175 -22.38134426178721 0.0 0 0 -3.1236</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_26</name>
+      <uri>model://CGMClassic</uri>
+      <pose>46.007998604963525 -28.902039412770215 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_27</name>
+      <uri>model://CGMClassic</uri>
+      <pose>46.56150540485948 -21.603001395405975 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_28</name>
+      <uri>model://CGMClassic</uri>
+      <pose>46.54421032282215 -18.904808160829095 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_29</name>
+      <uri>model://CGMClassic</uri>
+      <pose>55.84957411856868 -17.88430205857454 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_30</name>
+      <uri>model://CGMClassic</uri>
+      <pose>46.6306857330088 -11.951703871562147 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_31</name>
+      <uri>model://CGMClassic</uri>
+      <pose>32.6034115802136 -32.63800174428826 0.0 0 0 3.1357</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_32</name>
+      <uri>model://CGMClassic</uri>
+      <pose>31.081348098876514 -35.66486571227583 0.0 0 0 0.0</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart</name>
+      <uri>model://BPCart</uri>
+      <pose>24.007178235348267 -34.66168677940932 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_2</name>
+      <uri>model://BPCart</uri>
+      <pose>27.552926751806414 -33.468229856781484 0.0 0 0 -1.5874</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_3</name>
+      <uri>model://BPCart</uri>
+      <pose>30.268415068420627 -34.71357202552131 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_4</name>
+      <uri>model://BPCart</uri>
+      <pose>33.450934774744155 -33.57200034900545 0.0 0 0 -1.5949</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_5</name>
+      <uri>model://BPCart</uri>
+      <pose>34.384933379461344 -33.52011510289346 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_6</name>
+      <uri>model://BPCart</uri>
+      <pose>37.37717509602353 -34.71357202552131 0.0 0 0 -1.5887</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_7</name>
+      <uri>model://BPCart</uri>
+      <pose>43.18870770877462 -34.73086710755864 0.0 0 0 -1.5773</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_8</name>
+      <uri>model://BPCart</uri>
+      <pose>40.127285664063116 -33.55470526696812 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_9</name>
+      <uri>model://BPCart</uri>
+      <pose>38.12092779833011 -43.2233299602 0.0 0 0 -1.5766</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_10</name>
+      <uri>model://BPCart</uri>
+      <pose>34.644391697371994 -44.2265088930665 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_11</name>
+      <uri>model://BPCart</uri>
+      <pose>33.67580292858014 -44.17462364695452 0.0 0 0 -1.5933</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_12</name>
+      <uri>model://BPCart</uri>
+      <pose>30.23382490434597 -43.06764213451332 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_13</name>
+      <uri>model://BPCart</uri>
+      <pose>27.501041505694428 -44.14000139552914 0.0 0 0 -1.5914</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_14</name>
+      <uri>model://BPCart</uri>
+      <pose>24.059063481460253 -43.20603487816267 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_15</name>
+      <uri>model://BPCart</uri>
+      <pose>58.35752145073496 -43.11952738062531 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_16</name>
+      <uri>model://BPCart</uri>
+      <pose>61.83408963904378 -44.24380397510383 0.0 0 0 -1.6066</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_17</name>
+      <uri>model://BPCart</uri>
+      <pose>64.49769270954602 -43.275215206311984 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_18</name>
+      <uri>model://BPCart</uri>
+      <pose>67.69750749790686 -43.96705057515585 0.0 0 0 -1.5448</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_19</name>
+      <uri>model://BPCart</uri>
+      <pose>68.76986675892269 -44.053525985342496 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_20</name>
+      <uri>model://BPCart</uri>
+      <pose>72.1253372856195 -43.10223229858798 0.0 0 0 -1.5878</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_33</name>
+      <uri>model://CGMClassic</uri>
+      <pose>41.71455064206041 -45.0654968523059 0.0 0 0 0.0052</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/CGMClassic_34</name>
+      <uri>model://CGMClassic</uri>
+      <pose>43.35774387236024 -42.46699901641173 0.0 0 0 3.1237</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_21</name>
+      <uri>model://BPCart</uri>
+      <pose>44.14112445280429 -43.53698381347437 0.0 0 0 -1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_22</name>
+      <uri>model://BPCart</uri>
+      <pose>40.873862053232926 -44.01463611627155 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_23</name>
+      <uri>model://BPCart</uri>
+      <pose>75.01753064264108 -43.95732810788811 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_24</name>
+      <uri>model://BPCart</uri>
+      <pose>78.34210105059586 -43.1357314927382 0.0 0 0 -1.5606</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_25</name>
+      <uri>model://BPCart</uri>
+      <pose>78.24654492015584 -23.302989236477735 0.0 0 0 -1.5624</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_26</name>
+      <uri>model://BPCart</uri>
+      <pose>71.1197518014491 -23.398513279567023 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_27</name>
+      <uri>model://BPCart</uri>
+      <pose>67.10735694349026 -23.417637340595313 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_28</name>
+      <uri>model://BPCart</uri>
+      <pose>65.88454009495489 -23.341205271183597 0.0 0 0 -1.5626</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_29</name>
+      <uri>model://BPCart</uri>
+      <pose>62.00585322744048 -23.436729314272885 0.0 0 0 -1.5606</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_30</name>
+      <uri>model://BPCart</uri>
+      <pose>54.84087616137858 -17.016884706598457 0.0 0 0 -0.0049</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_31</name>
+      <uri>model://BPCart</uri>
+      <pose>47.580310877525946 -19.710938672932638 0.0 0 0 3.1179</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_32</name>
+      <uri>model://BPCart</uri>
+      <pose>47.542094842820084 -20.876447513084575 0.0 0 0 0.0069</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_33</name>
+      <uri>model://BPCart</uri>
+      <pose>46.96891849693362 -29.665525835768733 0.0 0 0 -3.1236</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BPCart_34</name>
+      <uri>model://BPCart</uri>
+      <pose>47.542094842820084 -11.13203249745535 0.0 0 0 -0.0102</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable</name>
+      <uri>model://BedsideTable</uri>
+      <pose>24.002653918896947 -41.18684207214221 0.0 0 0 0.0</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_2</name>
+      <uri>model://BedsideTable</uri>
+      <pose>27.51830450038104 -46.020833545250966 0.0 0 0 3.1329</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_3</name>
+      <uri>model://BedsideTable</uri>
+      <pose>30.193234405686933 -41.18684207214221 0.0 0 0 0.0138</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_4</name>
+      <uri>model://BedsideTable</uri>
+      <pose>33.68976092614274 -46.03995760627926 0.0 0 0 3.111</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_5</name>
+      <uri>model://BedsideTable</uri>
+      <pose>38.14162413954361 -41.320582149937366 0.0 0 0 3.1207</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_6</name>
+      <uri>model://BedsideTable</uri>
+      <pose>34.664189592765375 -46.09726561466268 0.0 0 0 -0.02</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_7</name>
+      <uri>model://BedsideTable</uri>
+      <pose>40.75924603646607 -46.0017415715734 0.0 0 0 -0.005</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_8</name>
+      <uri>model://BedsideTable</uri>
+      <pose>44.23664849589358 -41.511662323466666 0.0 0 0 3.1296</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_9</name>
+      <uri>model://BedsideTable</uri>
+      <pose>43.14757172515337 -36.60123878094619 0.0 0 0 3.1211</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_10</name>
+      <uri>model://BedsideTable</uri>
+      <pose>40.128697507494735 -31.786371368865733 0.0 0 0 0.01</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_11</name>
+      <uri>model://BedsideTable</uri>
+      <pose>37.4919836368947 -36.56302274624033 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_12</name>
+      <uri>model://BedsideTable</uri>
+      <pose>34.33936934144092 -31.748155334159872 0.0 0 0 0.0052</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_13</name>
+      <uri>model://BedsideTable</uri>
+      <pose>30.28875844877622 -36.60123878094619 0.0 0 0 -0.0054</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_14</name>
+      <uri>model://BedsideTable</uri>
+      <pose>33.307632666434856 -31.748155334159872 0.0 0 0 -3.1269</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_15</name>
+      <uri>model://BedsideTable</uri>
+      <pose>24.002653918896947 -36.467498703151044 0.0 0 0 0.0255</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_16</name>
+      <uri>model://BedsideTable</uri>
+      <pose>27.59473656979276 -31.709939299454014 0.0 0 0 -3.1349</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_17</name>
+      <uri>model://BedsideTable</uri>
+      <pose>45.00090501530935 -29.722833844152163 0.0 0 0 1.5815</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_18</name>
+      <uri>model://BedsideTable</uri>
+      <pose>58.35649465551195 -41.225058106848074 0.0 0 0 -0.0133</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_19</name>
+      <uri>model://BedsideTable</uri>
+      <pose>61.83389711493947 -46.05904957995682 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_20</name>
+      <uri>model://BedsideTable</uri>
+      <pose>64.45151901186193 -41.263274141553936 0.0 0 0 -0.0201</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_21</name>
+      <uri>model://BedsideTable</uri>
+      <pose>67.83339742820016 -46.020833545250966 0.0 0 0 -3.1364</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_22</name>
+      <uri>model://BedsideTable</uri>
+      <pose>68.75051808643936 -46.0017415715734 0.0 0 0 0.0199</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_23</name>
+      <uri>model://BedsideTable</uri>
+      <pose>72.15152056380589 -41.205966133170506 0.0 0 0 -3.1178</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_24</name>
+      <uri>model://BedsideTable</uri>
+      <pose>74.96019054690692 -45.925309502161674 0.0 0 0 0.0158</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_25</name>
+      <uri>model://BedsideTable</uri>
+      <pose>78.34210105059586 -41.35879818464323 0.0 0 0 3.1156</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_26</name>
+      <uri>model://BedsideTable</uri>
+      <pose>78.38028499795101 -21.315883781175884 0.0 0 0 -3.1288</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_27</name>
+      <uri>model://BedsideTable</uri>
+      <pose>71.17709189718323 -21.373223876910036 0.0 0 0 0.0</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_28</name>
+      <uri>model://BedsideTable</uri>
+      <pose>67.03092487407854 -21.335007842204174 0.0 0 0 0.0073</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_29</name>
+      <uri>model://BedsideTable</uri>
+      <pose>65.92272404231002 -21.354099815881746 0.0 0 0 3.1298</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_30</name>
+      <uri>model://BedsideTable</uri>
+      <pose>62.06319332317463 -21.392315850587607 0.0 0 0 -3.1416</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_31</name>
+      <uri>model://BedsideTable</uri>
+      <pose>56.77064152094628 -16.959576698215027 0.0 0 0 -1.5774</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_32</name>
+      <uri>model://BedsideTable</uri>
+      <pose>45.53589741384067 -20.761799408966993 0.0 0 0 -1.5904</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_33</name>
+      <uri>model://BedsideTable</uri>
+      <pose>45.5168054401631 -19.76824668131607 0.0 0 0 1.5708</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/BedsideTable_34</name>
+      <uri>model://BedsideTable</uri>
+      <pose>45.612329483252395 -11.13203249745535 0.0 0 0 -1.5487</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>FA2_L1</name>
+      <uri>model://FA2_L1</uri>
+      <pose>0 0 0.0 0 0 0</pose>
+    </include>
+    <rmf_charger_waypoints name="charger_waypoints" />
+  </world>
+</sdf>
