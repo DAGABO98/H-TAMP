@@ -39,9 +39,6 @@ class TaskVisualizer:
         admissions['week'] = admissions['IN_TIME'].dt.isocalendar().week
         admissions['hour'] = admissions['IN_TIME'].dt.hour
 
-        # Drop rows with missing IN_TIME
-        admissions = admissions.dropna(subset=['IN_TIME'])
-
         # Combine year and week for a unique index
         admissions['year_week'] = admissions['year'].astype(str) + '-' + admissions['week'].astype(str).str.zfill(2)
 
@@ -60,18 +57,67 @@ class TaskVisualizer:
         plt.tight_layout()
         plt.savefig('results/admissions_heatmap.png')
         plt.close()
+    
+    def plot_discharge_frequency(self):
+        """
+        Plots a heatmap of discharge frequency
+        for each hour of the day and each week of the year.
+        """
+        # Filter for discharges
+        discharges = self.visit_data[self.visit_data['EVENT_TYPE'] == 'DISCHARGE'].copy()
 
-    def plot_discharges_frequency(self):
-        """
-        Plots the frequency of patient discharges.
-        """
-        pass
+        # Extract week and hour
+        discharges['year'] = discharges['OUT_TIME'].dt.year
+        discharges['week'] = discharges['OUT_TIME'].dt.isocalendar().week
+        discharges['hour'] = discharges['OUT_TIME'].dt.hour
 
-    def plot_medications_order_frequency(self):
+        # Combine year and week for a unique index
+        discharges['year_week'] = discharges['year'].astype(str) + '-' + discharges['week'].astype(str).str.zfill(2)
+
+        # Group by year_week and hour
+        freq = discharges.groupby(['year_week', 'hour']).size().reset_index(name='count')
+
+        # Pivot to matrix
+        heatmap_data = freq.pivot(index='year_week', columns='hour', values='count').fillna(0)
+
+        # Plot
+        plt.figure(figsize=(16, 10))
+        sns.heatmap(heatmap_data, cmap='viridis')
+        plt.title('Discharges Frequency Heatmap (by Hour and Year-Week)')
+        plt.xlabel('Hour of Day')
+        plt.ylabel('Year-Week')
+        plt.tight_layout()
+        plt.savefig('results/discharges_heatmap.png')
+        plt.close()
+    
+    def plot_medications_frequency(self):
         """
-        Plots the frequency of medication orders.
+        Plots a heatmap of medication orders frequency
+        for each hour of the day and each week of the year.
         """
-        pass
+        # Extract week and hour from medication order datetime
+        self.medications_data['year'] = self.medications_data['Medication Order DTTM'].dt.year
+        self.medications_data['week'] = self.medications_data['Medication Order DTTM'].dt.isocalendar().week
+        self.medications_data['hour'] = self.medications_data['Medication Order DTTM'].dt.hour
+
+        # Combine year and week for a unique index
+        self.medications_data['year_week'] = self.medications_data['year'].astype(str) + '-' + self.medications_data['week'].astype(str).str.zfill(2)
+
+        # Group by year_week and hour
+        freq = self.medications_data.groupby(['year_week', 'hour']).size().reset_index(name='count')
+
+        # Pivot to matrix
+        heatmap_data = freq.pivot(index='year_week', columns='hour', values='count').fillna(0)
+
+        # Plot
+        plt.figure(figsize=(16, 10))
+        sns.heatmap(heatmap_data, cmap='viridis')
+        plt.title('Medications Orders Frequency Heatmap (by Hour and Year-Week)')
+        plt.xlabel('Hour of Day')
+        plt.ylabel('Year-Week')
+        plt.tight_layout()
+        plt.savefig('results/medications_heatmap.png')
+        plt.close()
 
 def main():
     parser = argparse.ArgumentParser(description="Task Visualizer")
