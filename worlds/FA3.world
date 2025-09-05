@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='utf-8'?>
+<sdf version="1.6">
+  <world name="FA3">
+    <gravity>0 0 -9.8</gravity>
+    <physics default="0" name="default_physics" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+    <scene>
+      <ambient>0.6 0.6 0.6 1</ambient>
+      <background>0.4 0.4 0.4 1</background>
+      <shadows>false</shadows>
+    </scene>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <model name="FA3_floor">
+      <include>
+        <uri>model://FA3_floor</uri>
+        <static>true</static>
+        <pose>0 0 -0.001 0 -0 0</pose>
+      </include>
+    </model>
+    <model name="FA3_walls">
+      <include>
+        <uri>model://FA3_walls</uri>
+        <static>true</static>
+        <pose>0 0 0 0 -0 0</pose>
+      </include>
+    </model>
+  </world>
+</sdf>
