@@ -1,0 +1,30 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="FA3_floor">
+    <link name="link">
+      <visual name="visual">
+	    <geometry>
+          <mesh>
+            <uri>model://FA3_floor/meshes/FA3_floor_vis.glb</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://FA3_floor/meshes/FA3_floor_col.glb</uri>
+          </mesh>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>100</mu>
+              <mu2>50</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>    
+</link>
+  <static>1</static>
+  </model>
+</sdf>
