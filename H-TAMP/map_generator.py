@@ -132,6 +132,7 @@ class MapGenerator:
         np.save(path, self.coarse)
         print(f"Map saved to {path}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--image_path", type=str, default="path_to_your_image.jpg", help="Path to the input image")
