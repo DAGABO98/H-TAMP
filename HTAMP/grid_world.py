@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict, Any
 from matplotlib.patches import Rectangle, Circle
 
+from HTAMP.map_generator import MapGenerator
+
 @dataclass
 class Coordinates:
     x: float
