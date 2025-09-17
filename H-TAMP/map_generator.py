@@ -74,6 +74,8 @@ class MapGenerator:
         pad_w = (factor - W % factor) % factor
         if pad_h or pad_w:
             temp_map = np.pad(self.map, ((0, pad_h), (0, pad_w)), constant_values=pad_val)
+        else:
+            temp_map = self.map.copy()
         return temp_map
 
     def _downsample_occupancy_maxpool(self) -> np.ndarray:
@@ -135,10 +137,10 @@ class MapGenerator:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image_path", type=str, default="path_to_your_image.jpg", help="Path to the input image")
-    parser.add_argument("--map_vis_path", type=str, default="path_to_save_map_visualization.png", help="Path to save the map visualization")
-    parser.add_argument("--comparison_vis_path", type=str, default="path_to_save_comparison_visualization.png", help="Path to save the comparison visualization")
-    parser.add_argument("--map_path", type=str, default="path_to_save_map.npy", help="Path to save the occupancy map")
+    parser.add_argument("--image_path", type=str, default="maps/FA3/FA3_Top_View.png", help="Path to the input image")
+    parser.add_argument("--map_vis_path", type=str, default="maps/FA3/map_visualization.png", help="Path to save the map visualization")
+    parser.add_argument("--comparison_vis_path", type=str, default="maps/FA3/comparison_visualization.png", help="Path to save the comparison visualization")
+    parser.add_argument("--map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to save the occupancy map")
     parser.add_argument("--factor", type=int, default=2, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.03534, help="Meters per pixel in the original image")
     args = parser.parse_args()
