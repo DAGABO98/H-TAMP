@@ -4,17 +4,50 @@ from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict, Any
 from matplotlib.patches import Rectangle, Circle
 
-from HTAMP.map_generator import MapGenerator
-
 @dataclass
-class Coordinates:
+class Coordinate:
     x: float
     y: float
 
 @dataclass
-class Interval:
+class GridIndex:
+    index_x: int
+    index_y: int
+
+@dataclass
+class Cell:
+    lower_x: float
+    lower_y: float
+    upper_x: float
+    upper_y: float
+
+@dataclass
+class PosChange:
+    dev_x: float
+    dev_y: float
+
+@dataclass
+class BoundingIndices:
+    lower_x: int
+    lower_y: int
+    upper_x: int
+    upper_y: int
+
+@dataclass
+class TimeInterval:
     start: float
     end: float
+
+@dataclass
+class RobotOccupancy:
+    occupied_cells: Set[GridIndex]
+    robot_center: Coordinate
+    robot_radius: float
+
+@dataclass
+class MotionReservation:
+    time_interval: TimeInterval
+    robot_occupancy: RobotOccupancy
 
 @dataclass
 class GridWorld:
@@ -27,117 +60,135 @@ class GridWorld:
     def empty(cls, width: int, height: int, cell_size: float) -> "GridWorld":
         occupancy_map = np.zeros((height, width), dtype=np.uint8)
         return cls(width, height, cell_size, occupancy_map)
-    
-    def is_in_bounds_cell(self, index_x: int, index_y: int) -> bool:
-        return 0 <= index_x < self.width and 0 <= index_y < self.height
-    
-    def cell_rect(self, index_x: int, index_y: int) -> Tuple[float, float, float, float]:
-        lower_x = index_x * self.cell_size
-        lower_y = index_y * self.cell_size
-        return lower_x, lower_y, lower_x + self.cell_size, lower_y + self.cell_size
-    
-    def robot_intersects_cell(self, robot_center_x: float, robot_center_y: float, 
-                              robot_radius: float, index_x: int, index_y: int) -> bool:
-        lower_x, lower_y, upper_x, upper_y = self.cell_rect(index_x, index_y)
-        selected_x = min(max(robot_center_x, lower_x), upper_x)
-        selected_y = min(max(robot_center_y, lower_y), upper_y)
-        dev_x = robot_center_x - selected_x
-        dev_y = robot_center_y - selected_y
+
+    def is_in_bounds_cell(self, 
+                          cell_index: GridIndex) -> bool:
+        return 0 <= cell_index.index_x < self.width and 0 <= cell_index.index_y < self.height
+
+    def cell_rect(self, 
+                  cell_index: GridIndex) -> Cell:
+        lower_x = cell_index.index_x * self.cell_size
+        lower_y = cell_index.index_y * self.cell_size
+        return Cell(lower_x, lower_y, lower_x + self.cell_size, lower_y + self.cell_size)
+
+    def robot_intersects_cell(self, 
+                              robot_center: Coordinate, 
+                              robot_radius: float, 
+                              cell_index: GridIndex) -> bool:
+        cell = self.cell_rect(cell_index)
+        selected_x = min(max(robot_center.x, cell.lower_x), cell.upper_x)
+        selected_y = min(max(robot_center.y, cell.lower_y), cell.upper_y)
+        dev_x = robot_center.x - selected_x
+        dev_y = robot_center.y - selected_y
         return ((dev_x * dev_x) + (dev_y * dev_y)) <= (robot_radius * robot_radius)
     
     def _get_robot_bounding_indices(self, 
-                                    robot_center_x: float, 
-                                    robot_center_y: float,
-                                    robot_radius: float):
-        lower_index_x = int(np.floor((robot_center_x - robot_radius) / self.cell_size))
-        lower_index_y = int(np.floor((robot_center_y - robot_radius) / self.cell_size))
-        upper_index_x = int(np.floor((robot_center_x + robot_radius) / self.cell_size))
-        upper_index_y = int(np.floor((robot_center_y + robot_radius) / self.cell_size))
+                                    robot_center: Coordinate, 
+                                    robot_radius: float) -> BoundingIndices:
+        lower_index_x = int(np.floor((robot_center.x - robot_radius) / self.cell_size))
+        lower_index_y = int(np.floor((robot_center.y - robot_radius) / self.cell_size))
+        upper_index_x = int(np.floor((robot_center.x + robot_radius) / self.cell_size))
+        upper_index_y = int(np.floor((robot_center.y + robot_radius) / self.cell_size))
 
-        return lower_index_x, lower_index_y, upper_index_x, upper_index_y
-    
+        return BoundingIndices(lower_index_x, lower_index_y, upper_index_x, upper_index_y)
+
     def is_robot_in_bounds(self, 
-                          robot_center_x: float, 
-                          robot_center_y: float,
+                          robot_center: Coordinate, 
                           robot_radius: float) -> bool:
-        lower_index_x, lower_index_y, upper_index_x, upper_index_y = self._get_robot_bounding_indices(
-            robot_center_x, robot_center_y, robot_radius)
+        bounding_indices = self._get_robot_bounding_indices(robot_center, robot_radius)
 
-        return (0 <= lower_index_x < self.width and
-                0 <= lower_index_y < self.height and
-                0 <= upper_index_x < self.width and
-                0 <= upper_index_y < self.height)
+        return (0 <= bounding_indices.lower_x < self.width and
+                0 <= bounding_indices.lower_y < self.height and
+                0 <= bounding_indices.upper_x < self.width and
+                0 <= bounding_indices.upper_y < self.height)
 
     def get_occupied_cells_for_robot(self, 
-                                     robot_center_x: float, 
-                                     robot_center_y: float,
-                                     robot_radius: float) -> List[Tuple[int, int]]:
-        lower_index_x, lower_index_y, upper_index_x, upper_index_y = self._get_robot_bounding_indices(
-            robot_center_x, robot_center_y, robot_radius)
-        
+                                     robot_center: Coordinate, 
+                                     robot_radius: float) -> List[GridIndex]:
+        bounding_indices = self._get_robot_bounding_indices(robot_center, robot_radius)
+
         occupied_cells = []
-        for index_x in range(lower_index_x, upper_index_x + 1):
-            for index_y in range(lower_index_y, upper_index_y + 1):
-                if self.is_in_bounds_cell(index_x, index_y):
-                    if self.robot_intersects_cell(robot_center_x, robot_center_y, robot_radius, index_x, index_y):
-                        occupied_cells.append((index_x, index_y))
+        for index_x in range(bounding_indices.lower_x, bounding_indices.upper_x + 1):
+            for index_y in range(bounding_indices.lower_y, bounding_indices.upper_y + 1):
+                cell_index = GridIndex(index_x, index_y)
+                if self.is_in_bounds_cell(cell_index):
+                    if self.robot_intersects_cell(robot_center, robot_radius, cell_index):
+                        occupied_cells.append(cell_index)
         return occupied_cells
     
     def is_robot_collision_free(self, 
-                                robot_center_x: float, 
-                                robot_center_y: float,
+                                robot_center: Coordinate, 
                                 robot_radius: float) -> bool:
-        if not self.is_robot_in_bounds(robot_center_x, robot_center_y, robot_radius):
+        if not self.is_robot_in_bounds(robot_center, robot_radius):
             return False
-        
-        occupied_cells = self.get_occupied_cells_for_robot(robot_center_x, robot_center_y, robot_radius)
-        for index_x, index_y in occupied_cells:
-            if self.occupancy_map[index_y, index_x] == 1:
+
+        occupied_cells = self.get_occupied_cells_for_robot(robot_center, robot_radius)
+        for cell_index in occupied_cells:
+            if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
                 return False
         return True
     
-    def get_valid_moves(self, 
-                        robot_center_x: float, 
-                        robot_center_y: float,
-                        robot_radius: float) -> List[Tuple[float, float]]:
-        robot_bounding_indices = self._get_robot_bounding_indices(robot_center_x, 
-                                                                  robot_center_y, 
-                                                                  robot_radius)
-        
-        lower_index_x, lower_index_y, upper_index_x, upper_index_y = robot_bounding_indices
+    def _generate_potential_move(self, 
+                                robot_center: Coordinate, 
+                                robot_radius: float, 
+                                cell_index: GridIndex) -> Coordinate:
+        cell = self.cell_rect(cell_index)
+        selected_x = min(max(robot_center.x, cell.lower_x), cell.upper_x)
+        selected_y = min(max(robot_center.y, cell.lower_y), cell.upper_y)
+        coordinate = Coordinate(selected_x, selected_y)
 
-        x_lower_bound = lower_index_x-1
-        y_lower_bound = lower_index_y-1
-        x_upper_bound = upper_index_x+1
-        y_upper_bound = upper_index_y+1
+        if self.is_robot_collision_free(robot_center=coordinate,
+                                        robot_radius=robot_radius):
+            return coordinate
+
+        return None
+
+    
+    def get_valid_moves(self, 
+                        robot_center: Coordinate, 
+                        robot_radius: float) -> List[Coordinate]:
+        bounding_indices = self._get_robot_bounding_indices(robot_center, 
+                                                            robot_radius)
+
+        x_lower_bound = bounding_indices.lower_x - 1
+        y_lower_bound = bounding_indices.lower_y - 1
+        x_upper_bound = bounding_indices.upper_x + 1
+        y_upper_bound = bounding_indices.upper_y + 1
 
         valid_moves = []
         for index_y in range(max(0, y_lower_bound), min(self.height - 1, y_upper_bound) + 1):
-            lower_x0, lower_y0, lower_x1, lower_y1 = self.cell_rect(x_lower_bound, index_y)
-            lower_selected_x = min(max(robot_center_x, lower_x0), lower_x1)
-            lower_selected_y = min(max(robot_center_y, lower_y0), lower_y1)
+            low_cell_index = GridIndex(x_lower_bound, index_y)
+            low_coordinate = self._generate_potential_move(robot_center, 
+                                                           robot_radius, 
+                                                           low_cell_index)
 
-            if self.is_robot_collision_free(robot_center_x=lower_selected_x,
-                                           robot_center_y=lower_selected_y,
-                                           robot_radius=robot_radius):
-                valid_moves.append((lower_selected_x, lower_selected_y))
+            if low_coordinate is not None:
+                valid_moves.append(low_coordinate)
 
-            upper_x0, upper_y0, upper_x1, upper_y1 = self.cell_rect(x_upper_bound, index_y)
-            upper_selected_x = min(max(robot_center_x, upper_x0), upper_x1)
-            upper_selected_y = min(max(robot_center_y, upper_y0), upper_y1)
-            valid_moves.append((upper_selected_x, upper_selected_y))
+            up_cell_index = GridIndex(x_upper_bound, index_y)
+            up_coordinate = self._generate_potential_move(robot_center, 
+                                                          robot_radius, 
+                                                          up_cell_index)
 
+            if up_coordinate is not None:
+                valid_moves.append(up_coordinate)
 
         for index_x in range(max(0, x_lower_bound), min(self.width - 1, x_upper_bound) + 1):
-            lower_x0, lower_y0, lower_x1, lower_y1 = self.cell_rect(index_x, y_lower_bound)
-            lower_selected_x = min(max(robot_center_x, lower_x0), lower_x1)
-            lower_selected_y = min(max(robot_center_y, lower_y0), lower_y1)
-            valid_moves.append((lower_selected_x, lower_selected_y))
+            low_cell_index = GridIndex(index_x, y_lower_bound)
+            low_coordinate = self._generate_potential_move(robot_center, 
+                                                           robot_radius, 
+                                                           low_cell_index)
 
-            upper_x0, upper_y0, upper_x1, upper_y1 = self.cell_rect(index_x, y_upper_bound)
-            upper_selected_x = min(max(robot_center_x, upper_x0), upper_x1)
-            upper_selected_y = min(max(robot_center_y, upper_y0), upper_y1)
-            valid_moves.append((upper_selected_x, upper_selected_y))
+            if low_coordinate is not None:
+                valid_moves.append(low_coordinate)
+
+            up_cell_index = GridIndex(index_x, y_upper_bound)
+            up_coordinate = self._generate_potential_move(robot_center, 
+                                                          robot_radius, 
+                                                          up_cell_index)
+
+            if up_coordinate is not None:
+                valid_moves.append(up_coordinate)
 
 
         seen = set()
@@ -150,33 +201,92 @@ class GridWorld:
         return unique
     
     def get_occupied_cells_for_partial_move(self, 
-                                          start_x: float, 
-                                          start_y: float,
+                                          robot_start_pos: Coordinate, 
                                           robot_radius: float,
-                                          dev_x: float,
-                                          dev_y: float) -> Set[Tuple[int, int]]:
-        
-        return set(self.get_occupied_cells_for_robot(start_x + dev_x, start_y + dev_y, robot_radius))
+                                          pos_change: PosChange) -> Set[GridIndex]:
+        robot_end_pos = Coordinate(robot_start_pos.x + pos_change.dev_x, 
+                                   robot_start_pos.y + pos_change.dev_y)
+        return set(self.get_occupied_cells_for_robot(robot_end_pos, robot_radius))
     
+    def _generate_reservation_list(self,
+                                      start_pos: Coordinate, 
+                                      robot_radius: float, 
+                                      robot_velocity: float,
+                                      current_time: float,
+                                      abs_num_major_steps: int,
+                                      abs_num_minor_steps: int,
+                                      sign_num_major_steps: int,
+                                      sign_num_minor_steps: int,
+                                      major_y: bool) -> List[MotionReservation]:
+        reservations: List[MotionReservation] = []
+
+        scale_ratio = float(abs_num_minor_steps) / float(abs_num_major_steps)
+                
+        for i in range(abs_num_major_steps):
+            prev_minor_displacement = sign_num_minor_steps * scale_ratio * i * self.cell_size
+            prev_major_displacement = sign_num_major_steps * i * self.cell_size
+            if major_y:
+                prev_pos_change = PosChange(dev_x=prev_minor_displacement, dev_y=prev_major_displacement)
+            else:
+                prev_pos_change = PosChange(dev_x=prev_major_displacement, dev_y=prev_minor_displacement)
+
+            prev_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(start_pos=start_pos, 
+                                                                                  robot_radius=robot_radius, 
+                                                                                  pos_change=prev_pos_change)
+
+            prev_total_displacement = np.sqrt(prev_minor_displacement**2 + prev_major_displacement**2)
+            prev_time_to_end = prev_total_displacement / robot_velocity if robot_velocity > 0 else 0
+
+            minor_displacement = sign_num_minor_steps * scale_ratio * (i+1) * self.cell_size
+            major_displacement = sign_num_major_steps * (i+1) * self.cell_size
+            if major_y:
+                pos_change = PosChange(dev_x=minor_displacement, dev_y=major_displacement)
+            else:
+                pos_change = PosChange(dev_x=major_displacement, dev_y=minor_displacement)
+            curr_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(start_pos=start_pos, 
+                                                                  robot_radius=robot_radius, 
+                                                                  pos_change=pos_change)
+            total_displacement = np.sqrt(minor_displacement**2 + major_displacement**2)
+            time_to_end = total_displacement / robot_velocity if robot_velocity > 0 else 0
+            
+            union_cells = prev_cells.union(curr_cells)
+            time_interval = TimeInterval(start=current_time + prev_time_to_end, 
+                                         end=current_time + time_to_end)
+            robot_occupancy = RobotOccupancy(occupied_cells=union_cells,
+                                             robot_center=Coordinate(start_pos.x + pos_change.dev_x, 
+                                                                     start_pos.y + pos_change.dev_y),
+                                             robot_radius=robot_radius)
+            motion_reservation =  MotionReservation(time_interval=time_interval,
+                                                    robot_occupancy=robot_occupancy)
+            reservations.append(motion_reservation)
+        return reservations
+
     def get_reservations_for_move(self, 
-                                  start: Tuple[float, float], 
-                                  end:Tuple[float, float],
+                                  robot_start_pos: Coordinate, 
+                                  robot_end_pos: Coordinate,
                                   robot_radius: float, 
                                   robot_velocity: float, 
-                                  current_time: float) -> Dict[Tuple[float, float], Tuple[Tuple[float, float], Set[Tuple[int, int]]]]:
-        reservations: Dict[Tuple[float, float], list[Tuple[int, int]]] = {}
-        num_y_steps = round((end[1] - start[1]) / self.cell_size)
-        num_x_steps = round((end[0] - start[0]) / self.cell_size)
+                                  current_time: float) -> List[MotionReservation]:
+        
+        num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
+        num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
         print(f"cell_size: {self.cell_size}")
-        print(f"y_diff: {end[1] - start[1]}")
-        print(f"x_diff: {end[0] - start[0]}")
+        print(f"y_diff: {robot_end_pos.y - robot_start_pos.y}")
+        print(f"x_diff: {robot_end_pos.x - robot_start_pos.x}")
         print(f"num_x_steps: {num_x_steps}")
         print(f"num_y_steps: {num_y_steps}")
 
         if num_y_steps == 0 and num_x_steps == 0:
-            reservations[(current_time, current_time)] = ((start[0], start[1]), self.get_occupied_cells_for_robot(robot_center_x=start[0], 
-                                                                                                                  robot_center_y=start[1], 
-                                                                                                                  robot_radius=robot_radius))
+            time_interval = TimeInterval(start=current_time, 
+                                         end=current_time)
+            robot_occupancy = RobotOccupancy(occupied_cells=set(self.get_occupied_cells_for_robot(
+                                                                robot_center=robot_start_pos,
+                                                                robot_radius=robot_radius)),
+                                         robot_center=robot_start_pos,
+                                         robot_radius=robot_radius)
+            reservations = [MotionReservation(time_interval=time_interval,
+                                              robot_occupancy=robot_occupancy)]
+
         else:
             abs_num_x_steps = abs(num_x_steps)
             abs_num_y_steps = abs(num_y_steps)
@@ -184,57 +294,27 @@ class GridWorld:
             sign_num_y_steps = 1 if num_y_steps > 0 else -1
 
             if abs_num_y_steps > abs_num_x_steps:
-                y_ratio = float(abs_num_x_steps) / float(abs_num_y_steps)
-                
-                for i in range(abs_num_y_steps):
-                    prev_x_displacement = sign_num_x_steps * y_ratio * i * self.cell_size
-                    prev_y_displacement = sign_num_y_steps * i * self.cell_size
-                    prev_cells = self.get_occupied_cells_for_partial_move(start_x=start[0], 
-                                                                          start_y=start[1], 
-                                                                          robot_radius=robot_radius, 
-                                                                          dev_x=prev_x_displacement, 
-                                                                          dev_y=prev_y_displacement)
-                    prev_total_displacement = np.sqrt(prev_x_displacement**2 + prev_y_displacement**2)
-                    prev_time_to_end = prev_total_displacement / robot_velocity if robot_velocity > 0 else 0
-
-                    x_displacement = sign_num_x_steps * y_ratio * (i+1) * self.cell_size
-                    y_displacement = sign_num_y_steps * (i+1) * self.cell_size
-                    curr_cells = self.get_occupied_cells_for_partial_move(start_x=start[0], 
-                                                                          start_y=start[1], 
-                                                                          robot_radius=robot_radius, 
-                                                                          dev_x=x_displacement, 
-                                                                          dev_y=y_displacement)
-                    total_displacement = np.sqrt(x_displacement**2 + y_displacement**2)
-                    time_to_end = total_displacement / robot_velocity if robot_velocity > 0 else 0
-                    
-                    union_cells = prev_cells.union(curr_cells)
-                    reservations[(current_time + prev_time_to_end, current_time + time_to_end)] = ((start[0]+x_displacement, start[1]+y_displacement), union_cells)
-                    
+                major_y = True
+                reservations = self._generate_reservation_list(start_pos=robot_start_pos, 
+                                                                robot_radius=robot_radius, 
+                                                                robot_velocity=robot_velocity,
+                                                                current_time=current_time,
+                                                                abs_num_major_steps=abs_num_y_steps,
+                                                                abs_num_minor_steps=abs_num_x_steps,
+                                                                sign_num_major_steps=sign_num_y_steps,
+                                                                sign_num_minor_steps=sign_num_x_steps,
+                                                                major_y=major_y)
             else:
-                x_ratio = float(abs_num_y_steps) / float(abs_num_x_steps)
-                for i in range(abs_num_x_steps):
-                    prev_x_displacement = sign_num_x_steps * i * self.cell_size
-                    prev_y_displacement = sign_num_y_steps * x_ratio * i * self.cell_size
-                    prev_cells = self.get_occupied_cells_for_partial_move(start_x=start[0], 
-                                                                          start_y=start[1], 
-                                                                          robot_radius=robot_radius, 
-                                                                          dev_x=prev_x_displacement, 
-                                                                          dev_y=prev_y_displacement)
-                    prev_total_displacement = np.sqrt(prev_x_displacement**2 + prev_y_displacement**2)
-                    prev_time_to_end = prev_total_displacement / robot_velocity if robot_velocity > 0 else 0
-
-                    x_displacement = sign_num_x_steps * (i+1) * self.cell_size
-                    y_displacement = sign_num_y_steps * x_ratio * (i+1) * self.cell_size
-                    curr_cells = self.get_occupied_cells_for_partial_move(start_x=start[0], 
-                                                                          start_y=start[1], 
-                                                                          robot_radius=robot_radius, 
-                                                                          dev_x=x_displacement, 
-                                                                          dev_y=y_displacement)
-                    total_displacement = np.sqrt(x_displacement**2 + y_displacement**2)
-                    time_to_end = total_displacement / robot_velocity if robot_velocity > 0 else 0
-
-                    union_cells = prev_cells.union(curr_cells)
-                    reservations[(current_time + prev_time_to_end, current_time + time_to_end)] = ((start[0]+x_displacement, start[1]+y_displacement), union_cells)
+                major_y = False
+                reservations = self._generate_reservation_list(start_pos=robot_start_pos, 
+                                                                robot_radius=robot_radius, 
+                                                                robot_velocity=robot_velocity,
+                                                                current_time=current_time,
+                                                                abs_num_major_steps=abs_num_x_steps,
+                                                                abs_num_minor_steps=abs_num_y_steps,
+                                                                sign_num_major_steps=sign_num_x_steps,
+                                                                sign_num_minor_steps=sign_num_y_steps,
+                                                                major_y=major_y)
 
         return reservations
     
