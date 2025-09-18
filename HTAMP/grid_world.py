@@ -70,6 +70,12 @@ class GridWorld:
         lower_x = cell_index.index_x * self.cell_size
         lower_y = cell_index.index_y * self.cell_size
         return Cell(lower_x, lower_y, lower_x + self.cell_size, lower_y + self.cell_size)
+    
+    def get_cell_index(self, 
+                       position: Coordinate) -> GridIndex:
+        index_x = int(np.floor(position.x / self.cell_size))
+        index_y = int(np.floor(position.y / self.cell_size))
+        return GridIndex(index_x, index_y)
 
     def robot_intersects_cell(self, 
                               robot_center: Coordinate, 
@@ -85,12 +91,12 @@ class GridWorld:
     def _get_robot_bounding_indices(self, 
                                     robot_center: Coordinate, 
                                     robot_radius: float) -> BoundingIndices:
-        lower_index_x = int(np.floor((robot_center.x - robot_radius) / self.cell_size))
-        lower_index_y = int(np.floor((robot_center.y - robot_radius) / self.cell_size))
-        upper_index_x = int(np.floor((robot_center.x + robot_radius) / self.cell_size))
-        upper_index_y = int(np.floor((robot_center.y + robot_radius) / self.cell_size))
+        lower_index = self.get_cell_index(Coordinate(robot_center.x - robot_radius, 
+                                                     robot_center.y - robot_radius))
+        upper_index = self.get_cell_index(Coordinate(robot_center.x + robot_radius, 
+                                                     robot_center.y + robot_radius))
 
-        return BoundingIndices(lower_index_x, lower_index_y, upper_index_x, upper_index_y)
+        return BoundingIndices(lower_index.index_x, lower_index.index_y, upper_index.index_x, upper_index.index_y)
 
     def is_robot_in_bounds(self, 
                           robot_center: Coordinate, 
