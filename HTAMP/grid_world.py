@@ -9,13 +9,13 @@ class Coordinate:
     x: float
     y: float
 
-@dataclass
+@dataclass(frozen=True)
 class GridIndex:
     index_x: int
     index_y: int
 
-@dataclass
-class Cell:
+@dataclass(frozen=True)
+class Cell: 
     lower_x: float
     lower_y: float
     upper_x: float
@@ -155,7 +155,7 @@ class GridWorld:
         x_upper_bound = bounding_indices.upper_x + 1
         y_upper_bound = bounding_indices.upper_y + 1
 
-        valid_moves = []
+        valid_moves: List[Coordinate] = []
         for index_y in range(max(0, y_lower_bound), min(self.height - 1, y_upper_bound) + 1):
             low_cell_index = GridIndex(x_lower_bound, index_y)
             low_coordinate = self._generate_potential_move(robot_center, 
@@ -194,7 +194,7 @@ class GridWorld:
         seen = set()
         unique = []
         for move in valid_moves:
-            key = (round(move[0], 4), round(move[1], 4))
+            key = (round(move.x, 4), round(move.y, 4))
             if key not in seen:
                 seen.add(key)
                 unique.append(move)
@@ -230,7 +230,7 @@ class GridWorld:
             else:
                 prev_pos_change = PosChange(dev_x=prev_major_displacement, dev_y=prev_minor_displacement)
 
-            prev_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(start_pos=start_pos, 
+            prev_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(robot_start_pos=start_pos, 
                                                                                   robot_radius=robot_radius, 
                                                                                   pos_change=prev_pos_change)
 
@@ -243,9 +243,9 @@ class GridWorld:
                 pos_change = PosChange(dev_x=minor_displacement, dev_y=major_displacement)
             else:
                 pos_change = PosChange(dev_x=major_displacement, dev_y=minor_displacement)
-            curr_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(start_pos=start_pos, 
-                                                                  robot_radius=robot_radius, 
-                                                                  pos_change=pos_change)
+            curr_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(robot_start_pos=start_pos, 
+                                                                                    robot_radius=robot_radius, 
+                                                                                    pos_change=pos_change)
             total_displacement = np.sqrt(minor_displacement**2 + major_displacement**2)
             time_to_end = total_displacement / robot_velocity if robot_velocity > 0 else 0
             
@@ -318,32 +318,35 @@ class GridWorld:
 
         return reservations
     
-    def plot_next_move(self, cell_size: float = 0.03534*2, robot_radius: float = 0.20,
-                       start: Tuple[float, float] = (30*0.03534*2, 10*0.03534*2),
-                       end: Tuple[float, float] = (32*0.03534*2, 10*0.03534*2), next_positions: List[Tuple[float, float]] = []):
+    def plot_next_move(self, 
+                       cell_size: float = 0.03534*2, 
+                       robot_radius: float = 0.20,
+                       start_pos: Coordinate = Coordinate(30*0.03534*2, 10*0.03534*2),
+                       end_pos: Coordinate = Coordinate(32*0.03534*2, 10*0.03534*2), 
+                       next_positions: List[Coordinate] = []):
         fig, ax = plt.subplots(figsize=(8, 6))
         for x in np.arange(0, (self.width + 1) * cell_size, cell_size):
             ax.axvline(x, linewidth=0.3)
         for y in np.arange(0, (self.height + 1) * cell_size, cell_size):
             ax.axhline(y, linewidth=0.3)
 
-        for (ix, iy) in self.get_occupied_cells_for_robot(start[0], start[1], robot_radius):
-            x0, y0, _, _ = self.cell_rect(ix, iy)
-            ax.add_patch(Rectangle((x0, y0), cell_size, cell_size, fill=False, linewidth=1.2))
+        for grid_index in self.get_occupied_cells_for_robot(start_pos, robot_radius):
+            cell = self.cell_rect(cell_index=grid_index)
+            ax.add_patch(Rectangle((cell.lower_x, cell.lower_y), cell_size, cell_size, fill=False, linewidth=1.2))
 
         # Plot original robot position
-        ax.add_patch(Circle(start, robot_radius, fill=False, color='blue', linewidth=2, label='Original Position'))
+        ax.add_patch(Circle((start_pos.x, start_pos.y), robot_radius, fill=False, color='blue', linewidth=2, label='Original Position'))
 
         # Plot new robot position
-        ax.add_patch(Circle(end, robot_radius, fill=False, color='green', linewidth=2, label='New Position'))
+        ax.add_patch(Circle((end_pos.x, end_pos.y), robot_radius, fill=False, color='green', linewidth=2, label='New Position'))
 
         # Plot the line of movement
-        ax.plot([start[0], end[0]], [start[1], end[1]], 'r--', linewidth=1, label='Movement')
+        ax.plot([start_pos.x, end_pos.x], [start_pos.y, end_pos.y], 'r--', linewidth=1, label='Movement')
 
 
         preview_radius = robot_radius * 0.05
-        for (nx, ny) in next_positions:
-            ax.add_patch(Circle((nx, ny), preview_radius, color='red', fill=True))
+        for coordinate in next_positions:
+            ax.add_patch(Circle((coordinate.x, coordinate.y), preview_radius, color='red', fill=True))
 
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(0, width * cell_size)
@@ -353,16 +356,13 @@ class GridWorld:
         plt.savefig("results/grid_move_example.png")
         plt.close()
 
-    def plot_reservations(self, reservations: Dict[Tuple[float, float], Set[Tuple[int, int]]], cell_size: float,
-                          robot_radius: float, start: Tuple[float, float], end: Tuple[float, float]):
-        """
-        Plots the reserved cells for each time interval.
+    def plot_reservations(self, 
+                          reservations: List[MotionReservation], 
+                          cell_size: float,
+                          robot_radius: float, 
+                          start_pos: Coordinate, 
+                          end_pos: Coordinate):
 
-        Args:
-            reservations: A dictionary where keys are time intervals (start_time, end_time)
-                        and values are sets of reserved cell coordinates (ix, iy).
-            cell_size: The size of each grid cell in meters.
-        """
         fig, ax = plt.subplots(figsize=(8, 6))
 
         # Plot grid lines
@@ -372,24 +372,27 @@ class GridWorld:
             ax.axhline(y, linewidth=0.3, color='lightgray')
         
         # Plot original robot position
-        ax.add_patch(Circle(start, robot_radius, fill=False, color='blue', linewidth=1, label='Original Position'))
+        ax.add_patch(Circle((start_pos.x, start_pos.y), robot_radius, fill=False, color='blue', linewidth=1, label='Original Position'))
 
         # Plot new robot position
-        ax.add_patch(Circle(end, robot_radius, fill=False, color='green', linewidth=1, label='New Position'))
+        ax.add_patch(Circle((end_pos.x, end_pos.y), robot_radius, fill=False, color='green', linewidth=1, label='New Position'))
 
         # Plot the line of movement
-        ax.plot([start[0], end[0]], [start[1], end[1]], 'r--', linewidth=1, label='Movement')
+        ax.plot([start_pos.x, end_pos.x], [start_pos.y, end_pos.y], 'r--', linewidth=1, label='Movement')
 
         # Plot reserved cells with different colors for different time intervals
         color_map = plt.get_cmap('viridis', len(reservations))
-        for i, ((start_time, end_time), (center, cells)) in enumerate(reservations.items()):
+        for i, reservation in enumerate(reservations):
             print(i)
             color = color_map(i)
-            for ix, iy in cells:
-                x0, y0, _, _ = self.cell_rect(ix, iy)
-                ax.add_patch(Rectangle((x0, y0), cell_size, cell_size, color=color, alpha=0.2, label=f'{start_time:.2f}-{end_time:.2f}'))
+            for cell_index in reservation.robot_occupancy.occupied_cells:
+                cell = self.cell_rect(cell_index=cell_index)
+                ax.add_patch(Rectangle((cell.lower_x, cell.lower_y), cell_size, cell_size, color=color, alpha=0.2, 
+                                       label=f'{reservation.time_interval.start:.2f}-{reservation.time_interval.end:.2f}'))
 
-            ax.add_patch(Circle(center, robot_radius, fill=False, color=color, linewidth=0.5))
+            ax.add_patch(Circle((reservation.robot_occupancy.robot_center.x, 
+                                 reservation.robot_occupancy.robot_center.y), 
+                                 robot_radius, fill=False, color=color, linewidth=0.5))
 
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(0, self.width * cell_size)
@@ -413,33 +416,30 @@ if __name__ == "__main__":
     world = GridWorld.empty(width, height, cell_size)
 
     robot_radius = 0.20
-    start = (30*cell_size, 10*cell_size)
+    start_pos = Coordinate(30*cell_size, 10*cell_size)
 
-    occ_cells = world.get_occupied_cells_for_robot(robot_center_x=start[0], 
-                                                   robot_center_y=start[1], 
+    occ_cells = world.get_occupied_cells_for_robot(robot_center=start_pos, 
                                                    robot_radius=robot_radius)
-    next_positions = world.get_valid_moves(robot_center_x=start[0], 
-                                           robot_center_y=start[1], 
+    next_positions = world.get_valid_moves(robot_center=start_pos, 
                                            robot_radius=robot_radius)
-
     #Select a random valid move
     import random
     if next_positions:
-        end = random.choice(next_positions)
+        end_pos = random.choice(next_positions)
     else:
-        end = start # Stay in place if no valid moves
+        end_pos = start_pos # Stay in place if no valid moves
     
     world.plot_next_move(cell_size=cell_size, 
                          robot_radius=robot_radius, 
-                         start=start, 
-                         end=end,
+                         start_pos=start_pos, 
+                         end_pos=end_pos,
                          next_positions=next_positions)
-    reservations = world.get_reservations_for_move(start=start, 
-                                                   end=end, 
+    reservations = world.get_reservations_for_move(robot_start_pos=start_pos, 
+                                                   robot_end_pos=end_pos, 
                                                    robot_radius=robot_radius, 
                                                    robot_velocity=0.1, 
                                                    current_time=0.0)
-    world.plot_reservations(reservations, cell_size, robot_radius, start, end)
+    world.plot_reservations(reservations, cell_size, robot_radius, start_pos, end_pos)
 
     
         
