@@ -323,18 +323,6 @@ class GridWorld:
             reservations.append(reservation)
 
         return reservations
-
-    def is_robot_move_collision_free(self, 
-                                robot_center: Coordinate, 
-                                robot_radius: float) -> bool:
-        if not self.is_robot_in_bounds(robot_center, robot_radius):
-            return False
-
-        occupied_cells = self.get_occupied_cells_for_robot(robot_center, robot_radius)
-        for cell_index in occupied_cells:
-            if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
-                return False
-        return True
     
     def is_move_collision_free(self,
                                robot_start_pos: Coordinate, 
