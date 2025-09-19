@@ -75,16 +75,24 @@ class GridWorld:
         index_x = int(np.floor(position.x / self.cell_size))
         index_y = int(np.floor(position.y / self.cell_size))
         return GridIndex(index_x, index_y)
+    
+    def _generate_closest_cell_coordinate(self, 
+                                        robot_center: Coordinate,
+                                        cell_index: GridIndex) -> Coordinate:
+        cell = self.cell_rect(cell_index)
+        selected_x = min(max(robot_center.x, cell.lower_x), cell.upper_x)
+        selected_y = min(max(robot_center.y, cell.lower_y), cell.upper_y)
+
+        return Coordinate(selected_x, selected_y)
 
     def robot_intersects_cell(self, 
                               robot_center: Coordinate, 
                               robot_radius: float, 
                               cell_index: GridIndex) -> bool:
-        cell = self.cell_rect(cell_index)
-        selected_x = min(max(robot_center.x, cell.lower_x), cell.upper_x)
-        selected_y = min(max(robot_center.y, cell.lower_y), cell.upper_y)
-        dev_x = robot_center.x - selected_x
-        dev_y = robot_center.y - selected_y
+        selected_coordinate = self._generate_closest_cell_coordinate(robot_center,
+                                                                    cell_index)
+        dev_x = robot_center.x - selected_coordinate.x
+        dev_y = robot_center.y - selected_coordinate.y
         return ((dev_x * dev_x) + (dev_y * dev_y)) <= (robot_radius * robot_radius)
     
     def _get_robot_bounding_indices(self, 
@@ -121,7 +129,7 @@ class GridWorld:
                         occupied_cells.append(cell_index)
         return occupied_cells
     
-    def is_robot_collision_free(self, 
+    def is_robot_in_free_space(self, 
                                 robot_center: Coordinate, 
                                 robot_radius: float) -> bool:
         if not self.is_robot_in_bounds(robot_center, robot_radius):
@@ -132,78 +140,6 @@ class GridWorld:
             if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
                 return False
         return True
-    
-    def _generate_potential_move(self, 
-                                robot_center: Coordinate, 
-                                robot_radius: float, 
-                                cell_index: GridIndex) -> Coordinate:
-        cell = self.cell_rect(cell_index)
-        selected_x = min(max(robot_center.x, cell.lower_x), cell.upper_x)
-        selected_y = min(max(robot_center.y, cell.lower_y), cell.upper_y)
-        coordinate = Coordinate(selected_x, selected_y)
-
-        if self.is_robot_collision_free(robot_center=coordinate,
-                                        robot_radius=robot_radius):
-            return coordinate
-
-        return None
-
-    
-    def get_valid_moves(self, 
-                        robot_center: Coordinate, 
-                        robot_radius: float) -> List[Coordinate]:
-        bounding_indices = self._get_robot_bounding_indices(robot_center, 
-                                                            robot_radius)
-
-        x_lower_bound = bounding_indices.lower_x - 1
-        y_lower_bound = bounding_indices.lower_y - 1
-        x_upper_bound = bounding_indices.upper_x + 1
-        y_upper_bound = bounding_indices.upper_y + 1
-
-        valid_moves: List[Coordinate] = []
-        for index_y in range(max(0, y_lower_bound), min(self.height - 1, y_upper_bound) + 1):
-            low_cell_index = GridIndex(x_lower_bound, index_y)
-            low_coordinate = self._generate_potential_move(robot_center, 
-                                                           robot_radius, 
-                                                           low_cell_index)
-
-            if low_coordinate is not None:
-                valid_moves.append(low_coordinate)
-
-            up_cell_index = GridIndex(x_upper_bound, index_y)
-            up_coordinate = self._generate_potential_move(robot_center, 
-                                                          robot_radius, 
-                                                          up_cell_index)
-
-            if up_coordinate is not None:
-                valid_moves.append(up_coordinate)
-
-        for index_x in range(max(0, x_lower_bound), min(self.width - 1, x_upper_bound) + 1):
-            low_cell_index = GridIndex(index_x, y_lower_bound)
-            low_coordinate = self._generate_potential_move(robot_center, 
-                                                           robot_radius, 
-                                                           low_cell_index)
-
-            if low_coordinate is not None:
-                valid_moves.append(low_coordinate)
-
-            up_cell_index = GridIndex(index_x, y_upper_bound)
-            up_coordinate = self._generate_potential_move(robot_center, 
-                                                          robot_radius, 
-                                                          up_cell_index)
-
-            if up_coordinate is not None:
-                valid_moves.append(up_coordinate)
-
-
-        seen = set()
-        unique = []
-        for move in valid_moves:
-            key = (round(move.x, 4), round(move.y, 4))
-            if key not in seen:
-                seen.add(key)
-                unique.append(move)
-        return unique
     
     def _get_occupied_cells_for_partial_move(self, 
                                           robot_start_pos: Coordinate, 
@@ -387,6 +323,99 @@ class GridWorld:
             reservations.append(reservation)
 
         return reservations
+
+    def is_robot_move_collision_free(self, 
+                                robot_center: Coordinate, 
+                                robot_radius: float) -> bool:
+        if not self.is_robot_in_bounds(robot_center, robot_radius):
+            return False
+
+        occupied_cells = self.get_occupied_cells_for_robot(robot_center, robot_radius)
+        for cell_index in occupied_cells:
+            if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
+                return False
+        return True
+    
+    def is_move_collision_free(self,
+                               robot_start_pos: Coordinate, 
+                               robot_end_pos: Coordinate,
+                               robot_radius: float) -> bool:
+        robot_occupancies = self.get_robot_occupancy_for_move(robot_start_pos, 
+                                                             robot_end_pos,
+                                                             robot_radius)
+        for occupancy in robot_occupancies:
+            for cell_index in occupancy.occupied_cells:
+                if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
+                    return False
+        return True
+    
+    def _get_potential_move_position(self,
+                                    robot_center: Coordinate, 
+                                    robot_radius: float,
+                                    index_x: int, 
+                                    index_y: int) -> Coordinate:
+        cell_index = GridIndex(index_x, index_y)
+        coordinate = self._generate_closest_cell_coordinate(robot_center=robot_center,
+                                                            cell_index=cell_index)
+
+        if not self.is_robot_in_bounds(coordinate, robot_radius) or \
+            not self.is_robot_in_free_space(coordinate, robot_radius) or \
+                not self.is_move_collision_free(robot_center, coordinate, robot_radius):
+            return None
+        else:
+            return coordinate
+
+    def get_valid_moves(self, 
+                        robot_center: Coordinate, 
+                        robot_radius: float) -> List[Coordinate]:
+        bounding_indices = self._get_robot_bounding_indices(robot_center, 
+                                                            robot_radius)
+
+        x_lower_bound = bounding_indices.lower_x - 1
+        y_lower_bound = bounding_indices.lower_y - 1
+        x_upper_bound = bounding_indices.upper_x + 1
+        y_upper_bound = bounding_indices.upper_y + 1
+
+        valid_moves: List[Coordinate] = []
+        for index_y in range(max(0, y_lower_bound), min(self.height - 1, y_upper_bound) + 1):
+            low_coordinate = self._get_potential_move_position(robot_center, 
+                                                               robot_radius, 
+                                                               x_lower_bound, 
+                                                               index_y)
+            if low_coordinate is not None:
+                valid_moves.append(low_coordinate)
+
+            up_coordinate = self._get_potential_move_position(robot_center, 
+                                                              robot_radius, 
+                                                              x_upper_bound, 
+                                                              index_y)
+            if up_coordinate is not None:
+                valid_moves.append(up_coordinate)
+
+        for index_x in range(max(0, x_lower_bound), min(self.width - 1, x_upper_bound) + 1):
+            low_coordinate = self._get_potential_move_position(robot_center, 
+                                                               robot_radius, 
+                                                               index_x, 
+                                                               y_lower_bound)
+            if low_coordinate is not None:
+                valid_moves.append(low_coordinate)
+
+            up_coordinate = self._get_potential_move_position(robot_center, 
+                                                              robot_radius, 
+                                                              index_x, 
+                                                              y_upper_bound)
+            if up_coordinate is not None:
+                valid_moves.append(up_coordinate)
+
+
+        seen = set()
+        unique = []
+        for move in valid_moves:
+            key = (round(move.x, 4), round(move.y, 4))
+            if key not in seen:
+                seen.add(key)
+                unique.append(move)
+        return unique
     
     def plot_next_move(self, 
                        cell_size: float = 0.03534*2, 
