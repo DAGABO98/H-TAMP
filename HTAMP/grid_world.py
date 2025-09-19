@@ -301,7 +301,7 @@ class GridWorld:
                                                     sign_num_major_steps=sign_num_x_steps,
                                                     sign_num_minor_steps=sign_num_y_steps)
 
-    def get_reservations_for_move(self, 
+    def get_robot_reservations_for_move(self, 
                                   robot_start_pos: Coordinate, 
                                   robot_end_pos: Coordinate,
                                   robot_radius: float, 
@@ -533,11 +533,11 @@ if __name__ == "__main__":
                          start_pos=start_pos, 
                          end_pos=end_pos,
                          next_positions=next_positions)
-    reservations = world.get_reservations_for_move(robot_start_pos=start_pos, 
-                                                   robot_end_pos=end_pos, 
-                                                   robot_radius=robot_radius, 
-                                                   robot_velocity=0.1, 
-                                                   current_time=0.0)
+    reservations = world.get_robot_reservations_for_move(robot_start_pos=start_pos, 
+                                                         robot_end_pos=end_pos, 
+                                                         robot_radius=robot_radius, 
+                                                         robot_velocity=0.1, 
+                                                         current_time=0.0)
     world.plot_reservations(reservations, cell_size, robot_radius, start_pos, end_pos)
 
     
