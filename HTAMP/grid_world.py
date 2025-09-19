@@ -42,7 +42,6 @@ class TimeInterval:
 class RobotOccupancy:
     occupied_cells: Set[GridIndex]
     robot_center: Coordinate
-    robot_radius: float
 
 @dataclass
 class MotionReservation:
@@ -206,7 +205,7 @@ class GridWorld:
                 unique.append(move)
         return unique
     
-    def get_occupied_cells_for_partial_move(self, 
+    def _get_occupied_cells_for_partial_move(self, 
                                           robot_start_pos: Coordinate, 
                                           robot_radius: float,
                                           pos_change: PosChange) -> Set[GridIndex]:
@@ -214,58 +213,157 @@ class GridWorld:
                                    robot_start_pos.y + pos_change.dev_y)
         return set(self.get_occupied_cells_for_robot(robot_end_pos, robot_radius))
     
-    def _generate_reservation_list(self,
-                                      start_pos: Coordinate, 
-                                      robot_radius: float, 
-                                      robot_velocity: float,
-                                      current_time: float,
-                                      abs_num_major_steps: int,
-                                      abs_num_minor_steps: int,
-                                      sign_num_major_steps: int,
-                                      sign_num_minor_steps: int,
-                                      major_y: bool) -> List[MotionReservation]:
-        reservations: List[MotionReservation] = []
+    def _get_occupied_cells_at_step(self,
+                                    start_pos: Coordinate,
+                                    robot_radius: float,
+                                    sign_num_minor_steps: int,
+                                    sign_num_major_steps: int,
+                                    scale_ratio: float,
+                                    step_num: int,
+                                    major_y: bool) -> Tuple[Set[GridIndex], PosChange]:
+        minor_displacement = sign_num_minor_steps * scale_ratio * step_num * self.cell_size
+        major_displacement = sign_num_major_steps * step_num * self.cell_size
+        if major_y:
+            pos_change = PosChange(dev_x=minor_displacement, dev_y=major_displacement)
+        else:
+            pos_change = PosChange(dev_x=major_displacement, dev_y=minor_displacement)
+
+        occupied_cells: Set[GridIndex] = self._get_occupied_cells_for_partial_move(robot_start_pos=start_pos, 
+                                                                                    robot_radius=robot_radius, 
+                                                                                    pos_change=pos_change)
+        return occupied_cells, pos_change
+    
+    def _generate_robot_occupancy_list(self,
+                                       start_pos: Coordinate, 
+                                       robot_radius: float,
+                                       abs_num_major_steps: int,
+                                       abs_num_minor_steps: int,
+                                       sign_num_major_steps: int,
+                                       sign_num_minor_steps: int,
+                                       major_y: bool) -> List[RobotOccupancy]:
+        robot_occupancies: List[RobotOccupancy] = []
 
         scale_ratio = float(abs_num_minor_steps) / float(abs_num_major_steps)
-                
+
+        for i in range(abs_num_major_steps):
+            prev_cells, _ = self._get_occupied_cells_at_step(start_pos=start_pos,
+                                                            robot_radius=robot_radius,
+                                                            sign_num_minor_steps=sign_num_minor_steps,
+                                                            sign_num_major_steps=sign_num_major_steps,
+                                                            scale_ratio=scale_ratio,
+                                                            step_num=i,
+                                                            major_y=major_y)
+            
+            curr_cells, curr_pos_change = self._get_occupied_cells_at_step(start_pos=start_pos,
+                                                        robot_radius=robot_radius,
+                                                        sign_num_minor_steps=sign_num_minor_steps,
+                                                        sign_num_major_steps=sign_num_major_steps,
+                                                        scale_ratio=scale_ratio,
+                                                        step_num=i+1,
+                                                        major_y=major_y)
+
+            occupied_cells = prev_cells.union(curr_cells)
+
+            robot_occupancy = RobotOccupancy(occupied_cells=occupied_cells,
+                                             robot_center=Coordinate(start_pos.x + curr_pos_change.dev_x, 
+                                                                     start_pos.y + curr_pos_change.dev_y))
+            robot_occupancies.append(robot_occupancy)
+        return robot_occupancies
+    
+    def _generate_robot_timing_list(self,
+                                   robot_velocity: float,
+                                   current_time: float,
+                                   abs_num_major_steps: int,
+                                   abs_num_minor_steps: int,
+                                   sign_num_major_steps: int,
+                                   sign_num_minor_steps: int) -> List[TimeInterval]:
+        time_intervals: List[TimeInterval] = []
+
+        scale_ratio = float(abs_num_minor_steps) / float(abs_num_major_steps)
+
         for i in range(abs_num_major_steps):
             prev_minor_displacement = sign_num_minor_steps * scale_ratio * i * self.cell_size
             prev_major_displacement = sign_num_major_steps * i * self.cell_size
-            if major_y:
-                prev_pos_change = PosChange(dev_x=prev_minor_displacement, dev_y=prev_major_displacement)
-            else:
-                prev_pos_change = PosChange(dev_x=prev_major_displacement, dev_y=prev_minor_displacement)
-
-            prev_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(robot_start_pos=start_pos, 
-                                                                                  robot_radius=robot_radius, 
-                                                                                  pos_change=prev_pos_change)
-
             prev_total_displacement = np.sqrt(prev_minor_displacement**2 + prev_major_displacement**2)
             prev_time_to_end = prev_total_displacement / robot_velocity if robot_velocity > 0 else 0
 
             minor_displacement = sign_num_minor_steps * scale_ratio * (i+1) * self.cell_size
             major_displacement = sign_num_major_steps * (i+1) * self.cell_size
-            if major_y:
-                pos_change = PosChange(dev_x=minor_displacement, dev_y=major_displacement)
-            else:
-                pos_change = PosChange(dev_x=major_displacement, dev_y=minor_displacement)
-            curr_cells: Set[GridIndex] = self.get_occupied_cells_for_partial_move(robot_start_pos=start_pos, 
-                                                                                    robot_radius=robot_radius, 
-                                                                                    pos_change=pos_change)
             total_displacement = np.sqrt(minor_displacement**2 + major_displacement**2)
             time_to_end = total_displacement / robot_velocity if robot_velocity > 0 else 0
             
-            union_cells = prev_cells.union(curr_cells)
             time_interval = TimeInterval(start=current_time + prev_time_to_end, 
                                          end=current_time + time_to_end)
-            robot_occupancy = RobotOccupancy(occupied_cells=union_cells,
-                                             robot_center=Coordinate(start_pos.x + pos_change.dev_x, 
-                                                                     start_pos.y + pos_change.dev_y),
-                                             robot_radius=robot_radius)
-            motion_reservation =  MotionReservation(time_interval=time_interval,
-                                                    robot_occupancy=robot_occupancy)
-            reservations.append(motion_reservation)
-        return reservations
+            time_intervals.append(time_interval)
+        return time_intervals
+    
+    def get_robot_occupancy_for_move(self,
+                                     robot_start_pos: Coordinate, 
+                                     robot_end_pos: Coordinate,
+                                     robot_radius: float) -> List[RobotOccupancy]:
+        num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
+        num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
+
+        if num_y_steps == 0 and num_x_steps == 0:
+            occupied_cells = set(self.get_occupied_cells_for_robot(robot_center=robot_start_pos,
+                                                                   robot_radius=robot_radius))
+            return [RobotOccupancy(occupied_cells=occupied_cells,
+                                   robot_center=robot_start_pos)]
+
+        abs_num_x_steps = abs(num_x_steps)
+        abs_num_y_steps = abs(num_y_steps)
+        sign_num_x_steps = 1 if num_x_steps > 0 else -1
+        sign_num_y_steps = 1 if num_y_steps > 0 else -1
+
+        if abs_num_y_steps > abs_num_x_steps:
+            major_y = True
+            return self._generate_robot_occupancy_list(start_pos=robot_start_pos, 
+                                                       robot_radius=robot_radius,
+                                                       abs_num_major_steps=abs_num_y_steps,
+                                                       abs_num_minor_steps=abs_num_x_steps,
+                                                       sign_num_major_steps=sign_num_y_steps,
+                                                       sign_num_minor_steps=sign_num_x_steps,
+                                                       major_y=major_y)
+        else:
+            major_y = False
+            return self._generate_robot_occupancy_list(start_pos=robot_start_pos, 
+                                                       robot_radius=robot_radius,
+                                                       abs_num_major_steps=abs_num_x_steps,
+                                                       abs_num_minor_steps=abs_num_y_steps,
+                                                       sign_num_major_steps=sign_num_x_steps,
+                                                       sign_num_minor_steps=sign_num_y_steps,
+                                                       major_y=major_y)
+    
+    def get_robot_timing_for_move(self,
+                                  robot_start_pos: Coordinate, 
+                                  robot_end_pos: Coordinate,
+                                  robot_velocity: float,
+                                  current_time: float) -> List[TimeInterval]:
+        num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
+        num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
+
+        if num_y_steps == 0 and num_x_steps == 0:
+            return [TimeInterval(start=current_time, end=current_time)]
+
+        abs_num_x_steps = abs(num_x_steps)
+        abs_num_y_steps = abs(num_y_steps)
+        sign_num_x_steps = 1 if num_x_steps > 0 else -1
+        sign_num_y_steps = 1 if num_y_steps > 0 else -1
+
+        if abs_num_y_steps > abs_num_x_steps:
+            return self._generate_robot_timing_list(robot_velocity=robot_velocity,
+                                                    current_time=current_time,
+                                                    abs_num_major_steps=abs_num_y_steps,
+                                                    abs_num_minor_steps=abs_num_x_steps,
+                                                    sign_num_major_steps=sign_num_y_steps,
+                                                    sign_num_minor_steps=sign_num_x_steps)
+        else:
+            return self._generate_robot_timing_list(robot_velocity=robot_velocity,
+                                                    current_time=current_time,
+                                                    abs_num_major_steps=abs_num_x_steps,
+                                                    abs_num_minor_steps=abs_num_y_steps,
+                                                    sign_num_major_steps=sign_num_x_steps,
+                                                    sign_num_minor_steps=sign_num_y_steps)
 
     def get_reservations_for_move(self, 
                                   robot_start_pos: Coordinate, 
@@ -274,53 +372,19 @@ class GridWorld:
                                   robot_velocity: float, 
                                   current_time: float) -> List[MotionReservation]:
         
-        num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
-        num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
-        print(f"cell_size: {self.cell_size}")
-        print(f"y_diff: {robot_end_pos.y - robot_start_pos.y}")
-        print(f"x_diff: {robot_end_pos.x - robot_start_pos.x}")
-        print(f"num_x_steps: {num_x_steps}")
-        print(f"num_y_steps: {num_y_steps}")
-
-        if num_y_steps == 0 and num_x_steps == 0:
-            time_interval = TimeInterval(start=current_time, 
-                                         end=current_time)
-            robot_occupancy = RobotOccupancy(occupied_cells=set(self.get_occupied_cells_for_robot(
-                                                                robot_center=robot_start_pos,
-                                                                robot_radius=robot_radius)),
-                                         robot_center=robot_start_pos,
-                                         robot_radius=robot_radius)
-            reservations = [MotionReservation(time_interval=time_interval,
-                                              robot_occupancy=robot_occupancy)]
-
-        else:
-            abs_num_x_steps = abs(num_x_steps)
-            abs_num_y_steps = abs(num_y_steps)
-            sign_num_x_steps = 1 if num_x_steps > 0 else -1
-            sign_num_y_steps = 1 if num_y_steps > 0 else -1
-
-            if abs_num_y_steps > abs_num_x_steps:
-                major_y = True
-                reservations = self._generate_reservation_list(start_pos=robot_start_pos, 
-                                                                robot_radius=robot_radius, 
-                                                                robot_velocity=robot_velocity,
-                                                                current_time=current_time,
-                                                                abs_num_major_steps=abs_num_y_steps,
-                                                                abs_num_minor_steps=abs_num_x_steps,
-                                                                sign_num_major_steps=sign_num_y_steps,
-                                                                sign_num_minor_steps=sign_num_x_steps,
-                                                                major_y=major_y)
-            else:
-                major_y = False
-                reservations = self._generate_reservation_list(start_pos=robot_start_pos, 
-                                                                robot_radius=robot_radius, 
-                                                                robot_velocity=robot_velocity,
-                                                                current_time=current_time,
-                                                                abs_num_major_steps=abs_num_x_steps,
-                                                                abs_num_minor_steps=abs_num_y_steps,
-                                                                sign_num_major_steps=sign_num_x_steps,
-                                                                sign_num_minor_steps=sign_num_y_steps,
-                                                                major_y=major_y)
+        robot_occupancies = self.get_robot_occupancy_for_move(robot_start_pos, 
+                                                             robot_end_pos,
+                                                             robot_radius)
+        time_intervals = self.get_robot_timing_for_move(robot_start_pos,
+                                                        robot_end_pos,
+                                                        robot_velocity,
+                                                        current_time)
+        assert len(robot_occupancies) == len(time_intervals)
+        reservations: List[MotionReservation] = []
+        for i in range(len(robot_occupancies)):
+            reservation = MotionReservation(time_interval=time_intervals[i],
+                                            robot_occupancy=robot_occupancies[i])
+            reservations.append(reservation)
 
         return reservations
     
