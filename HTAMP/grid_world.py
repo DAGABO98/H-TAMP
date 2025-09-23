@@ -4,10 +4,27 @@ from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict, Any
 from matplotlib.patches import Rectangle, Circle
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Coordinate:
     x: float
     y: float
+    tol: float = 1e-6
+
+    def __post_init__(self):
+        if self.tol <= 0:
+            raise ValueError("tol must be > 0")
+
+    def _key(self):
+        # snap-to-grid; points in the same cell are "equal"
+        return (round(self.x / self.tol), round(self.y / self.tol), self.tol)
+
+    def __eq__(self, other):
+        if not isinstance(other, Coordinate):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self):
+        return hash(self._key())
 
 @dataclass(frozen=True)
 class GridIndex:
@@ -33,10 +50,27 @@ class BoundingIndices:
     upper_x: int
     upper_y: int
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TimeInterval:
     start: float
     end: float
+    tol: float = 1e-6
+
+    def __post_init__(self):
+        if self.tol <= 0:
+            raise ValueError("tol must be > 0")
+
+    def _key(self):
+        # snap-to-grid; points in the same cell are "equal"
+        return (round(self.start / self.tol), round(self.end / self.tol), self.tol)
+
+    def __eq__(self, other):
+        if not isinstance(other, TimeInterval):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self):
+        return hash(self._key())
 
 @dataclass
 class RobotOccupancy:
@@ -367,15 +401,17 @@ class GridWorld:
                         robot_profile: RobotProfile) -> List[Coordinate]:
         valid_moves: List[Coordinate] = []
 
-        single_x_displacement = [1, 0, -1]
-        single_y_displacement = [1, 0, -1]
-        double_x_displacement = [2, -2]
-        double_y_displacement = [2, -2]
+        single_x_displacement = [1.0, 0.0, -1.0]
+        single_y_displacement = [1.0, 0.0, -1.0]
+        double_x_displacement = [2.0, -2.0]
+        double_y_displacement = [2.0, -2.0]
 
         for single_x in single_x_displacement:
             for single_y in single_y_displacement:
-                coordinate = Coordinate(robot_center.x + single_x * self.cell_size,
-                                        robot_center.y + single_y * self.cell_size)
+                if single_x == 0 and single_y == 0:
+                    continue
+                coordinate = Coordinate(robot_center.x + (single_x * self.cell_size),
+                                        robot_center.y + (single_y * self.cell_size))
                 if self.is_robot_in_bounds(coordinate, robot_profile) and \
                     self.is_robot_in_free_space(coordinate, robot_profile) and \
                         self.is_move_collision_free(robot_center, coordinate, robot_profile):
@@ -385,8 +421,8 @@ class GridWorld:
             for single_y in single_y_displacement:
                 if single_y == 0:
                     continue
-                coordinate = Coordinate(robot_center.x + double_x * self.cell_size,
-                                        robot_center.y + single_y * self.cell_size)
+                coordinate = Coordinate(robot_center.x + (double_x * self.cell_size),
+                                        robot_center.y + (single_y * self.cell_size))
                 if self.is_robot_in_bounds(coordinate, robot_profile) and \
                     self.is_robot_in_free_space(coordinate, robot_profile) and \
                         self.is_move_collision_free(robot_center, coordinate, robot_profile):   
