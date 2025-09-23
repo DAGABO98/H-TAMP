@@ -1,4 +1,6 @@
+from datetime import datetime
 import heapq
+import traceback
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
@@ -112,15 +114,18 @@ class SIPPNode:
 class SIPPwRT:
     def __init__(self, 
                  grid: GridWorld, 
-                 reservation_table: Optional[ReservationTable]):
+                 reservation_table: Optional[ReservationTable],
+                 weight_factor: float = 1.0):
         self.grid = grid
         self.reservation_table = reservation_table
-    
+        self.weight_factor = weight_factor
+
     def heuristic(self, 
                   pos: Coordinate, 
-                  goal: Coordinate) -> float:
-        return np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y]))
-    
+                  goal: Coordinate,
+                  robot_profile: RobotProfile) -> float:
+        return np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y])) / robot_profile.speed
+
     def _intersect_intervals(self, 
                              interval_list1: List[TimeReservation],
                              interval_list2: List[TimeReservation]) -> List[TimeReservation]:
@@ -197,7 +202,7 @@ class SIPPwRT:
         dev_x = end_pos.x - start_pos.x
         dev_y = end_pos.y - start_pos.y
         total_displacement = np.sqrt(dev_x**2 + dev_y**2)
-        travel_time = total_displacement / robot_profile.velocity if robot_profile.velocity > 0 else 0
+        travel_time = total_displacement / robot_profile.speed if robot_profile.speed > 0 else 0
         return travel_time
 
     def _get_earliest_departure(self,
@@ -216,8 +221,7 @@ class SIPPwRT:
         if self.check_conflict_for_move(start_pos=start_pos, 
                                         end_pos=end_pos, 
                                         robot_profile=robot_profile,
-                                        current_time=current_time,
-                                        travel_time=travel_time):
+                                        current_time=current_time):
             return None
         if current_time + travel_time <= end_pos_interval.end:
             return current_time
@@ -278,7 +282,7 @@ class SIPPwRT:
         open_set: List[PQItem] = []
         seen_set: Dict[Tuple[Coordinate, TimeInterval], float] = {}
         for node in node_list:
-            f = node.arrival + self.heuristic(node.pos, goal_pos)
+            f = node.arrival + (self.weight_factor * self.heuristic(node.pos, goal_pos, robot_profile))
             heapq.heappush(open_set, PQItem(f=f, g=node.arrival, node=node))
             seen_set[(node.pos, node.interval)] = node.arrival
 
@@ -287,7 +291,8 @@ class SIPPwRT:
             current_node = current_item.node
 
             if self._check_goal(pos=current_node.pos, goal=goal_pos, robot_profile=robot_profile):
-                return self._reconstruct_path(current_node)
+                return self._reconstruct_path(node=current_node, 
+                                              robot_profile=robot_profile)
 
             for potential_next_move in self.grid.get_valid_moves(robot_center=current_node.pos,
                                                                  robot_profile=robot_profile):
@@ -314,17 +319,18 @@ class SIPPwRT:
                     g_prev = seen_set.get(child_key)
                     if g_prev is None or arrival_time < g_prev:
                         seen_set[child_key] = arrival_time
-                        f = arrival_time + self.heuristic(child_node.pos, goal_pos)
+                        f = arrival_time + (self.weight_factor * self.heuristic(child_node.pos, goal_pos, robot_profile))
                         heapq.heappush(open_set, PQItem(f=f, g=arrival_time, node=child_node))
 
         return None
 
 class MotionPlanner:
-    def __init__(self, grid: GridWorld):
+    def __init__(self, grid: GridWorld, weight_factor: float = 1.0):
         self.grid = grid
         self.reservation_table = ReservationTable(reservations={}, robot_cell_dict={})
         self.planner = SIPPwRT(grid=grid, 
-                               reservation_table=self.reservation_table)
+                               reservation_table=self.reservation_table,
+                               weight_factor=weight_factor)
 
     def obtain_path_for_agent(self,
                         start_pos: Coordinate,
@@ -403,28 +409,29 @@ class MotionPlanner:
         colors = plt.cm.get_cmap('hsv', len(paths) + 1)
         for i, path in enumerate(paths):
             for j in range(len(path) - 1):
-                start, start_time = path[j]
-                end, end_time = path[j + 1]
+                start, start_interval = path[j]
+                end, end_interval = path[j + 1]
                 ax.plot([start.x, end.x], [start.y, end.y], color=colors(i), linewidth=2)
                 circle = Circle((start.x, start.y), robot_radius, color=colors(i), alpha=0.3)
                 ax.add_patch(circle)
             # Draw the last position
-            end, end_time = path[-1]
+            end, end_interval = path[-1]
             circle = Circle((end.x, end.y), robot_radius, color=colors(i), alpha=0.3)
             ax.add_patch(circle)
+        
+        plt.savefig("results/planned_paths.png")
+        plt.close()
 
-        plt.show()
-
-if __name__ == "__main__":
+def main():
     width, height = 50, 25
     cell_size = 2*0.03534
     world = GridWorld.empty(width, height, cell_size)
 
-    robot_profile = RobotProfile(radius=0.20, velocity=0.1, robot_id=1)
+    robot_profile = RobotProfile(radius=0.20, speed=0.2, robot_id=1)
     start_pos = Coordinate(30*cell_size, 10*cell_size)
 
     goal_pos = Coordinate(5*cell_size, 20*cell_size)
-    planner = MotionPlanner(grid=world)
+    planner = MotionPlanner(grid=world, weight_factor=1.0)
     path = planner.obtain_path_for_agent(start_pos=start_pos,
                                         goal_pos=goal_pos,
                                         robot_profile=robot_profile,
@@ -436,3 +443,13 @@ if __name__ == "__main__":
             print(f"Position: ({pos.x:.2f}, {pos.y:.2f}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
         planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
         planner.plot_paths(paths=[path], robot_radius=robot_profile.radius)
+
+if __name__ == "__main__":
+    pStart = datetime.now()
+    try:
+        main()
+    except Exception as errorMainContext:
+        print("Fail End Process: ", errorMainContext)
+        traceback.print_exc()
+    pEnd = datetime.now()
+    print(f"Total planning time: {pEnd - pStart}")
