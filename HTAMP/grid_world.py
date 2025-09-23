@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict, Any
 from matplotlib.patches import Rectangle, Circle
 
-@dataclass
+@dataclass(frozen=True)
 class Coordinate:
     x: float
     y: float
@@ -21,19 +21,19 @@ class Cell:
     upper_x: float
     upper_y: float
 
-@dataclass
+@dataclass(frozen=True)
 class PosChange:
     dev_x: float
     dev_y: float
 
-@dataclass
+@dataclass(frozen=True)
 class BoundingIndices:
     lower_x: int
     lower_y: int
     upper_x: int
     upper_y: int
 
-@dataclass
+@dataclass(frozen=True)
 class TimeInterval:
     start: float
     end: float
@@ -51,7 +51,7 @@ class MotionReservation:
 @dataclass
 class RobotProfile:
     radius: float
-    velocity: float
+    speed: float
     robot_id: int
 
 @dataclass
@@ -228,12 +228,12 @@ class GridWorld:
             prev_minor_displacement = sign_num_minor_steps * scale_ratio * i * self.cell_size
             prev_major_displacement = sign_num_major_steps * i * self.cell_size
             prev_total_displacement = np.sqrt(prev_minor_displacement**2 + prev_major_displacement**2)
-            prev_time_to_end = prev_total_displacement / robot_profile.velocity if robot_profile.velocity > 0 else 0
+            prev_time_to_end = prev_total_displacement / robot_profile.speed if robot_profile.speed > 0 else 0
 
             minor_displacement = sign_num_minor_steps * scale_ratio * (i+1) * self.cell_size
             major_displacement = sign_num_major_steps * (i+1) * self.cell_size
             total_displacement = np.sqrt(minor_displacement**2 + major_displacement**2)
-            time_to_end = total_displacement / robot_profile.velocity if robot_profile.velocity > 0 else 0
+            time_to_end = total_displacement / robot_profile.speed if robot_profile.speed > 0 else 0
             
             time_interval = TimeInterval(start=current_time + prev_time_to_end, 
                                          end=current_time + time_to_end)
@@ -416,7 +416,7 @@ class GridWorld:
     
     def plot_next_move(self, 
                        cell_size: float = 0.03534*2, 
-                       robot_profile: RobotProfile = RobotProfile(radius=0.20, velocity=0.1, robot_id=1),
+                       robot_profile: RobotProfile = RobotProfile(radius=0.20, speed=0.1, robot_id=1),
                        start_pos: Coordinate = Coordinate(30*0.03534*2, 10*0.03534*2),
                        end_pos: Coordinate = Coordinate(32*0.03534*2, 10*0.03534*2), 
                        next_positions: List[Coordinate] = []):
@@ -512,7 +512,7 @@ if __name__ == "__main__":
     cell_size = 2*0.03534
     world = GridWorld.empty(width, height, cell_size)
 
-    robot_profile = RobotProfile(radius=0.20, velocity=0.1, robot_id=1)
+    robot_profile = RobotProfile(radius=0.20, speed=0.1, robot_id=1)
     start_pos = Coordinate(30*cell_size, 10*cell_size)
 
     occ_cells = world.get_occupied_cells_for_robot(robot_center=start_pos, 
