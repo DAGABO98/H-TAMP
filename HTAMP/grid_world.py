@@ -361,6 +361,18 @@ class GridWorld:
             return None
         else:
             return coordinate
+        
+    def _push_coordinate_away_from_center(self,
+                                          robot_center: Coordinate, 
+                                          robot_profile: RobotProfile,
+                                          coordinate: Coordinate) -> Coordinate:
+            dev_x = (coordinate.x - robot_center.x)
+            dev_y = (coordinate.y - robot_center.y)
+
+
+            new_x = coordinate.x + dev_x
+            new_y = coordinate.y + dev_y
+            return Coordinate(new_x, new_y)
 
     def get_valid_moves(self, 
                         robot_center: Coordinate, 
@@ -368,10 +380,10 @@ class GridWorld:
         bounding_indices = self._get_robot_bounding_indices(robot_center, 
                                                             robot_profile)
 
-        x_lower_bound = bounding_indices.lower_x - 1
-        y_lower_bound = bounding_indices.lower_y - 1
-        x_upper_bound = bounding_indices.upper_x + 1
-        y_upper_bound = bounding_indices.upper_y + 1
+        x_lower_bound = bounding_indices.lower_x
+        y_lower_bound = bounding_indices.lower_y
+        x_upper_bound = bounding_indices.upper_x
+        y_upper_bound = bounding_indices.upper_y
 
         valid_moves: List[Coordinate] = []
         for index_y in range(max(0, y_lower_bound), min(self.height - 1, y_upper_bound) + 1):
@@ -380,6 +392,9 @@ class GridWorld:
                                                                x_lower_bound, 
                                                                index_y)
             if low_coordinate is not None:
+                low_coordinate = self._push_coordinate_away_from_center(robot_center, 
+                                                                    robot_profile, 
+                                                                    low_coordinate)
                 valid_moves.append(low_coordinate)
 
             up_coordinate = self._get_potential_move_position(robot_center, 
@@ -387,6 +402,9 @@ class GridWorld:
                                                               x_upper_bound, 
                                                               index_y)
             if up_coordinate is not None:
+                up_coordinate = self._push_coordinate_away_from_center(robot_center,
+                                                                   robot_profile,
+                                                                   up_coordinate)
                 valid_moves.append(up_coordinate)
 
         for index_x in range(max(0, x_lower_bound), min(self.width - 1, x_upper_bound) + 1):
@@ -395,6 +413,9 @@ class GridWorld:
                                                                index_x, 
                                                                y_lower_bound)
             if low_coordinate is not None:
+                low_coordinate = self._push_coordinate_away_from_center(robot_center, 
+                                                                    robot_profile, 
+                                                                    low_coordinate)
                 valid_moves.append(low_coordinate)
 
             up_coordinate = self._get_potential_move_position(robot_center, 
@@ -402,6 +423,9 @@ class GridWorld:
                                                               index_x, 
                                                               y_upper_bound)
             if up_coordinate is not None:
+                up_coordinate = self._push_coordinate_away_from_center(robot_center,
+                                                                   robot_profile,
+                                                                   up_coordinate)
                 valid_moves.append(up_coordinate)
 
 
