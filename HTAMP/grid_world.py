@@ -361,82 +361,49 @@ class GridWorld:
             return None
         else:
             return coordinate
-        
-    def _push_coordinate_away_from_center(self,
-                                          robot_center: Coordinate, 
-                                          robot_profile: RobotProfile,
-                                          coordinate: Coordinate) -> Coordinate:
-            dev_x = (coordinate.x - robot_center.x)
-            dev_y = (coordinate.y - robot_center.y)
-
-
-            new_x = coordinate.x + dev_x
-            new_y = coordinate.y + dev_y
-            return Coordinate(new_x, new_y)
 
     def get_valid_moves(self, 
                         robot_center: Coordinate, 
                         robot_profile: RobotProfile) -> List[Coordinate]:
-        bounding_indices = self._get_robot_bounding_indices(robot_center, 
-                                                            robot_profile)
-
-        x_lower_bound = bounding_indices.lower_x
-        y_lower_bound = bounding_indices.lower_y
-        x_upper_bound = bounding_indices.upper_x
-        y_upper_bound = bounding_indices.upper_y
-
         valid_moves: List[Coordinate] = []
-        for index_y in range(max(0, y_lower_bound), min(self.height - 1, y_upper_bound) + 1):
-            low_coordinate = self._get_potential_move_position(robot_center, 
-                                                               robot_profile, 
-                                                               x_lower_bound, 
-                                                               index_y)
-            if low_coordinate is not None:
-                low_coordinate = self._push_coordinate_away_from_center(robot_center, 
-                                                                    robot_profile, 
-                                                                    low_coordinate)
-                valid_moves.append(low_coordinate)
 
-            up_coordinate = self._get_potential_move_position(robot_center, 
-                                                              robot_profile, 
-                                                              x_upper_bound, 
-                                                              index_y)
-            if up_coordinate is not None:
-                up_coordinate = self._push_coordinate_away_from_center(robot_center,
-                                                                   robot_profile,
-                                                                   up_coordinate)
-                valid_moves.append(up_coordinate)
+        single_x_displacement = [1, 0, -1]
+        single_y_displacement = [1, 0, -1]
+        double_x_displacement = [2, -2]
+        double_y_displacement = [2, -2]
 
-        for index_x in range(max(0, x_lower_bound), min(self.width - 1, x_upper_bound) + 1):
-            low_coordinate = self._get_potential_move_position(robot_center, 
-                                                               robot_profile, 
-                                                               index_x, 
-                                                               y_lower_bound)
-            if low_coordinate is not None:
-                low_coordinate = self._push_coordinate_away_from_center(robot_center, 
-                                                                    robot_profile, 
-                                                                    low_coordinate)
-                valid_moves.append(low_coordinate)
+        for single_x in single_x_displacement:
+            for single_y in single_y_displacement:
+                coordinate = Coordinate(robot_center.x + single_x * self.cell_size,
+                                        robot_center.y + single_y * self.cell_size)
+                if self.is_robot_in_bounds(coordinate, robot_profile) and \
+                    self.is_robot_in_free_space(coordinate, robot_profile) and \
+                        self.is_move_collision_free(robot_center, coordinate, robot_profile):
+                    valid_moves.append(coordinate)
 
-            up_coordinate = self._get_potential_move_position(robot_center, 
-                                                              robot_profile, 
-                                                              index_x, 
-                                                              y_upper_bound)
-            if up_coordinate is not None:
-                up_coordinate = self._push_coordinate_away_from_center(robot_center,
-                                                                   robot_profile,
-                                                                   up_coordinate)
-                valid_moves.append(up_coordinate)
+        for double_x in double_x_displacement:
+            for single_y in single_y_displacement:
+                if single_y == 0:
+                    continue
+                coordinate = Coordinate(robot_center.x + double_x * self.cell_size,
+                                        robot_center.y + single_y * self.cell_size)
+                if self.is_robot_in_bounds(coordinate, robot_profile) and \
+                    self.is_robot_in_free_space(coordinate, robot_profile) and \
+                        self.is_move_collision_free(robot_center, coordinate, robot_profile):   
+                    valid_moves.append(coordinate)
+        
+        for double_y in double_y_displacement:
+            for single_x in single_x_displacement:
+                if single_x == 0:
+                    continue
+                coordinate = Coordinate(robot_center.x + single_x * self.cell_size,
+                                        robot_center.y + double_y * self.cell_size)
+                if self.is_robot_in_bounds(coordinate, robot_profile) and \
+                    self.is_robot_in_free_space(coordinate, robot_profile) and \
+                        self.is_move_collision_free(robot_center, coordinate, robot_profile):
+                    valid_moves.append(coordinate)
 
-
-        seen = set()
-        unique = []
-        for move in valid_moves:
-            key = (round(move.x, 4), round(move.y, 4))
-            if key not in seen:
-                seen.add(key)
-                unique.append(move)
-        return unique
+        return valid_moves
     
     def plot_next_move(self, 
                        cell_size: float = 0.03534*2, 
