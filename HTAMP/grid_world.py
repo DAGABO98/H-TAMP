@@ -274,12 +274,13 @@ class GridWorld:
                                   robot_start_pos: Coordinate, 
                                   robot_end_pos: Coordinate,
                                   robot_velocity: float,
-                                  current_time: float) -> List[TimeInterval]:
+                                  current_time: float,
+                                  end_time: float) -> List[TimeInterval]:
         num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
         num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
 
         if num_y_steps == 0 and num_x_steps == 0:
-            return [TimeInterval(start=current_time, end=current_time)]
+            return [TimeInterval(start=current_time, end=end_time)]
 
         abs_num_x_steps = abs(num_x_steps)
         abs_num_y_steps = abs(num_y_steps)
@@ -306,7 +307,8 @@ class GridWorld:
                                   robot_end_pos: Coordinate,
                                   robot_radius: float, 
                                   robot_velocity: float, 
-                                  current_time: float) -> List[MotionReservation]:
+                                  current_time: float, 
+                                  end_time: float) -> List[MotionReservation]:
         
         robot_occupancies = self.get_robot_occupancy_for_move(robot_start_pos, 
                                                              robot_end_pos,
@@ -314,7 +316,8 @@ class GridWorld:
         time_intervals = self.get_robot_timing_for_move(robot_start_pos,
                                                         robot_end_pos,
                                                         robot_velocity,
-                                                        current_time)
+                                                        current_time,
+                                                        end_time)
         assert len(robot_occupancies) == len(time_intervals)
         reservations: List[MotionReservation] = []
         for i in range(len(robot_occupancies)):
@@ -525,7 +528,8 @@ if __name__ == "__main__":
                                                          robot_end_pos=end_pos, 
                                                          robot_radius=robot_radius, 
                                                          robot_velocity=0.1, 
-                                                         current_time=0.0)
+                                                         current_time=0.0,
+                                                         end_time=5.0)
     world.plot_reservations(reservations, cell_size, robot_radius, start_pos, end_pos)
 
     
