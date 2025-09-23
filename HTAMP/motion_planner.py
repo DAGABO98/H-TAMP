@@ -15,7 +15,8 @@ class TimeReservation:
     robot_id: int
 
     def overlaps(self, other: "TimeReservation") -> bool:
-        return self.interval.start < other.interval.end and self.interval.end > other.interval.start
+        return round(self.interval.start, 4) <= round(other.interval.end, 4) and \
+            round(self.interval.end, 4) >= round(other.interval.start, 4)
     
     def merge(self, other: "TimeReservation") -> "TimeReservation":
         if not self.overlaps(other):
@@ -123,7 +124,16 @@ class SIPPwRT:
     def heuristic(self, 
                   pos: Coordinate, 
                   goal: Coordinate,
+                  other_robot_locations: List[Coordinate],
                   robot_profile: RobotProfile) -> float:
+        # Incorporate other robot locations into the heuristic
+        if other_robot_locations:
+            # For simplicity, just consider the closest other robot
+            closest_other = min(other_robot_locations, key=lambda loc: np.linalg.norm(np.array([loc.x - pos.x, loc.y - pos.y])))
+            # Penalize the heuristic based on the distance to the closest other robot
+            distance_penalty = np.linalg.norm(np.array([closest_other.x - pos.x, closest_other.y - pos.y]))
+            return (np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y]))) / robot_profile.speed + ((1/distance_penalty))
+
         return np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y])) / robot_profile.speed
 
     def _intersect_intervals(self, 
@@ -398,7 +408,7 @@ class MotionPlanner:
     
     def plot_paths(self, 
                    paths: List[List[Tuple[Coordinate, TimeInterval]]], 
-                   robot_radius: float) -> None:
+                   robot_profiles: List[RobotProfile]) -> None:
         # Plot the grid and the paths without using grid object's plot method
         fig, ax = plt.subplots(figsize=(10, 10))
         ax.set_xlim(0, self.grid.width * self.grid.cell_size)
@@ -412,37 +422,45 @@ class MotionPlanner:
                 start, start_interval = path[j]
                 end, end_interval = path[j + 1]
                 ax.plot([start.x, end.x], [start.y, end.y], color=colors(i), linewidth=2)
-                circle = Circle((start.x, start.y), robot_radius, color=colors(i), alpha=0.3)
+                circle = Circle((start.x, start.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
                 ax.add_patch(circle)
             # Draw the last position
             end, end_interval = path[-1]
-            circle = Circle((end.x, end.y), robot_radius, color=colors(i), alpha=0.3)
+            circle = Circle((end.x, end.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
             ax.add_patch(circle)
         
         plt.savefig("results/planned_paths.png")
         plt.close()
 
 def main():
-    width, height = 50, 25
+    width, height = 100, 50
     cell_size = 2*0.03534
+    num_robots = 2
     world = GridWorld.empty(width, height, cell_size)
-
-    robot_profile = RobotProfile(radius=0.20, speed=0.2, robot_id=1)
-    start_pos = Coordinate(30*cell_size, 10*cell_size)
-
-    goal_pos = Coordinate(5*cell_size, 20*cell_size)
     planner = MotionPlanner(grid=world, weight_factor=1.0)
-    path = planner.obtain_path_for_agent(start_pos=start_pos,
-                                        goal_pos=goal_pos,
-                                        robot_profile=robot_profile,
-                                        current_time=0.0,
-                                        horizon=50.0)
-    if path:
-        print("Planned Path:")
-        for pos, time_interval in path:
-            print(f"Position: ({pos.x:.2f}, {pos.y:.2f}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
-        planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
-        planner.plot_paths(paths=[path], robot_radius=robot_profile.radius)
+    paths = []
+    robot_profiles = []
+
+    goals = [30, 20, 10]
+
+    for i in range(num_robots):
+        robot_profile = RobotProfile(radius=0.20, speed=0.01, robot_id=i)
+        start_pos = Coordinate(5*cell_size, (10 + i*10)*cell_size)
+        goal_pos = Coordinate(45*cell_size, goals[i]*cell_size)
+        path = planner.obtain_path_for_agent(start_pos=start_pos,
+                                            goal_pos=goal_pos,
+                                            robot_profile=robot_profile,
+                                            current_time=0.0,
+                                            horizon=500.0)
+        if path:
+            print(f"Planned Path for Robot {i}:")
+            for pos, time_interval in path:
+                print(f"Position: ({pos.x:.2f}, {pos.y:.2f}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
+            planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
+            paths.append(path)
+            robot_profiles.append(robot_profile)
+
+    planner.plot_paths(paths=paths, robot_profiles=robot_profiles)
 
 if __name__ == "__main__":
     pStart = datetime.now()
