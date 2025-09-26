@@ -124,15 +124,7 @@ class SIPPwRT:
     def heuristic(self, 
                   pos: Coordinate, 
                   goal: Coordinate,
-                  other_robot_locations: List[Coordinate],
                   robot_profile: RobotProfile) -> float:
-        # Incorporate other robot locations into the heuristic
-        if other_robot_locations:
-            # For simplicity, just consider the closest other robot
-            closest_other = min(other_robot_locations, key=lambda loc: np.linalg.norm(np.array([loc.x - pos.x, loc.y - pos.y])))
-            # Penalize the heuristic based on the distance to the closest other robot
-            distance_penalty = np.linalg.norm(np.array([closest_other.x - pos.x, closest_other.y - pos.y]))
-            return (np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y]))) / robot_profile.speed + ((1/distance_penalty))
 
         return np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y])) / robot_profile.speed
 
@@ -306,6 +298,8 @@ class SIPPwRT:
 
             for potential_next_move in self.grid.get_valid_moves(robot_center=current_node.pos,
                                                                  robot_profile=robot_profile):
+                if round(potential_next_move.x, 2) == 0.42 and round(potential_next_move.y, 2) == 2.05:
+                    print("Debug")
                 for safe_interval in self._get_safe_intervals_for_move(start_pos=current_node.pos,
                                                                       end_pos=potential_next_move,
                                                                       robot_profile=robot_profile,
@@ -416,7 +410,7 @@ class MotionPlanner:
         ax.set_aspect('equal')
 
         # Plot each path
-        colors = plt.cm.get_cmap('hsv', len(paths) + 1)
+        colors = plt.get_cmap('hsv', len(paths) + 1)
         for i, path in enumerate(paths):
             for j in range(len(path) - 1):
                 start, start_interval = path[j]
@@ -435,16 +429,17 @@ class MotionPlanner:
 def main():
     width, height = 100, 50
     cell_size = 2*0.03534
-    num_robots = 2
+    num_robots = 3
+    weight_factor = 1.0
     world = GridWorld.empty(width, height, cell_size)
-    planner = MotionPlanner(grid=world, weight_factor=1.0)
+    planner = MotionPlanner(grid=world, weight_factor=weight_factor)
     paths = []
     robot_profiles = []
 
-    goals = [30, 20, 10]
+    goals = [10, 20, 30]
 
     for i in range(num_robots):
-        robot_profile = RobotProfile(radius=0.20, speed=0.01, robot_id=i)
+        robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i)
         start_pos = Coordinate(5*cell_size, (10 + i*10)*cell_size)
         goal_pos = Coordinate(45*cell_size, goals[i]*cell_size)
         path = planner.obtain_path_for_agent(start_pos=start_pos,
