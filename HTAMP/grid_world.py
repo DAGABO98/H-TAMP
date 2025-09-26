@@ -8,7 +8,7 @@ from matplotlib.patches import Rectangle, Circle
 class Coordinate:
     x: float
     y: float
-    tol: float = 1e-6
+    tol: float = 1e-3
 
     def __post_init__(self):
         if self.tol <= 0:
@@ -54,7 +54,7 @@ class BoundingIndices:
 class TimeInterval:
     start: float
     end: float
-    tol: float = 1e-6
+    tol: float = 1e-3
 
     def __post_init__(self):
         if self.tol <= 0:
