@@ -142,7 +142,7 @@ if __name__ == "__main__":
     parser.add_argument("--comparison_vis_path", type=str, default="results/comparison_visualization.png", help="Path to save the comparison visualization")
     parser.add_argument("--map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to save the occupancy map")
     parser.add_argument("--factor", type=int, default=2, help="Downsampling factor")
-    parser.add_argument("--meters_per_pixel", type=float, default=0.03534, help="Meters per pixel in the original image")
+    parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
     args = parser.parse_args()
 
     generator = MapGenerator(image_path=args.image_path,
