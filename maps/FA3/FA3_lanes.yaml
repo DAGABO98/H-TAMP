@@ -1,154 +1,154 @@
 map:
-  resolution: 0.072
+  resolution: 0.036
   origin_xy: [0.0, 0.0]
 
 corridors:
   - id: A
-    length_start: [66, 507]
-    length_end: [868, 507]
-    width_start: [850, 490]
-    width_end: [850, 525]
+    length_start: [133, 1014]
+    length_end: [1736, 1014]
+    width_start: [1700, 982]
+    width_end: [1700, 1051]
   - id: B
-    length_start: [449, 376]
-    length_end: [868, 376]
-    width_start: [850, 359]
-    width_end: [850, 394]
+    length_start: [898, 752]
+    length_end: [1736, 752]
+    width_start: [1700, 719]
+    width_end: [1700, 788]
   - id: C
-    length_start: [465, 80]
-    length_end: [465, 803]
-    width_start: [448, 550]
-    width_end: [483, 550]
+    length_start: [930, 155]
+    length_end: [930, 1606]
+    width_start: [897, 1100]
+    width_end: [966, 1100]
   - id: D
-    length_start: [602, 360]
-    length_end: [602, 520]
-    width_start: [573, 485]
-    width_end: [631, 485]
+    length_start: [1204, 720]
+    length_end: [1204, 1050]
+    width_start: [1146, 970]
+    width_end: [1262, 970]
 
 drive_through_spaces:
   - id: S1
-    entry_start_point: [778, 395]
-    entry_end_point: [802, 395]
-    exit_start_point: [778, 487]
-    exit_end_point: [802, 487]
+    entry_start_point: [1557, 974]
+    entry_end_point: [1604, 974]
+    exit_start_point: [1556, 795]
+    exit_end_point: [1604, 795]
 
 doorways:
   - id: D1
-    start_point: [822, 530]
-    end_point: [805, 530]
+    start_point: [1611, 1060]
+    end_point: [1645, 1060]
   - id: D2
-    start_point: [717, 530]
-    end_point: [735, 530]
+    start_point: [1434, 1060]
+    end_point: [1471, 1060]
   - id: D3
-    start_point: [693, 530]
-    end_point: [711, 530]
+    start_point: [1386, 1060]
+    end_point: [1423, 1060]
   - id: D4  
-    start_point: [606, 530]
-    end_point: [624, 530]
+    start_point: [1212, 1060]
+    end_point: [1248, 1060]
   - id: D5
-    start_point: [527, 525]
-    end_point: [546, 525]
+    start_point: [1054, 1052]
+    end_point: [1091, 1052]
   - id: D6
-    start_point: [346, 525]
-    end_point: [362, 525]
+    start_point: [694, 1052]
+    end_point: [723, 1052]
   - id: D7
-    start_point: [223, 530]
-    end_point: [241, 530]
+    start_point: [446, 1060]
+    end_point: [483, 1060]
   - id: D8
-    start_point: [199, 530]
-    end_point: [218, 530]
+    start_point: [399, 1060]
+    end_point: [436, 1060]
   - id: D9
-    start_point: [109, 530]
-    end_point: [128, 530]
+    start_point: [219, 1060]
+    end_point: [257, 1060]
   - id: D10 
-    start_point: [109, 485]
-    end_point: [130, 485]
+    start_point: [221, 970]
+    end_point: [260, 970]
   - id: D11
-    start_point: [194, 485]
-    end_point: [213, 485]
+    start_point: [389, 970]
+    end_point: [426, 970]
   - id: D12
-    start_point: [218, 485]
-    end_point: [236, 485]
+    start_point: [437, 970]
+    end_point: [473, 970]
   - id: D13
-    start_point: [303, 485]
-    end_point: [321, 485]
+    start_point: [606, 970]
+    end_point: [642, 970]
   - id: D14
-    start_point: [697, 487]
-    end_point: [709, 487]
+    start_point: [1394, 976]
+    end_point: [1418, 976]
   - id: D15
-    start_point: [730, 487]
-    end_point: [744, 487]
+    start_point: [1460, 976]
+    end_point: [1489, 976]
   - id: D16
-    start_point: [753, 487]
-    end_point: [768, 487]
+    start_point: [1507, 976]
+    end_point: [1536, 976]
   - id: D17
-    start_point: [487, 722]
-    end_point: [487, 741]
+    start_point: [972, 1444]
+    end_point: [972, 1483]
   - id: D18
-    start_point: [807, 352]
-    end_point: [826, 352]
+    start_point: [1614, 704]
+    end_point: [1652, 704]
   - id: D19
-    start_point: [783, 352]
-    end_point: [803, 352]
+    start_point: [1567, 704]
+    end_point: [1606, 704]
   - id: D20
-    start_point: [725, 352]
-    end_point: [743, 352]
+    start_point: [1450, 704]
+    end_point: [1487, 704]
   - id: D21
-    start_point: [636, 352]
-    end_point: [654, 352]
+    start_point: [1272, 704]
+    end_point: [1309, 704]
   - id: D22
-    start_point: [570, 352]
-    end_point: [590, 352]
+    start_point: [1141, 704]
+    end_point: [1180, 704]
   - id: D23
-    start_point: [551, 355]
-    end_point: [565, 355]
+    start_point: [1103, 712]
+    end_point: [1131, 712]
   - id: D24
-    start_point: [498, 355]
-    end_point: [527, 355]
+    start_point: [997, 712]
+    end_point: [1055, 712]
   - id: D25
-    start_point: [750, 395]
-    end_point: [765, 395]
+    start_point: [1501, 790]
+    end_point: [1530, 790]
   - id: D26
-    start_point: [730, 406]
-    end_point: [744, 406]
+    start_point: [1460, 814]
+    end_point: [1486, 814]
   - id: D27
-    start_point: [680, 406]
-    end_point: [694, 406]
+    start_point: [1361, 814]
+    end_point: [1388, 814]
   - id: D28
-    start_point: [460, 72]
-    end_point: [474, 72]
+    start_point: [921, 146]
+    end_point: [948, 146]
   - id: D29
-    start_point: [632, 459]
-    end_point: [632, 472]
+    start_point: [1264, 918]
+    end_point: [1264, 946]
   - id: D30
-    start_point: [632, 409]
-    end_point: [632, 431]
+    start_point: [1264, 818]
+    end_point: [1264, 862]
   - id: D31
-    start_point: [445, 405]
-    end_point: [445, 433]
+    start_point: [890, 810]
+    end_point: [890, 866]
   - id: D32
-    start_point: [442, 329]
-    end_point: [442, 348]
+    start_point: [884, 659]
+    end_point: [884, 697]
   - id: D33
-    start_point: [442, 278]
-    end_point: [442, 295]
+    start_point: [886, 556]
+    end_point: [886, 591]
   - id: D34
-    start_point: [442, 186]
-    end_point: [442, 205]
+    start_point: [886, 372]
+    end_point: [886, 410]
   - id: D35
-    start_point: [442, 126]
-    end_point: [442, 144]
+    start_point: [886, 253]
+    end_point: [886, 288]
   - id: D36
-    start_point: [445, 83]
-    end_point: [445, 97]
+    start_point: [892, 165]
+    end_point: [892, 195]
   - id: D37
-    start_point: [490, 85]
-    end_point: [490, 108]
+    start_point: [980, 169]
+    end_point: [980, 216]
   - id: D38
-    start_point: [487, 141]
-    end_point: [487, 155]
+    start_point: [974, 282]
+    end_point: [974, 311]
   - id: D39
-    start_point: [490, 227]
-    end_point: [490, 246]
+    start_point: [980, 454]
+    end_point: [980, 493]
   - id: D40
-    start_point: [500, 287]
-    end_point: [500, 302]
+    start_point: [1000, 575]
+    end_point: [1000, 604]
