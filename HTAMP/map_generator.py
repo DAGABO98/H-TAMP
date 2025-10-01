@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class MapGenerator:
-    def __init__(self, image_path: str, map_vis_path: str, comparison_vis_path: str, factor: int = 2, meters_per_pixel: float = 0.03534):
+    def __init__(self, image_path: str, map_vis_path: str, comparison_vis_path: str, factor: int = 1, meters_per_pixel: float = 0.036):
         self.image_path = image_path
         self.map_vis_path = map_vis_path
         self.comparison_vis_path = comparison_vis_path
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     parser.add_argument("--map_vis_path", type=str, default="results/map_visualization.png", help="Path to save the map visualization")
     parser.add_argument("--comparison_vis_path", type=str, default="results/comparison_visualization.png", help="Path to save the comparison visualization")
     parser.add_argument("--map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to save the occupancy map")
-    parser.add_argument("--factor", type=int, default=2, help="Downsampling factor")
+    parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
     args = parser.parse_args()
 
