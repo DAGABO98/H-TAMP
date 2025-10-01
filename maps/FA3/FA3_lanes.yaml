@@ -3,22 +3,26 @@ map:
   origin_xy: [0.0, 0.0]
 
 corridors:
-  - id: A
+  - id: H1
+    direction: horizontal
     length_start: [133, 1014]
     length_end: [1736, 1014]
     width_start: [1700, 982]
     width_end: [1700, 1051]
-  - id: B
+  - id: H2
+    direction: horizontal
     length_start: [898, 752]
     length_end: [1736, 752]
     width_start: [1700, 719]
     width_end: [1700, 788]
-  - id: C
+  - id: V1
+    direction: vertical
     length_start: [930, 155]
     length_end: [930, 1606]
     width_start: [897, 1100]
     width_end: [966, 1100]
-  - id: D
+  - id: V2
+    direction: vertical
     length_start: [1204, 720]
     length_end: [1204, 1050]
     width_start: [1146, 970]
@@ -26,6 +30,9 @@ corridors:
 
 drive_through_spaces:
   - id: S1
+    direction: vertical
+    entry_corridor: H1
+    exit_corridor: H2
     entry_start_point: [1557, 974]
     entry_end_point: [1604, 974]
     exit_start_point: [1556, 795]
@@ -33,122 +40,162 @@ drive_through_spaces:
 
 doorways:
   - id: D1
+    corridor_id: H1
     start_point: [1611, 1060]
     end_point: [1645, 1060]
   - id: D2
+    corridor_id: H1
     start_point: [1434, 1060]
     end_point: [1471, 1060]
   - id: D3
+    corridor_id: H1
     start_point: [1386, 1060]
     end_point: [1423, 1060]
-  - id: D4  
+  - id: D4
+    corridor_id: H1
     start_point: [1212, 1060]
     end_point: [1248, 1060]
   - id: D5
+    corridor_id: H1
     start_point: [1054, 1052]
     end_point: [1091, 1052]
   - id: D6
+    corridor_id: H1
     start_point: [694, 1052]
     end_point: [723, 1052]
   - id: D7
+    corridor_id: H1
     start_point: [446, 1060]
     end_point: [483, 1060]
   - id: D8
+    corridor_id: H1
     start_point: [399, 1060]
     end_point: [436, 1060]
   - id: D9
+    corridor_id: H1
     start_point: [219, 1060]
     end_point: [257, 1060]
-  - id: D10 
+  - id: D10
+    corridor_id: H1
     start_point: [221, 970]
     end_point: [260, 970]
   - id: D11
+    corridor_id: H1
     start_point: [389, 970]
     end_point: [426, 970]
   - id: D12
+    corridor_id: H1
     start_point: [437, 970]
     end_point: [473, 970]
   - id: D13
+    corridor_id: H1
     start_point: [606, 970]
     end_point: [642, 970]
   - id: D14
+    corridor_id: H1
     start_point: [1394, 976]
     end_point: [1418, 976]
   - id: D15
+    corridor_id: H1
     start_point: [1460, 976]
     end_point: [1489, 976]
   - id: D16
+    corridor_id: H1
     start_point: [1507, 976]
     end_point: [1536, 976]
   - id: D17
+    corridor_id: V1
     start_point: [972, 1444]
     end_point: [972, 1483]
   - id: D18
+    corridor_id: H2
     start_point: [1614, 704]
     end_point: [1652, 704]
   - id: D19
+    corridor_id: H2
     start_point: [1567, 704]
     end_point: [1606, 704]
   - id: D20
+    corridor_id: H2
     start_point: [1450, 704]
     end_point: [1487, 704]
   - id: D21
+    corridor_id: H2
     start_point: [1272, 704]
     end_point: [1309, 704]
   - id: D22
+    corridor_id: H2
     start_point: [1141, 704]
     end_point: [1180, 704]
   - id: D23
+    corridor_id: H2
     start_point: [1103, 712]
     end_point: [1131, 712]
   - id: D24
+    corridor_id: H2
     start_point: [997, 712]
     end_point: [1055, 712]
   - id: D25
+    corridor_id: H2
     start_point: [1501, 790]
     end_point: [1530, 790]
   - id: D26
+    corridor_id: H2
     start_point: [1460, 814]
     end_point: [1486, 814]
   - id: D27
+    corridor_id: H2
     start_point: [1361, 814]
     end_point: [1388, 814]
   - id: D28
+    corridor_id: V1
     start_point: [921, 146]
     end_point: [948, 146]
   - id: D29
+    corridor_id: V2
     start_point: [1264, 918]
     end_point: [1264, 946]
   - id: D30
+    corridor_id: V2
     start_point: [1264, 818]
     end_point: [1264, 862]
   - id: D31
+    corridor_id: V1
     start_point: [890, 810]
     end_point: [890, 866]
   - id: D32
+    corridor_id: V1
     start_point: [884, 659]
     end_point: [884, 697]
   - id: D33
+    corridor_id: V1
     start_point: [886, 556]
     end_point: [886, 591]
   - id: D34
+    corridor_id: V1
     start_point: [886, 372]
     end_point: [886, 410]
   - id: D35
+    corridor_id: V1
     start_point: [886, 253]
     end_point: [886, 288]
   - id: D36
+    corridor_id: V1
     start_point: [892, 165]
     end_point: [892, 195]
   - id: D37
+    corridor_id: V1
     start_point: [980, 169]
     end_point: [980, 216]
   - id: D38
+    corridor_id: V1
     start_point: [974, 282]
     end_point: [974, 311]
   - id: D39
+    corridor_id: V1
     start_point: [980, 454]
     end_point: [980, 493]
   - id: D40
+    corridor_id: V1
     start_point: [1000, 575]
     end_point: [1000, 604]
