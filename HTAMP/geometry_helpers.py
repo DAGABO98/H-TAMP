@@ -1,7 +1,7 @@
 
 
 import argparse
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from matplotlib import pyplot as plt
 import numpy as np
@@ -178,9 +178,9 @@ class GeometryHelper:
         return float(0.5*(a+b))
     
     @staticmethod
-    def plot_segments(seg_list, 
-                      title="Connector split into N equal-length segments", 
-                      output_path="curved_connector_segments.png"):
+    def plot_segments(seg_list: List[dict], 
+                      title: str = "Connector split into N equal-length segments", 
+                      output_path: str = "curved_connector_segments.png"):
         fig, ax = plt.subplots(figsize=(7,5))
         styles = ["-", "--", "-.", ":", (0, (3,1,1,1))]  # cycles if N>5
         for i, s in enumerate(seg_list):
@@ -205,7 +205,9 @@ class CurvedConnector:
         self.connector_dict = self._generate_connector_dict(tangent_scaling_factor=tangent_scaling_factor, 
                                                             num_samples=num_samples)
 
-    def _generate_connector_dict(self, tangent_scaling_factor: float, num_samples: int) -> dict[str, np.array]:
+    def _generate_connector_dict(self, 
+                                 tangent_scaling_factor: float, 
+                                 num_samples: int) -> dict[str, np.array]:
         # Generate points along the curved connector
         unit_vec_origin = GeometryHelper.unit_vector(self.vec_origin)
         unit_vec_destination = GeometryHelper.unit_vector(self.vec_destination)
@@ -227,8 +229,13 @@ class CurvedConnector:
         return {"X": x_points, "Y": y_points,
                 "A": A, "B": B, "T0": T0, "T1": T1,
                 "L": L}
-    
-    def _conn_from_hermite_piece(self, A, B, T0, T1, n=400):
+
+    def _conn_from_hermite_piece(self, 
+                                 A: np.ndarray, 
+                                 B: np.ndarray, 
+                                 T0: np.ndarray, 
+                                 T1: np.ndarray, 
+                                 n: int = 400):
         X, Y = GeometryHelper.cubic_hermite(A, B, T0, T1, n=n)
         out = {
             "X": X, "Y": Y,
@@ -237,7 +244,10 @@ class CurvedConnector:
         }
         return out
 
-    def split_connector_into_n(self, n_segments=5, tol_len=1e-7, n_samples=400):
+    def split_connector_into_n(self, 
+                               n_segments: int = 5, 
+                               tol_len: float = 1e-7, 
+                               n_samples: int = 400):
         """
         Split a connector dict into n_segments equal-arc pieces.
         Returns: list_of_seg_conns, info_dict
@@ -271,7 +281,9 @@ class CurvedConnector:
         info = {"t_list": t_targets, "L_total": L_total, "L_target": L_target}
         return segments, info
 
-    def plot_connector(self, title=None, output_path="curved_connector.png"):
+    def plot_connector(self, 
+                       title: Optional[str] = None, 
+                       output_path : str ="curved_connector.png"):
         import numpy as np
         A, B = self.connector_dict["A"], self.connector_dict["B"]
         X, Y = self.connector_dict["X"], self.connector_dict["Y"]
@@ -295,7 +307,7 @@ class CurvedConnector:
         ax.arrow(B[0], B[1], self.connector_dict["T1"][0], self.connector_dict["T1"][1],
                 head_width=0.03*L, head_length=0.06*L, length_includes_head=True)
 
-        ax.set_title(title or f"Connector ({self.connector_dict.get('flow','')})")
+        ax.set_title(title or f"Connector from ({A[0]:.1f}, {A[1]:.1f}) to ({B[0]:.1f}, {B[1]:.1f})")
         ax.set_xlabel("x"); ax.set_ylabel("y")
         ax.set_aspect('equal', adjustable='box')
         ax.grid(True)
