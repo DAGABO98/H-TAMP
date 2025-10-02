@@ -56,60 +56,6 @@ class TraversalGraph:
     nodes: list[TraversalNode]
     edges: list[TraversalEdge]
 
-class CurvedConnector:
-    def __init__(self,
-                 origin: Coordinate, 
-                 destination: Coordinate, 
-                 vec_origin: Tuple[float, float], 
-                 vec_destination: Tuple[float, float]):
-        self.origin = origin
-        self.destination = destination
-        self.vec_origin = vec_origin
-        self.vec_destination = vec_destination
-        self.connector_points = self._generate_connector_points()
-
-    def _unit_vector(self, vec: Tuple[float, float]) -> Tuple[float, float]:
-        vec = np.asarray(vec, dtype=float)
-        norm = np.linalg.norm(vec)
-        if norm == 0:
-            return (0.0, 0.0)
-        return (vec[0]/norm, vec[1]/norm)
-
-    def _cubic_hermite(self, T0, T1, n=200):
-        """
-        Evaluate a cubic Hermite curve with endpoints A,B and tangents T0,T1.
-        Returns (X, Y) arrays of length n.
-        """
-        A = np.asarray([self.origin.x, self.origin.y], dtype=float)
-        B = np.asarray([self.destination.x, self.destination.y], dtype=float)
-        T0 = np.asarray(T0, dtype=float)
-        T1 = np.asarray(T1, dtype=float)
-
-        t = np.linspace(0.0, 1.0, n)
-        h00 =  2*t**3 - 3*t**2 + 1
-        h10 =      t**3 - 2*t**2 + t
-        h01 = -2*t**3 + 3*t**2
-        h11 =      t**3 -     t**2
-
-        C = (h00[:,None]*A + h10[:,None]*T0 + h01[:,None]*B + h11[:,None]*T1)
-        return C[:,0], C[:,1]
-
-    def _generate_connector_points(self, tangent_scaling_factor: float) -> List[Coordinate]:
-        # Generate points along the curved connector
-        unit_vec_origin = self._unit_vector(self.vec_origin)
-        unit_vec_destination = self._unit_vector(self.vec_destination)
-
-        # Scale tangents by distance between points
-        distance = np.linalg.norm(np.array([self.destination.x - self.origin.x, 
-                                            self.destination.y - self.origin.y]))
-        tangent_scale = distance * tangent_scaling_factor  # Arbitrary scaling factor for tangents
-
-        T0 = (unit_vec_origin[0] * tangent_scale, unit_vec_origin[1] * tangent_scale)
-        T1 = (unit_vec_destination[0] * tangent_scale, unit_vec_destination[1] * tangent_scale)
-
-        x_points, y_points = self._cubic_hermite(T0, T1, n=200)
-        return [Coordinate(x=x, y=y) for x, y in zip(x_points, y_points)] 
-
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1):
         self.occupancy_map_path = occupancy_map_path
