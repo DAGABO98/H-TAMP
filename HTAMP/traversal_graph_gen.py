@@ -57,10 +57,12 @@ class TraversalGraph:
     edges: list[TraversalEdge]
 
 class TraversalGraphGenerator:
-    def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1):
+    def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
+                 num_lanes_per_corridor: int = 3):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.meters_per_cell = meters_per_pixel * factor
+        self.num_lanes_per_corridor = num_lanes_per_corridor
         self.occupancy_map = self._load_map(occupancy_map_path)
         self.config = self._load_config(config_path)
         self.corridors = self._extract_corridors_from_config()
@@ -88,20 +90,42 @@ class TraversalGraphGenerator:
         corridors = []
         if 'corridors' in self.config:
             for corridor in self.config['corridors']:
-                if 'length_start' in corridor and 'length_end' in corridor and 'width_start' in corridor and 'width_end' in corridor:
-                    
-                    width_start_x = (corridor['width_start'][0])
-                    width_start_y = (corridor['width_start'][1])
-                    width_end_x = (corridor['width_end'][0])
-                    width_end_y = (corridor['width_end'][1])
+                corridor_lanes = []
+                corridor_direction = corridor.get('direction', None)
+                if corridor_direction is None:
+                    print("Warning: Corridor without direction found in config.")
+                    continue
+                elif corridor_direction == 'horizontal':
+                    corridor_width = self.meters_per_cell * abs(corridor['width_end'][1] - corridor['width_start'][1])
+                    lane_separation = corridor_width / (self.num_lanes_per_corridor + 1)
+                    for lane_idx in range(1, self.num_lanes_per_corridor + 1):
+                        lane_y = (self.meters_per_cell * corridor['width_start'][1]) + (lane_idx * lane_separation)
+                        lane_struct = Lane(start_point=Coordinate(x=corridor['length_start'][0]*self.meters_per_cell, y=lane_y),
+                                            end_point=Coordinate(x=corridor['length_end'][0]*self.meters_per_cell, y=lane_y))
+                        corridor_lanes.append(lane_struct)
+                elif corridor_direction == 'vertical':
+                    corridor_width = self.meters_per_cell * abs(corridor['width_end'][0] - corridor['width_start'][0])
+                    lane_separation = corridor_width / (self.num_lanes_per_corridor + 1)
+                    for lane_idx in range(1, self.num_lanes_per_corridor + 1):
+                        lane_x = (self.meters_per_cell * corridor['width_start'][0]) + (lane_idx * lane_separation)
+                        lane_struct = Lane(start_point=Coordinate(x=lane_x, y=corridor['length_start'][1]*self.meters_per_cell),
+                                            end_point=Coordinate(x=lane_x, y=corridor['length_end'][1]*self.meters_per_cell))
+                        corridor_lanes.append(lane_struct)
+                else:
+                    print(f"Warning: Unknown corridor direction '{corridor_direction}' found in config.")
+                    continue
+                width_start_x = (corridor['width_start'][0])
+                width_start_y = (corridor['width_start'][1])
+                width_end_x = (corridor['width_end'][0])
+                width_end_y = (corridor['width_end'][1])
 
-                    corridor_struct = Corridor(corridor_id=corridor.get('id', 'unknown'),
-                        direction=corridor.get('direction', 'unknown'),
-                        width_start=Coordinate(x=(width_start_x*self.meters_per_cell), y=(width_start_y*self.meters_per_cell)),
-                        width_end=Coordinate(x=(width_end_x*self.meters_per_cell), y=(width_end_y*self.meters_per_cell)),
-                        lanes=[])
+                corridor_struct = Corridor(corridor_id=corridor.get('id', 'unknown'),
+                    direction=corridor.get('direction', 'unknown'),
+                    width_start=Coordinate(x=(width_start_x*self.meters_per_cell), y=(width_start_y*self.meters_per_cell)),
+                    width_end=Coordinate(x=(width_end_x*self.meters_per_cell), y=(width_end_y*self.meters_per_cell)),
+                    lanes=corridor_lanes)
 
-                    corridors.append(corridor_struct)
+                corridors.append(corridor_struct)
         return corridors
     
     def _extract_drive_throughs_from_config(self) -> List[DriveThrough]:
