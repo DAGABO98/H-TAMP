@@ -31,8 +31,8 @@ corridors:
 drive_through_spaces:
   - id: S1
     direction: vertical
-    entry_corridor: H1
-    exit_corridor: H2
+    entry_corridor_id: H1
+    exit_corridor_id: H2
     entry_start_point: [1557, 974]
     entry_end_point: [1604, 974]
     exit_start_point: [1556, 795]
