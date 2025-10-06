@@ -34,8 +34,7 @@ class DriveThrough:
 class Doorway:
     start: Coordinate
     end: Coordinate
-    entry_lane: Lane
-    exit_lane: Lane
+    lanes: List[Lane]
     corridor_id: str
 
 @dataclass
@@ -57,15 +56,20 @@ class TraversalGraph:
 
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
-                 num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2):
+                 num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
+                 doorway_lane_threshold: float = 30.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.meters_per_cell = meters_per_pixel * factor
         self.num_lanes_per_corridor = num_lanes_per_corridor
         self.num_lanes_per_drive_through = num_lanes_per_drive_through
         self.num_lanes_per_doorway = num_lanes_per_doorway
+        self.doorway_lane_threshold = doorway_lane_threshold
         self.occupancy_map = self._load_map(occupancy_map_path)
         self.config = self._load_config(config_path)
+        self.origin_x = self.config.get('origin', [0, 0])[0]
+        self.origin_y = self.config.get('origin', [0, 0])[1]
+        self.resolution = self.config.get('resolution', meters_per_pixel * factor)
         self.corridors = self._extract_corridors_from_config()
         self.drive_throughs = self._extract_drive_throughs_from_config()
         self.doorways = self._extract_doorways_from_config()
@@ -131,8 +135,8 @@ class TraversalGraphGenerator:
     
     def _extract_drive_throughs_from_config(self) -> List[DriveThrough]:
         drive_throughs = []
-        if 'drive_throughs' in self.config:
-            for dt in self.config['drive_throughs']:
+        if 'drive_through_spaces' in self.config:
+            for dt in self.config['drive_through_spaces']:
                 dt_lanes = []
                 dt_direction = dt.get('direction', None)
                 if dt_direction is None:
@@ -188,13 +192,105 @@ class TraversalGraphGenerator:
         doorways = []
         if 'doorways' in self.config:
             for dw in self.config['doorways']:
-                if 'start_point' in dw and 'end_point' in dw:
-                    start = Coordinate(x=(dw['start_point'][0]*self.meters_per_cell), 
-                                       y=(dw['start_point'][1]*self.meters_per_cell))
-                    end = Coordinate(x=(dw['end_point'][0]*self.meters_per_cell), 
-                                     y=(dw['end_point'][1]*self.meters_per_cell))
-                    doorways.append(Doorway(start, end))
+                doorway_lanes = []
+                doorway_corridor_id = dw.get('corridor_id', None)
+                doorway_direction = None
+
+                if "H" in doorway_corridor_id:
+                    doorway_direction = 'horizontal'
+                elif "V" in doorway_corridor_id:
+                    doorway_direction = 'vertical'
+                else:
+                    print(f"Warning: Unknown doorway corridor ID '{doorway_corridor_id}' found in config.")
+                    continue
+
+                if doorway_direction is None:
+                    print("Warning: Doorway without direction found in config.")
+                    continue
+                elif doorway_direction == 'horizontal':
+                    doorway_width = self.meters_per_cell * abs(dw['end_point'][0] - dw['start_point'][0])
+                    if doorway_width < self.doorway_lane_threshold * self.meters_per_cell:
+                        lane_separation = doorway_width / (self.num_lanes_per_doorway)
+                        for lane_idx in range(1, self.num_lanes_per_doorway):
+                            lane_x = (self.meters_per_cell * dw['start_point'][0]) + (lane_idx * lane_separation)
+                            lane_struct = Lane(start_point=Coordinate(x=lane_x, y=dw['start_point'][1]*self.meters_per_cell),
+                                                end_point=Coordinate(x=lane_x, y=dw['end_point'][1]*self.meters_per_cell))
+                            doorway_lanes.append(lane_struct)
+                    else:
+                        lane_separation = doorway_width / (self.num_lanes_per_doorway + 1)
+                        for lane_idx in range(1, self.num_lanes_per_doorway + 1):
+                            lane_x = (self.meters_per_cell * dw['start_point'][0]) + (lane_idx * lane_separation)
+                            lane_struct = Lane(start_point=Coordinate(x=lane_x, y=dw['start_point'][1]*self.meters_per_cell),
+                                                end_point=Coordinate(x=lane_x, y=dw['end_point'][1]*self.meters_per_cell))
+                            doorway_lanes.append(lane_struct)
+                elif doorway_direction == 'vertical':
+                    doorway_width = self.meters_per_cell * abs(dw['end_point'][1] - dw['start_point'][1])
+                    if doorway_width < self.doorway_lane_threshold * self.meters_per_cell:
+                        lane_separation = doorway_width / (self.num_lanes_per_doorway)
+                        for lane_idx in range(1, self.num_lanes_per_doorway):
+                            lane_y = (self.meters_per_cell * dw['start_point'][1]) + (lane_idx * lane_separation)
+                            lane_struct = Lane(start_point=Coordinate(x=dw['start_point'][0]*self.meters_per_cell, y=lane_y),
+                                                end_point=Coordinate(x=dw['end_point'][0]*self.meters_per_cell, y=lane_y))
+                            doorway_lanes.append(lane_struct)
+                    else:
+                        lane_separation = doorway_width / (self.num_lanes_per_doorway + 1)
+                        for lane_idx in range(1, self.num_lanes_per_doorway + 1):
+                            lane_y = (self.meters_per_cell * dw['start_point'][1]) + (lane_idx * lane_separation)
+                            lane_struct = Lane(start_point=Coordinate(x=dw['start_point'][0]*self.meters_per_cell, y=lane_y),
+                                                end_point=Coordinate(x=dw['end_point'][0]*self.meters_per_cell, y=lane_y))
+                            doorway_lanes.append(lane_struct)
+                else:
+                    print(f"Warning: Unknown doorway direction '{doorway_direction}' found in config.")
+                    continue
+
+                start = Coordinate(x=(dw['start_point'][0]*self.meters_per_cell), 
+                                    y=(dw['start_point'][1]*self.meters_per_cell))
+                end = Coordinate(x=(dw['end_point'][0]*self.meters_per_cell), 
+                                    y=(dw['end_point'][1]*self.meters_per_cell))
+                current_doorway = Doorway(start=start,
+                                          end=end,
+                                          lanes=doorway_lanes,
+                                          corridor_id=doorway_corridor_id)
+                doorways.append(current_doorway)
         return doorways
+    
+    def plot_extracted_structs(self):
+        rows, cols = self.occupancy_map.shape
+        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
+        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            self.occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+
+        for corridor in self.corridors:
+            for lane in corridor.lanes:
+                ax.plot([lane.start_point.x, lane.end_point.x],
+                        [lane.start_point.y, lane.end_point.y],
+                        color='blue', linewidth=1)
+                
+        for dt in self.drive_throughs:
+            for lane in dt.lanes:
+                ax.plot([lane.start_point.x, lane.end_point.x],
+                        [lane.start_point.y, lane.end_point.y],
+                        color='green', linewidth=1)
+                
+        for dw in self.doorways:
+            for lane in dw.lanes:
+                ax.scatter([lane.start_point.x, lane.end_point.x],
+                        [lane.start_point.y, lane.end_point.y],
+                        color='red', s=1)
+                
+        ax.set_title("Extracted Structs Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig("results/extracted_structs.png")
+        plt.show()
     
 
     
@@ -210,3 +306,5 @@ if __name__ == "__main__":
                                            config_path=args.config_path,
                                            meters_per_pixel=args.meters_per_pixel,
                                            factor=args.factor)
+    
+    tg_generator.plot_extracted_structs()
