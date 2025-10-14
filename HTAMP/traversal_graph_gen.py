@@ -70,12 +70,13 @@ class TraversalGraph:
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
-                 doorway_lane_threshold: float = 30.0, tangent_scaling_factor: float = 1.2, num_samples: int = 10):
+                 doorway_lane_threshold: float = 30.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.tangent_scaling_factor = tangent_scaling_factor
         self.num_samples = num_samples
         self.meters_per_cell = meters_per_pixel * factor
+        self.threshold = threshold * self.meters_per_cell
         self.num_lanes_per_corridor = num_lanes_per_corridor
         self.num_lanes_per_drive_through = num_lanes_per_drive_through
         self.num_lanes_per_doorway = num_lanes_per_doorway
@@ -286,8 +287,16 @@ class TraversalGraphGenerator:
 
             for i, lane in enumerate(intersection_corridor.lanes):
                 lane_x = lane.start_point.x
-                start_node_location = Coordinate(x=lane_x, y=vertical_start_y)
-                end_node_location = Coordinate(x=lane_x, y=vertical_end_y)
+                if abs(lane.start_point.y - vertical_start_y) < self.threshold:
+                    start_node_location = None
+                else:
+                    start_node_location = Coordinate(x=lane_x, y=vertical_start_y)
+
+                if abs(lane.end_point.y - vertical_end_y) < self.threshold:
+                    end_node_location = None
+                else:
+                    end_node_location = Coordinate(x=lane_x, y=vertical_end_y)
+
                 if i == 0:
                     orientation_vec = (0.0, 1.0)  # Facing down
                 elif i == len(intersection_corridor.lanes) - 1:
@@ -296,37 +305,50 @@ class TraversalGraphGenerator:
                     orientation_vec = None
                 
                 if orientation_vec is not None:
-                    upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{i}",
-                                                position=start_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{i}",
-                                                position=end_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    upper_nodes.append(upper_node)
-                    lower_nodes.append(lower_node)
+                    if start_node_location is not None:
+                        upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{i}",
+                                                    position=start_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        upper_nodes.append(upper_node)
+                    if end_node_location is not None:
+                        lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{i}",
+                                                    position=end_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        lower_nodes.append(lower_node)
                 else:
                     possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
                     for possible_orientation in possible_orientations:
-                        upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{i}",
-                                                    position=start_node_location,
-                                                    orientation_vec=possible_orientation,
-                                                    connections=[])
-                        lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{i}",
+                        if start_node_location is not None:
+                            upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{i}",
+                                                        position=start_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            upper_nodes.append(upper_node)
+                        if end_node_location is not None:
+                            lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{i}",
                                                     position=end_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        upper_nodes.append(upper_node)
-                        lower_nodes.append(lower_node)
+                            lower_nodes.append(lower_node)
 
             horizontal_start_x = intersection_corridor.width_start.x
             horizontal_end_x = intersection_corridor.width_end.x
 
             for j, lane in enumerate(corridor.lanes):
                 lane_y = lane.start_point.y
-                start_node_location = Coordinate(x=horizontal_start_x, y=lane_y)
-                end_node_location = Coordinate(x=horizontal_end_x, y=lane_y)
+
+                if abs(lane.start_point.x - horizontal_start_x) < self.threshold:
+                    start_node_location = None
+                else:
+                    start_node_location = Coordinate(x=horizontal_start_x, y=lane_y)
+
+                if abs(lane.end_point.x - horizontal_end_x) < self.threshold:
+                    end_node_location = None
+                else:
+                    end_node_location = Coordinate(x=horizontal_end_x, y=lane_y)
+
                 if j == 0:
                     orientation_vec = (-1.0, 0.0)  # Facing  left
                 elif j == len(corridor.lanes) - 1:
@@ -335,110 +357,34 @@ class TraversalGraphGenerator:
                     orientation_vec = None
                 
                 if orientation_vec is not None:
-                    left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{j}",
-                                                position=start_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{j}",
-                                                position=end_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    left_nodes.append(left_node)
-                    right_nodes.append(right_node)
-                else:
-                    possible_orientations = [(1.0, 0.0), (-1.0, 0.0)]
-                    for possible_orientation in possible_orientations:
+                    if start_node_location is not None:
                         left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{j}",
                                                     position=start_node_location,
-                                                    orientation_vec=possible_orientation,
-                                                    connections=[])
-                        right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{j}",
-                                                    position=end_node_location,
-                                                    orientation_vec=possible_orientation,
+                                                    orientation_vec=orientation_vec,
                                                     connections=[])
                         left_nodes.append(left_node)
+                    if end_node_location is not None:
+                        right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{j}",
+                                                    position=end_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
                         right_nodes.append(right_node)
-
-        elif corridor.direction == "vertical":
-            horizontal_start_x = corridor.width_start.x
-            horizontal_end_x = corridor.width_end.x
-
-            for i, lane in enumerate(intersection_corridor.lanes):
-                lane_y = lane.start_point.y
-                start_node_location = Coordinate(x=horizontal_start_x, y=lane_y)
-                end_node_location = Coordinate(x=horizontal_end_x, y=lane_y)
-                if i == 0:
-                    orientation_vec = (-1.0, 0.0)  # Facing left
-                elif i == len(intersection_corridor.lanes) - 1:
-                    orientation_vec = (1.0, 0.0)  # Facing right
-                else:
-                    orientation_vec = None
-                
-                if orientation_vec is not None:
-                    left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{i}",
-                                                position=start_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{i}",
-                                                position=end_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    left_nodes.append(left_node)
-                    right_nodes.append(right_node)
                 else:
                     possible_orientations = [(1.0, 0.0), (-1.0, 0.0)]
                     for possible_orientation in possible_orientations:
-                        left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{i}",
-                                                    position=start_node_location,
-                                                    orientation_vec=possible_orientation,
-                                                    connections=[])
-                        right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{i}",
+                        if start_node_location is not None:
+                            left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{j}",
+                                                        position=start_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            left_nodes.append(left_node)
+                        if end_node_location is not None:
+                            right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{j}",
                                                     position=end_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        left_nodes.append(left_node)
-                        right_nodes.append(right_node)
+                            right_nodes.append(right_node)
 
-            vertical_start_y = intersection_corridor.width_start.y
-            vertical_end_y = intersection_corridor.width_end.y
-
-            for j, lane in enumerate(corridor.lanes):
-                lane_x = lane.start_point.x
-                start_node_location = Coordinate(x=lane_x, y=vertical_start_y)
-                end_node_location = Coordinate(x=lane_x, y=vertical_end_y)
-                if j == 0:
-                    orientation_vec = (0.0, -1.0)  # Facing up
-                elif j == len(corridor.lanes) - 1:
-                    orientation_vec = (0.0, 1.0)  # Facing down
-                else:
-                    orientation_vec = None
-
-                if orientation_vec is not None:
-                    upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{j}",
-                                                position=start_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{j}",
-                                                position=end_node_location,
-                                                orientation_vec=orientation_vec,
-                                                connections=[])
-                    upper_nodes.append(upper_node)
-                    lower_nodes.append(lower_node)
-                else:
-                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
-                    for possible_orientation in possible_orientations:
-                        upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{j}",
-                                                    position=start_node_location,
-                                                    orientation_vec=possible_orientation,
-                                                    connections=[])
-                        lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{j}",
-                                                    position=end_node_location,
-                                                    orientation_vec=possible_orientation,
-                                                    connections=[])
-                        upper_nodes.append(upper_node)
-                        lower_nodes.append(lower_node)
-        else:
-            print(f"Warning: Unknown corridor direction '{corridor.direction}' found in config.")
         return upper_nodes, lower_nodes, left_nodes, right_nodes
     
     def _create_intersection_connections_for_nodes(self, 
@@ -460,69 +406,73 @@ class TraversalGraphGenerator:
         for i, ref_node in enumerate(reference_nodes):
             if ref_node.orientation_vec == ref_orientation:
                 if i == ref_index:
-                    opp_node = opposite_nodes[i]
-                    ref_node.connections.append(opp_node)
-                    edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                     destination=opp_node.position, 
-                                                     vec_origin=ref_node.orientation_vec,
-                                                     vec_destination=opp_node.orientation_vec,
-                                                     tangent_scaling_factor=self.tangent_scaling_factor,
-                                                     num_samples=self.num_samples)
-                    edge = TraversalEdge(from_node=ref_node.label, 
-                                         to_node=opp_node.label, 
-                                         action="go_straight", 
-                                         edge_connector=edge_connector)
-                    edges.append(edge)
-    
-                    for right_node in right_nodes:
-                        if right_node.orientation_vec == right_orientation:
-                            ref_node.connections.append(right_node)
-                            edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                             destination=right_node.position, 
-                                                             vec_origin=ref_node.orientation_vec,
-                                                             vec_destination=right_node.orientation_vec,
-                                                             tangent_scaling_factor=self.tangent_scaling_factor,
-                                                             num_samples=self.num_samples)
-                            edge = TraversalEdge(from_node=ref_node.label, 
-                                                 to_node=right_node.label, 
-                                                 action="turn_right", 
-                                                 edge_connector=edge_connector)
-                            edges.append(edge)
-                else:
-                    for opp_node in opposite_nodes:
-                        if horizontal:
-                            directionality_flag = opp_node.position.x == ref_node.position.x
-                        else:
-                            directionality_flag = opp_node.position.y == ref_node.position.y
-
-                        if opp_node.orientation_vec == ref_orientation and directionality_flag:
-                            ref_node.connections.append(opp_node)
-                            edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                             destination=opp_node.position, 
-                                                             vec_origin=ref_node.orientation_vec,
-                                                             vec_destination=opp_node.orientation_vec,
-                                                             tangent_scaling_factor=self.tangent_scaling_factor,
-                                                             num_samples=self.num_samples)
-                            edge = TraversalEdge(from_node=ref_node.label, 
-                                                 to_node=opp_node.label, 
-                                                 action="go_straight", 
-                                                 edge_connector=edge_connector)
-                            edges.append(edge)
+                    if len(opposite_nodes) > 0:
+                        opp_node = opposite_nodes[i]
+                        ref_node.connections.append(opp_node)
+                        edge_connector = CurvedConnector(origin=ref_node.position, 
+                                                        destination=opp_node.position, 
+                                                        vec_origin=ref_node.orientation_vec,
+                                                        vec_destination=opp_node.orientation_vec,
+                                                        tangent_scaling_factor=self.tangent_scaling_factor,
+                                                        num_samples=self.num_samples)
+                        edge = TraversalEdge(from_node=ref_node.label, 
+                                            to_node=opp_node.label, 
+                                            action="go_straight", 
+                                            edge_connector=edge_connector)
+                        edges.append(edge)
                     
-                    for left_node in left_nodes:
-                        if left_node.orientation_vec == left_orientation:
-                            ref_node.connections.append(left_node)
-                            edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                             destination=left_node.position, 
-                                                             vec_origin=ref_node.orientation_vec,
-                                                             vec_destination=left_node.orientation_vec,
-                                                             tangent_scaling_factor=self.tangent_scaling_factor,
-                                                             num_samples=self.num_samples)
-                            edge = TraversalEdge(from_node=ref_node.label, 
-                                                 to_node=left_node.label, 
-                                                 action="turn_left", 
-                                                 edge_connector=edge_connector)
-                            edges.append(edge)
+                    if len(right_nodes) > 0:
+                        for right_node in right_nodes:
+                            if right_node.orientation_vec == right_orientation:
+                                ref_node.connections.append(right_node)
+                                edge_connector = CurvedConnector(origin=ref_node.position, 
+                                                                destination=right_node.position, 
+                                                                vec_origin=ref_node.orientation_vec,
+                                                                vec_destination=right_node.orientation_vec,
+                                                                tangent_scaling_factor=self.tangent_scaling_factor,
+                                                                num_samples=self.num_samples)
+                                edge = TraversalEdge(from_node=ref_node.label, 
+                                                    to_node=right_node.label, 
+                                                    action="turn_right", 
+                                                    edge_connector=edge_connector)
+                                edges.append(edge)
+                else:
+                    if len(opposite_nodes) > 0:
+                        for opp_node in opposite_nodes:
+                            if horizontal:
+                                directionality_flag = opp_node.position.x == ref_node.position.x
+                            else:
+                                directionality_flag = opp_node.position.y == ref_node.position.y
+
+                            if opp_node.orientation_vec == ref_orientation and directionality_flag:
+                                ref_node.connections.append(opp_node)
+                                edge_connector = CurvedConnector(origin=ref_node.position, 
+                                                                destination=opp_node.position, 
+                                                                vec_origin=ref_node.orientation_vec,
+                                                                vec_destination=opp_node.orientation_vec,
+                                                                tangent_scaling_factor=self.tangent_scaling_factor,
+                                                                num_samples=self.num_samples)
+                                edge = TraversalEdge(from_node=ref_node.label, 
+                                                    to_node=opp_node.label, 
+                                                    action="go_straight", 
+                                                    edge_connector=edge_connector)
+                                edges.append(edge)
+                    
+                    if len(left_nodes) > 0:
+                        for left_node in left_nodes:
+                            if left_node.orientation_vec == left_orientation:
+                                ref_node.connections.append(left_node)
+                                edge_connector = CurvedConnector(origin=ref_node.position, 
+                                                                destination=left_node.position, 
+                                                                vec_origin=ref_node.orientation_vec,
+                                                                vec_destination=left_node.orientation_vec,
+                                                                tangent_scaling_factor=self.tangent_scaling_factor,
+                                                                num_samples=self.num_samples)
+                                edge = TraversalEdge(from_node=ref_node.label, 
+                                                    to_node=left_node.label, 
+                                                    action="turn_left", 
+                                                    edge_connector=edge_connector)
+                                edges.append(edge)
         return edges
 
     def _generate_corridor_intersection_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
@@ -549,10 +499,14 @@ class TraversalGraphGenerator:
                 
                 seen_corridors.add(corridor.corridor_id)
 
-                upper_nodes.sort(key=lambda node: node.position.x)
-                lower_nodes.sort(key=lambda node: node.position.x)
-                left_nodes.sort(key=lambda node: node.position.y)
-                right_nodes.sort(key=lambda node: node.position.y)
+                if len(upper_nodes) > 0:
+                    upper_nodes.sort(key=lambda node: node.position.x)
+                if len(lower_nodes) > 0:
+                    lower_nodes.sort(key=lambda node: node.position.x)
+                if len(left_nodes) > 0:
+                    left_nodes.sort(key=lambda node: node.position.y)
+                if len(right_nodes) > 0:
+                    right_nodes.sort(key=lambda node: node.position.y)
 
                 upper_edges = self._create_intersection_connections_for_nodes(reference_nodes=upper_nodes,
                                                                             ref_orientation=(0.0, 1.0),
