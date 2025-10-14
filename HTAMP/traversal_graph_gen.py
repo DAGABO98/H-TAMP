@@ -88,7 +88,7 @@ class TraversalGraphGenerator:
         self.corridors = self._extract_corridors_from_config()
         self.drive_throughs = self._extract_drive_throughs_from_config()
         self.doorways = self._extract_doorways_from_config()
-        self.corridor_intersection_subgraphs = self._generate_corridor_intersection_traversal_subgraph()
+        self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraph()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -525,9 +525,11 @@ class TraversalGraphGenerator:
                             edges.append(edge)
         return edges
 
-    def _generate_corridor_intersection_traversal_subgraph(self) -> List[IntersectionSubgraph]:
+    def _generate_corridor_intersection_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
         seen_corridors = set()
         subgraphs = []
+        subgraph_indices = {}
+        current_index = 0
         for corridor in self.corridors:
             corridor_dict = {corridor.corridor_id: corridor for corridor in self.corridors}
 
@@ -600,11 +602,15 @@ class TraversalGraphGenerator:
                                                         left_nodes=left_nodes, 
                                                         right_nodes=right_nodes, 
                                                         edges=edges)
-                subgraphs.append(current_subgraph)
 
-        return subgraphs
-    
-    def plot_subgraph(self, subgraph: IntersectionSubgraph, filename: str):
+                subgraphs.append(current_subgraph)
+                subgraph_indices.setdefault(corridor.corridor_id, []).append(current_index)
+                subgraph_indices.setdefault(intersection_corridor.corridor_id, []).append(current_index)
+                current_index += 1
+
+        return subgraphs, subgraph_indices
+
+    def plot_subgraph(self, subgraphs: List[IntersectionSubgraph], filename: str):
         rows, cols = self.occupancy_map.shape
         xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
         ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
@@ -617,26 +623,26 @@ class TraversalGraphGenerator:
             extent=[xmin, xmax, ymax, ymin],  # still in meters
             aspect="equal"
         )
+        for subgraph in subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
+                elif edge.action == "turn_left":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
+                elif edge.action == "turn_right":
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5)
 
-        for edge in subgraph.edges:
-            samples_x = edge.edge_connector.connector_dict['X']
-            samples_y = edge.edge_connector.connector_dict['Y']
-            if edge.action == "go_straight":
-                ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
-            elif edge.action == "turn_left":
-                ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
-            elif edge.action == "turn_right":
-                ax.plot(samples_x, samples_y, color='purple', linewidth=0.5)
-
-        for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
-            if node.orientation_vec == (1.0, 0.0):
-                ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
-            elif node.orientation_vec == (-1.0, 0.0):
-                ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
-            elif node.orientation_vec == (0.0, 1.0):
-                ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
-            elif node.orientation_vec == (0.0, -1.0):
-                ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
+            for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
+                if node.orientation_vec == (1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
+                elif node.orientation_vec == (-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
+                elif node.orientation_vec == (0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
+                elif node.orientation_vec == (0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
 
         ax.set_title("Intersection Subgraph Overlay")
         ax.set_xlabel("X (meters)")
@@ -698,4 +704,5 @@ if __name__ == "__main__":
                                            factor=args.factor)
     
     tg_generator.plot_extracted_structs()
-    tg_generator.plot_subgraph(tg_generator.corridor_intersection_subgraphs[0], filename="intersection_subgraph_0.svg")
+    tg_generator.plot_subgraph(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
+    print(tg_generator.corridor_intersection_subgraph_indices)
