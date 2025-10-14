@@ -9,24 +9,29 @@ corridors:
     length_end: [1736, 1014]
     width_start: [1700, 982]
     width_end: [1700, 1051]
+    intersections: [V1, V2]
   - id: H2
     direction: horizontal
     length_start: [898, 752]
     length_end: [1736, 752]
     width_start: [1700, 719]
     width_end: [1700, 788]
+    intersections: [V1, V2]
   - id: V1
     direction: vertical
     length_start: [930, 155]
     length_end: [930, 1606]
     width_start: [897, 1100]
     width_end: [966, 1100]
+    intersections: [H1, H2]
   - id: V2
     direction: vertical
     length_start: [1204, 720]
     length_end: [1204, 1050]
     width_start: [1146, 970]
     width_end: [1262, 970]
+    intersections: [H1, H2]
+
 
 drive_through_spaces:
   - id: S1
@@ -147,10 +152,6 @@ doorways:
     corridor_id: H2
     start_point: [1361, 814]
     end_point: [1388, 814]
-  - id: D28
-    corridor_id: V1
-    start_point: [921, 146]
-    end_point: [948, 146]
   - id: D29
     corridor_id: V2
     start_point: [1264, 918]
