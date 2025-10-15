@@ -902,7 +902,7 @@ class TraversalGraphGenerator:
             if doorway.start.x <= corridor.width_start.x:
                 door_right_node = door_nodes[0]
                 door_left_node = door_nodes[1]
-                corridor_right_nodes = right_node
+                corridor_right_nodes = right_nodes
                 corridor_left_nodes = left_nodes
                 right_orientation_vec = (0.0, -1.0)
                 left_orientation_vec = (0.0, 1.0)
@@ -1035,7 +1035,49 @@ class TraversalGraphGenerator:
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
         plt.savefig(f"results/{filename}")
-        plt.show()
+        plt.close()
+    
+    def plot_doorway_subgraph(self, subgraphs: List[DoorwaySubgraph], filename: str):
+        rows, cols = self.occupancy_map.shape
+        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
+        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            self.occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+        for subgraph in subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
+                elif edge.action == "turn_left":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
+                elif edge.action == "turn_right":
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5)
+                elif edge.action == "switch_directions":
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5)
+
+            for node in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
+                if node.orientation_vec == (1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
+                elif node.orientation_vec == (-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
+                elif node.orientation_vec == (0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
+                elif node.orientation_vec == (0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
+
+        ax.set_title("Doorway Subgraph Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig(f"results/{filename}")
+        plt.close()
 
     def plot_extracted_structs(self):
         rows, cols = self.occupancy_map.shape
@@ -1073,7 +1115,7 @@ class TraversalGraphGenerator:
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
         plt.savefig("results/extracted_structs.png")
-        plt.show()
+        plt.close()
     
 
     
@@ -1092,4 +1134,6 @@ if __name__ == "__main__":
     
     tg_generator.plot_extracted_structs()
     tg_generator.plot_intersection_subgraph(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
+    tg_generator.plot_doorway_subgraph(tg_generator.doorway_subgraphs, filename="doorway_subgraph_0.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
+    print(tg_generator.doorway_subgraph_indices)
