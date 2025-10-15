@@ -63,6 +63,14 @@ class IntersectionSubgraph:
     edges: list[TraversalEdge]
 
 @dataclass
+class DoorwaySubgraph:
+    room_nodes: list[TraversalNode]
+    doorway_nodes: list[TraversalNode]
+    left_nodes: list[TraversalNode]
+    right_nodes: list[TraversalNode]
+    edges: list[TraversalEdge]
+
+@dataclass
 class TraversalGraph:
     nodes: list[TraversalNode]
     edges: list[TraversalEdge]
@@ -79,6 +87,7 @@ class TraversalGraphGenerator:
         self.threshold = threshold * self.meters_per_cell
         self.num_lanes_per_corridor = num_lanes_per_corridor
         self.num_lanes_per_drive_through = num_lanes_per_drive_through
+        self.doorway_node_offset = 2 * doorway_lane_threshold * self.meters_per_cell  # meters
         self.num_lanes_per_doorway = num_lanes_per_doorway
         self.doorway_lane_threshold = doorway_lane_threshold
         self.occupancy_map = self._load_map(occupancy_map_path)
@@ -563,8 +572,320 @@ class TraversalGraphGenerator:
                 current_index += 1
 
         return subgraphs, subgraph_indices
+    
+    def _get_corridor_by_id(self, corridor_id: str) -> Corridor:
+        for corridor in self.corridors:
+            if corridor.corridor_id == corridor_id:
+                return corridor
+        return None
 
-    def plot_subgraph(self, subgraphs: List[IntersectionSubgraph], filename: str):
+    def _extract_doorway_intersection_nodes(self, 
+                                             doorway: Doorway,
+                                             corridor: Corridor) -> Tuple[List[TraversalNode], List[TraversalNode], List[TraversalNode]]:
+        room_nodes = []
+        door_nodes = []
+        left_nodes = []
+        right_nodes = []
+
+        if corridor.direction == "horizontal":
+            doorway_start_x = doorway.start.x
+            doorway_end_x = doorway.end.x
+            for i, corridor_lane in enumerate(corridor.lanes):
+                lane_y = corridor_lane.start_point.y
+                left_node_location = Coordinate(x=doorway_start_x, y=lane_y)
+                right_node_location = Coordinate(x=doorway_end_x, y=lane_y)
+                if i == 0:
+                    orientation_vec = (-1.0, 0.0)  # Facing  left
+                elif i == len(corridor.lanes) - 1:
+                    orientation_vec = (1.0, 0.0)  # Facing right
+                else:
+                    orientation_vec = None
+                if orientation_vec is None:
+                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    for possible_orientation in possible_orientations:
+                        left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        left_nodes.append(left_node)
+                        right_nodes.append(right_node)
+                else:
+                    left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                                                position=left_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                                                position=right_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    left_nodes.append(left_node)
+                    right_nodes.append(right_node)
+
+            if doorway.start.y <= corridor.width_start.y:
+                if len(doorway.lanes) == 1:
+                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    for possible_orientation in possible_orientations:
+                        lane = doorway.lanes[0]
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=lane_x, y=(lane_y-self.doorway_node_offset))
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                                                    position=room_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+                else:
+
+                    for i, lane in enumerate(doorway.lanes):
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=lane_x, y=(lane_y-self.doorway_node_offset))
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        if i == 0:
+                            orientation_vec = (0.0, 1.0)  # Facing down
+                        else:
+                            orientation_vec = (0.0, -1.0)  # Facing up
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                                                    position=room_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+            else:
+                if len(doorway.lanes) == 1:
+                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    for possible_orientation in possible_orientations:
+                        lane = doorway.lanes[0]
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=lane_x, y=(lane_y+self.doorway_node_offset))
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                                                    position=room_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+                else:
+                    for i, lane in enumerate(doorway.lanes):
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=lane_x, y=(lane_y+self.doorway_node_offset))
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        if i == 0:
+                            orientation_vec = (0.0, 1.0)  # Facing down
+                        else:
+                            orientation_vec = (0.0, -1.0)  # Facing up
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                                                    position=room_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+        else:
+            doorway_start_y = doorway.start.y
+            doorway_end_y = doorway.end.y
+            for i, corridor_lane in enumerate(corridor.lanes):
+                lane_x = corridor_lane.start_point.x
+                left_node_location = Coordinate(x=lane_x, y=doorway_start_y)
+                right_node_location = Coordinate(x=lane_x, y=doorway_end_y)
+                if i == 0:
+                    orientation_vec = (0.0, 1.0)  # Facing down
+                elif i == len(corridor.lanes) - 1:
+                    orientation_vec = (0.0, -1.0)  # Facing up
+                else:
+                    orientation_vec = None
+                if orientation_vec is None:
+                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    for possible_orientation in possible_orientations:
+                        left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        left_nodes.append(left_node)
+                        right_nodes.append(right_node)
+                else:
+                    left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                                                position=left_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                                                position=right_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    left_nodes.append(left_node)
+                    right_nodes.append(right_node)
+
+            if doorway.start.x <= corridor.width_start.x:
+                if len(doorway.lanes) == 1:
+                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    for possible_orientation in possible_orientations:
+                        lane = doorway.lanes[0]
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=(lane_x-self.doorway_node_offset), y=lane_y)
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                                                    position=room_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+                else:
+
+                    for i, lane in enumerate(doorway.lanes):
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=(lane_x-self.doorway_node_offset), y=lane_y)
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        if i == 0:
+                            orientation_vec = (-1.0, 0.0) 
+                        else:
+                            orientation_vec = (1.0, 0.0)
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                                                    position=room_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+            else:
+                if len(doorway.lanes) == 1:
+                    possible_orientations = [(1.0, 0.0), (-1.0, 0.0)]
+                    for possible_orientation in possible_orientations:
+                        lane = doorway.lanes[0]
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=(lane_x+self.doorway_node_offset), y=lane_y)
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                                                    position=room_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+                else:
+                    
+                    for i, lane in enumerate(doorway.lanes):
+                        lane_x = lane.start_point.x
+                        lane_y = lane.start_point.y
+                        room_node_location = Coordinate(x=(lane_x+self.doorway_node_offset), y=lane_y)
+                        doorway_node_location = Coordinate(x=lane_x, y=lane_y)
+
+                        if i == 0:
+                            orientation_vec = (1.0, 0.0)
+                        else:
+                            orientation_vec = (-1.0, 0.0)
+
+                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                                                    position=room_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        room_nodes.append(room_node)
+
+                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                                                    position=doorway_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        door_nodes.append(door_node)
+
+        return room_nodes, door_nodes, left_nodes, right_nodes
+
+    def _create_doorway_connections_for_nodes(self, room_nodes: List[TraversalNode], 
+                                              door_nodes: List[TraversalNode], 
+                                              left_nodes: List[TraversalNode], 
+                                              right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+        # TODO: Implement connections between room, door, left, and right nodes
+        edges = []
+        for i, room_node in enumerate(room_nodes):
+            pass
+        return edges
+
+    def _generate_doorway_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
+        subgraphs = []
+        subgraph_indices = {}
+        current_index = 0
+        for doorway in self.doorways:
+            edges = []
+            corridor = self._get_corridor_by_id(doorway.corridor_id)
+            if corridor is None:
+                print(f"Warning: Doorway corridor ID '{doorway.corridor_id}' not found among corridors.")
+                continue
+
+            room_nodes, door_nodes, left_nodes, right_nodes = self._extract_doorway_intersection_nodes(doorway=doorway, 
+                                                                                           corridor=corridor)
+            
+            doorway_edges = self._create_doorway_connections_for_nodes(room_nodes=room_nodes,
+                                                                       door_nodes=door_nodes,
+                                                                       left_nodes=left_nodes,
+                                                                       right_nodes=right_nodes)
+            edges.extend(doorway_edges)
+
+            current_subgraph = DoorwaySubgraph(room_nodes=room_nodes, 
+                                                doorway_nodes=door_nodes, 
+                                                left_nodes=left_nodes, 
+                                                right_nodes=right_nodes, 
+                                                edges=edges)
+            subgraphs.append(current_subgraph)
+            subgraph_indices.setdefault(doorway.corridor_id, []).append(current_index)
+            current_index += 1
+        return subgraphs, subgraph_indices
+
+    def plot_intersection_subgraph(self, subgraphs: List[IntersectionSubgraph], filename: str):
         rows, cols = self.occupancy_map.shape
         xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
         ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
@@ -658,5 +979,5 @@ if __name__ == "__main__":
                                            factor=args.factor)
     
     tg_generator.plot_extracted_structs()
-    tg_generator.plot_subgraph(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
+    tg_generator.plot_intersection_subgraph(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
