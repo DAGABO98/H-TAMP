@@ -71,6 +71,21 @@ class DoorwaySubgraph:
     edges: list[TraversalEdge]
 
 @dataclass
+class EndPointSubgraph:
+    corridor_nodes: list[TraversalNode]
+    edges: list[TraversalEdge]
+
+@dataclass
+class DriveThroughSubgraph:
+    entry_nodes: list[TraversalNode]
+    left_entry_nodes: list[TraversalNode]
+    right_entry_nodes: list[TraversalNode]
+    exit_nodes: list[TraversalNode]
+    left_exit_nodes: list[TraversalNode]
+    right_exit_nodes: list[TraversalNode]
+    edges: list[TraversalEdge]
+
+@dataclass
 class SwitchingPointSubgraph:
     left_nodes: list[TraversalNode]
     right_nodes: list[TraversalNode]
@@ -108,6 +123,7 @@ class TraversalGraphGenerator:
         self.doorways = self._extract_doorways_from_config()
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
         self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
+        self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -1021,6 +1037,297 @@ class TraversalGraphGenerator:
                                                 edges=edges)
             subgraphs.append(current_subgraph)
             subgraph_indices.setdefault(doorway.corridor_id, []).append(current_index)
+            current_index += 1
+        return subgraphs, subgraph_indices
+    
+    def _extract_drive_through_intersection_nodes(self,
+                                                  drive_through: DriveThrough) -> Tuple[List[TraversalNode], List[TraversalNode], 
+                                                                                    List[TraversalNode], List[TraversalNode],
+                                                                                    List[TraversalNode], List[TraversalNode]]:
+        entry_nodes = []
+        exit_nodes = []
+        left_entry_nodes = []
+        right_entry_nodes = []
+        left_exit_nodes = []
+        right_exit_nodes = []
+
+        for lane in drive_through.lanes:
+            entry_corridor = self._get_corridor_by_id(drive_through.entry_corridor_id)
+            if entry_corridor.direction == "horizontal":
+                possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                for possible_orientation in possible_orientations:
+                    entry_node = TraversalNode(label=f"{drive_through.entry_corridor_id}_entry_{len(entry_nodes)}",
+                                                position=lane.start_point,
+                                                orientation_vec=possible_orientation,
+                                                connections=[])
+                    entry_nodes.append(entry_node)
+                
+                for i, corridor_lane in enumerate(entry_corridor.lanes):
+                    lane_y = corridor_lane.start_point.y
+                    left_lane_x = drive_through.entry_start.x
+                    right_lane_x = drive_through.entry_end.x
+                    left_node_location = Coordinate(x=left_lane_x, y=lane_y)
+                    right_node_location = Coordinate(x=right_lane_x, y=lane_y)
+                    if i == 0:
+                        orientation_vec = (-1.0, 0.0)  # Facing left
+                    elif i == len(entry_corridor.lanes) - 1:
+                        orientation_vec = (1.0, 0.0)  # Facing right
+                    else:
+                        orientation_vec = None
+                    if orientation_vec is None:
+                        possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                        for possible_orientation in possible_orientations:
+                            left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                                                        position=left_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                                                        position=right_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            left_entry_nodes.append(left_node)
+                            right_entry_nodes.append(right_node)
+                    else:
+                        left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        left_entry_nodes.append(left_node)
+                        right_entry_nodes.append(right_node)
+            else:
+                possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                for possible_orientation in possible_orientations:
+                    entry_node = TraversalNode(label=f"{drive_through.entry_corridor_id}_entry_{len(entry_nodes)}",
+                                                position=lane.start_point,
+                                                orientation_vec=possible_orientation,
+                                                connections=[])
+                    entry_nodes.append(entry_node)
+                
+                for i, corridor_lane in enumerate(entry_corridor.lanes):
+                    lane_x = corridor_lane.start_point.x
+                    left_lane_y = drive_through.entry_start.y
+                    right_lane_y = drive_through.entry_end.y
+                    left_node_location = Coordinate(x=lane_x, y=left_lane_y)
+                    right_node_location = Coordinate(x=lane_x, y=right_lane_y)
+                    if i == 0:
+                        orientation_vec = (0.0, 1.0)  # Facing down
+                    elif i == len(entry_corridor.lanes) - 1:
+                        orientation_vec = (0.0, -1.0)  # Facing up
+                    else:
+                        orientation_vec = None
+                    if orientation_vec is None:
+                        possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                        for possible_orientation in possible_orientations:
+                            left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                                                        position=left_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                                                        position=right_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            left_entry_nodes.append(left_node)
+                            right_entry_nodes.append(right_node)
+                    else:
+                        left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        left_entry_nodes.append(left_node)
+                        right_entry_nodes.append(right_node)
+            
+            exit_corridor = self._get_corridor_by_id(drive_through.exit_corridor_id)
+            if exit_corridor.direction == "horizontal":
+                possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                for possible_orientation in possible_orientations:
+                    exit_node = TraversalNode(label=f"{drive_through.exit_corridor_id}_exit_{len(exit_nodes)}",
+                                                position=lane.end_point,
+                                                orientation_vec=possible_orientation,
+                                                connections=[])
+                    exit_nodes.append(exit_node)
+                
+                for i, corridor_lane in enumerate(exit_corridor.lanes):
+                    lane_y = corridor_lane.start_point.y
+                    left_lane_x = drive_through.exit_start.x
+                    right_lane_x = drive_through.exit_end.x
+                    left_node_location = Coordinate(x=left_lane_x, y=lane_y)
+                    right_node_location = Coordinate(x=right_lane_x, y=lane_y)
+                    if i == 0:
+                        orientation_vec = (-1.0, 0.0)  # Facing left
+                    elif i == len(exit_corridor.lanes) - 1:
+                        orientation_vec = (1.0, 0.0)  # Facing right
+                    else:
+                        orientation_vec = None
+                    if orientation_vec is None:
+                        possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                        for possible_orientation in possible_orientations:
+                            left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                                                        position=left_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                                                        position=right_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            left_exit_nodes.append(left_node)
+                            right_exit_nodes.append(right_node)
+                    else:
+                        left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        left_exit_nodes.append(left_node)
+                        right_exit_nodes.append(right_node)
+            else:
+                possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                for possible_orientation in possible_orientations:
+                    exit_node = TraversalNode(label=f"{drive_through.exit_corridor_id}_exit_{len(exit_nodes)}",
+                                                position=lane.end_point,
+                                                orientation_vec=possible_orientation,
+                                                connections=[])
+                    exit_nodes.append(exit_node)
+                
+                for i, corridor_lane in enumerate(exit_corridor.lanes):
+                    lane_x = corridor_lane.start_point.x
+                    left_lane_y = drive_through.exit_start.y
+                    right_lane_y = drive_through.exit_end.y
+                    left_node_location = Coordinate(x=lane_x, y=left_lane_y)
+                    right_node_location = Coordinate(x=lane_x, y=right_lane_y)
+                    if i == 0:
+                        orientation_vec = (0.0, 1.0)  # Facing down
+                    elif i == len(exit_corridor.lanes) - 1:
+                        orientation_vec = (0.0, -1.0)  # Facing up
+                    else:
+                        orientation_vec = None
+                    if orientation_vec is None:
+                        possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                        for possible_orientation in possible_orientations:
+                            left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                                                        position=left_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                                                        position=right_node_location,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                            left_exit_nodes.append(left_node)
+                            right_exit_nodes.append(right_node)
+                    else:
+                        left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                        left_exit_nodes.append(left_node)
+                        right_exit_nodes.append(right_node)
+
+        return entry_nodes, exit_nodes, left_entry_nodes, right_entry_nodes, left_exit_nodes, right_exit_nodes
+
+    def _create_drive_through_connections_for_nodes(self, 
+                                                    drive_through: DriveThrough,
+                                                    entry_nodes: List[TraversalNode],
+                                                    exit_nodes: List[TraversalNode],
+                                                    left_entry_nodes: List[TraversalNode],
+                                                    right_entry_nodes: List[TraversalNode],
+                                                    left_exit_nodes: List[TraversalNode],
+                                                    right_exit_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+        edges = []
+        straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_entry_nodes,
+                                                                             right_nodes=right_entry_nodes)
+        edges.extend(straight_edges)
+        straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_exit_nodes,
+                                                                             right_nodes=right_exit_nodes)
+        edges.extend(straight_edges)
+
+        for i, entry_node in enumerate(entry_nodes):
+            exit_node = exit_nodes[i]
+            assert entry_node.orientation_vec == exit_node.orientation_vec
+            edge = self._create_edge_between_nodes(from_node=entry_node, to_node=exit_node, action="go_straight")
+            edges.append(edge)
+
+            entry_corridor = self._get_corridor_by_id(drive_through.entry_corridor_id)
+
+            if entry_corridor.direction == "horizontal":
+                left_orientation_vec = (-1.0, 0.0)
+                right_orientation_vec = (1.0, 0.0)
+                out_direction_vec = (1.0, 0.0)
+            else:
+                left_orientation_vec = (0.0, 1.0)
+                right_orientation_vec = (0.0, -1.0)
+                out_direction_vec = (0.0, -1.0)
+
+            for left_entry_node in left_entry_nodes:
+                if entry_node.orientation_vec == out_direction_vec:
+                    if left_entry_node.orientation_vec == left_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=entry_node,
+                                                            to_node=left_entry_node, 
+                                                            action="turn_right")
+                        edges.append(edge)
+                else:
+                    if left_entry_node.orientation_vec == right_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=left_entry_node,
+                                                                to_node=entry_node, 
+                                                                action="turn_left")
+                        edges.append(edge)
+            
+            for right_entry_node in right_entry_nodes:
+                if entry_node.orientation_vec == out_direction_vec:
+                    if right_entry_node.orientation_vec == right_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=entry_node,
+                                                            to_node=right_entry_node, 
+                                                            action="turn_left")
+                        edges.append(edge)
+                else:
+                    if right_entry_node.orientation_vec == left_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=right_entry_node,
+                                                                to_node=entry_node, 
+                                                                action="turn_right")
+                        edges.append(edge)
+        return edges
+
+    def _generate_drive_through_traversal_subgraphs(self) -> Tuple[List[DriveThroughSubgraph], dict[str, List[int]]]:
+        subgraphs = []
+        subgraph_indices = {}
+        current_index = 0
+        for drive_through in self.drive_throughs:
+            edges = []
+            extraction_result = self._extract_drive_through_intersection_nodes(drive_through=drive_through)
+            entry_nodes, exit_nodes, left_entry_nodes, right_entry_nodes, left_exit_nodes, right_exit_nodes = extraction_result
+
+            drive_through_edges = self._create_drive_through_connections_for_nodes(drive_through=drive_through,
+                                                                                   entry_nodes=entry_nodes,
+                                                                                   exit_nodes=exit_nodes,
+                                                                                   left_entry_nodes=left_entry_nodes,
+                                                                                   right_entry_nodes=right_entry_nodes,
+                                                                                   left_exit_nodes=left_exit_nodes,
+                                                                                   right_exit_nodes=right_exit_nodes)
+            edges.extend(drive_through_edges)
+
+            current_subgraph = DriveThroughSubgraph(entry_nodes=entry_nodes,
+                                                    left_entry_nodes=left_entry_nodes,
+                                                    right_entry_nodes=right_entry_nodes,
+                                                    left_exit_nodes=left_exit_nodes,
+                                                    right_exit_nodes=right_exit_nodes,
+                                                    exit_nodes=exit_nodes,
+                                                    edges=edges)
+            subgraphs.append(current_subgraph)
+            subgraph_indices.setdefault(drive_through.entry_corridor_id, []).append(current_index)
+            subgraph_indices.setdefault(drive_through.exit_corridor_id, []).append(current_index)
             current_index += 1
         return subgraphs, subgraph_indices
     
