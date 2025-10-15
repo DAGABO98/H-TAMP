@@ -85,7 +85,7 @@ class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
                  doorway_lane_threshold: float = 30.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0,
-                 switching_point_offset: float = 10.0):
+                 switching_point_offset: float = 15.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.tangent_scaling_factor = tangent_scaling_factor
@@ -1033,7 +1033,7 @@ class TraversalGraphGenerator:
             right_nodes_x = center.x + self.switching_point_offset
             left_nodes_x = center.x - self.switching_point_offset
             for i, lane in enumerate(corridor.lanes):
-                lane_y = lane.y
+                lane_y = lane.start_point.y
                 left_node_location = Coordinate(x=left_nodes_x, y=lane_y)
                 right_node_location = Coordinate(x=right_nodes_x, y=lane_y)
                 if i == 0:
@@ -1070,7 +1070,7 @@ class TraversalGraphGenerator:
             right_nodes_y = center.y - self.switching_point_offset
             left_nodes_y = center.y + self.switching_point_offset
             for i, lane in enumerate(corridor.lanes):
-                lane_x = lane.x
+                lane_x = lane.start_point.x
                 right_node_location = Coordinate(x=lane_x, y=right_nodes_y)
                 left_node_location = Coordinate(x=lane_x, y=left_nodes_y)
                 if i == 0:
@@ -1105,16 +1105,59 @@ class TraversalGraphGenerator:
                     right_nodes.append(right_node)
         return left_nodes, right_nodes
     
-    def _create_switching_point_connections_for_nodes(self, 
-                                                     left_nodes: List[TraversalNode], 
-                                                     right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
-        # TODO: Implement more intelligent pairing based on proximity
+    def _create_turn_point_connections_for_nodes(self, 
+                                                 ref_nodes: List[TraversalNode],
+                                                 ref_direction_vec: Tuple[float, float]
+                                                 ) -> List[TraversalEdge]:
         edges = []
-        for left_node in left_nodes:
-            for right_node in right_nodes:
-                if left_node.position.x == right_node.position.x:
-                    edge = TraversalEdge(start=left_node, end=right_node, action="switch")
-                    edges.append(edge)
+
+        for ref_node in ref_nodes:
+            if ref_node.orientation_vec == ref_direction_vec:
+                for second_node in ref_nodes:
+                    if second_node.orientation_vec != ref_direction_vec and second_node.position != ref_node.position:
+                        edge = self._create_edge_between_nodes(from_node=ref_node,
+                                                        to_node=second_node, 
+                                                        action="switch_directions")
+                        edges.append(edge)
+
+        return edges
+    
+    def _create_lane_switches_for_nodes(self, 
+                                       ref_nodes: List[TraversalNode], 
+                                       opp_nodes: List[TraversalNode],
+                                       ref_direction_vec: Tuple[float, float]
+                                       ) -> List[TraversalEdge]:
+        edges = []
+        for ref_node in ref_nodes:
+            if ref_node.orientation_vec == ref_direction_vec:
+                for opp_node in opp_nodes:
+                    if opp_node.orientation_vec == ref_direction_vec:
+                        if opp_node.position.x == ref_node.position.x or opp_node.position.y == ref_node.position.y:
+                            edge = self._create_edge_between_nodes(from_node=ref_node,
+                                                                    to_node=opp_node, 
+                                                                    action="go_straight")
+                        else:
+                            edge = self._create_edge_between_nodes(from_node=ref_node,
+                                                            to_node=opp_node, 
+                                                            action="switch_lanes")
+                        edges.append(edge)
+        return edges
+    
+    def _create_switching_point_connections_for_nodes(self, 
+                                                     ref_nodes: List[TraversalNode], 
+                                                     opp_nodes: List[TraversalNode],
+                                                     ref_direction_vec: Tuple[float, float]
+                                                     ) -> List[TraversalEdge]:
+        edges = []
+        turn_edges = self._create_turn_point_connections_for_nodes(ref_nodes=ref_nodes,
+                                                                   ref_direction_vec=ref_direction_vec)
+        edges.extend(turn_edges)
+
+        lane_switch_edges = self._create_lane_switches_for_nodes(ref_nodes=ref_nodes,
+                                                                 opp_nodes=opp_nodes,
+                                                                 ref_direction_vec=ref_direction_vec)
+        edges.extend(lane_switch_edges)
+
         return edges
 
     def _generate_switching_point_subgraph(self, 
@@ -1124,13 +1167,22 @@ class TraversalGraphGenerator:
         left_nodes, right_nodes = self._extract_switching_point_nodes(corridor=corridor,
                                                                      center=center)
         
-        switching_edges = self._create_switching_point_connections_for_nodes(left_nodes=left_nodes,
-                                                                             right_nodes=right_nodes)
-        edges.extend(switching_edges)
+        if corridor.direction == "horizontal":
+            original_ref_direction_vec = (1.0, 0.0)  # Facing right
+            inverted_ref_direction_vec = (-1.0, 0.0)  # Facing left
+        else:
+            original_ref_direction_vec = (0.0, -1.0)  # Facing up
+            inverted_ref_direction_vec = (0.0, 1.0)  # Facing down
 
-        straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_nodes,
-                                                                             right_nodes=right_nodes)
-        edges.extend(straight_edges)
+        original_switching_edges = self._create_switching_point_connections_for_nodes(ref_nodes=left_nodes,
+                                                                             opp_nodes=right_nodes,
+                                                                             ref_direction_vec=original_ref_direction_vec)
+        edges.extend(original_switching_edges)
+
+        inverted_switching_edges = self._create_switching_point_connections_for_nodes(ref_nodes=right_nodes,
+                                                                             opp_nodes=left_nodes,
+                                                                             ref_direction_vec=inverted_ref_direction_vec)
+        edges.extend(inverted_switching_edges)
 
         switching_point_subgraph = SwitchingPointSubgraph(left_nodes=left_nodes,
                                                           right_nodes=right_nodes,
@@ -1218,6 +1270,46 @@ class TraversalGraphGenerator:
         ax.set_ylabel("Y (meters)")
         plt.savefig(f"results/{filename}")
         plt.close()
+    
+    def plot_switching_point_subgraphs(self, subgraphs: List[SwitchingPointSubgraph], filename: str):
+        rows, cols = self.occupancy_map.shape
+        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
+        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            self.occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+        for subgraph in subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
+                elif edge.action == "switch_directions":
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5)
+                elif edge.action == "switch_lanes":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
+
+            for node in subgraph.left_nodes + subgraph.right_nodes:
+                if node.orientation_vec == (1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
+                elif node.orientation_vec == (-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
+                elif node.orientation_vec == (0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
+                elif node.orientation_vec == (0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
+
+        ax.set_title("Switching Point Subgraph Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig(f"results/{filename}")
+        plt.close()
 
     def plot_extracted_structs(self):
         rows, cols = self.occupancy_map.shape
@@ -1275,5 +1367,10 @@ if __name__ == "__main__":
     tg_generator.plot_extracted_structs()
     tg_generator.plot_intersection_subgraphs(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
     tg_generator.plot_doorway_subgraphs(tg_generator.doorway_subgraphs, filename="doorway_subgraph_0.svg")
+    
+    switching_point_subgraphs = []
+    subgraph = tg_generator._generate_switching_point_subgraph(center=Coordinate(38.5, 37.0), corridor=tg_generator.corridors[0])
+    switching_point_subgraphs.append(subgraph)
+    tg_generator.plot_switching_point_subgraphs(switching_point_subgraphs, filename="switching_point_subgraph_0.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)
