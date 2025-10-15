@@ -11,6 +11,28 @@ from HTAMP.geometry_helpers import CurvedConnector
 from HTAMP.grid_world import Coordinate
 
 @dataclass
+class OrientationVector:
+    x: float
+    y: float
+
+    def __repr__(self):
+        if self.x == 0.0 and self.y == 1.0:
+            return "Down"
+        elif self.x == 0.0 and self.y == -1.0:
+            return "Up"
+        elif self.x == 1.0 and self.y == 0.0:
+            return "Right"
+        elif self.x == -1.0 and self.y == 0.0:
+            return "Left"
+        else:
+            return f"({self.x}, {self.y})"
+    
+    def __eq__(self, other):
+        if not isinstance(other, OrientationVector):
+            return NotImplemented
+        return np.isclose(self.x, other.x) and np.isclose(self.y, other.y)
+
+@dataclass
 class Lane:
     start_point: Coordinate
     end_point: Coordinate
@@ -45,7 +67,7 @@ class Doorway:
 class TraversalNode:
     label: str
     position: Coordinate
-    orientation_vec: Tuple[float, float]
+    orientation_vec: OrientationVector
     connections: list["TraversalNode"]
 
 @dataclass
@@ -333,36 +355,36 @@ class TraversalGraphGenerator:
                     end_node_location = Coordinate(x=lane_x, y=vertical_end_y)
 
                 if i == 0:
-                    orientation_vec = (0.0, 1.0)  # Facing down
+                    orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                 elif i == len(intersection_corridor.lanes) - 1:
-                    orientation_vec = (0.0, -1.0)  # Facing up
+                    orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
                 else:
                     orientation_vec = None
                 
                 if orientation_vec is not None:
                     if start_node_location is not None:
-                        upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{i}",
+                        upper_node = TraversalNode(label=f"{start_node_location.x: .2f}_{start_node_location.y: .2f}_{orientation_vec}",
                                                     position=start_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         upper_nodes.append(upper_node)
                     if end_node_location is not None:
-                        lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{i}",
+                        lower_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{orientation_vec}",
                                                     position=end_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         lower_nodes.append(lower_node)
                 else:
-                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                     for possible_orientation in possible_orientations:
                         if start_node_location is not None:
-                            upper_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_upper_{i}",
+                            upper_node = TraversalNode(label=f"{start_node_location.x: .2f}_{start_node_location.y: .2f}_{possible_orientation}",
                                                         position=start_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
                             upper_nodes.append(upper_node)
                         if end_node_location is not None:
-                            lower_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_lower_{i}",
+                            lower_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{possible_orientation}",
                                                     position=end_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
@@ -385,36 +407,36 @@ class TraversalGraphGenerator:
                     end_node_location = Coordinate(x=horizontal_end_x, y=lane_y)
 
                 if j == 0:
-                    orientation_vec = (-1.0, 0.0)  # Facing  left
+                    orientation_vec = OrientationVector(-1.0, 0.0)  # Facing  left
                 elif j == len(corridor.lanes) - 1:
-                    orientation_vec = (1.0, 0.0)  # Facing right
+                    orientation_vec = OrientationVector(1.0, 0.0)  # Facing right
                 else:
                     orientation_vec = None
                 
                 if orientation_vec is not None:
                     if start_node_location is not None:
-                        left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{j}",
+                        left_node = TraversalNode(label=f"{start_node_location.x: .2f}_{start_node_location.y: .2f}_{orientation_vec}",
                                                     position=start_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         left_nodes.append(left_node)
                     if end_node_location is not None:
-                        right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{j}",
+                        right_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{orientation_vec}",
                                                     position=end_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         right_nodes.append(right_node)
                 else:
-                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                     for possible_orientation in possible_orientations:
                         if start_node_location is not None:
-                            left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{j}",
+                            left_node = TraversalNode(label=f"{start_node_location.x: .2f}_{start_node_location.y: .2f}_{possible_orientation}",
                                                         position=start_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
                             left_nodes.append(left_node)
                         if end_node_location is not None:
-                            right_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_right_{j}",
+                            right_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{possible_orientation}",
                                                     position=end_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
@@ -429,8 +451,8 @@ class TraversalGraphGenerator:
         from_node.connections.append(to_node)
         edge_connector = CurvedConnector(origin=from_node.position, 
                                         destination=to_node.position, 
-                                        vec_origin=from_node.orientation_vec,
-                                        vec_destination=to_node.orientation_vec,
+                                        vec_origin=(from_node.orientation_vec.x, from_node.orientation_vec.y),
+                                        vec_destination=(to_node.orientation_vec.x, to_node.orientation_vec.y),
                                         tangent_scaling_factor=self.tangent_scaling_factor,
                                         num_samples=self.num_samples)
         edge = TraversalEdge(from_node=from_node.label, 
@@ -441,12 +463,12 @@ class TraversalGraphGenerator:
     
     def _create_intersection_connections_for_nodes(self, 
                                                    reference_nodes: List[TraversalNode], 
-                                                   ref_orientation: Tuple[float, float],
+                                                   ref_orientation: OrientationVector,
                                                    opposite_nodes: List[TraversalNode],
                                                    right_nodes: List[TraversalNode],
-                                                   right_orientation: Tuple[float, float],
+                                                   right_orientation: OrientationVector,
                                                    left_nodes: List[TraversalNode],
-                                                   left_orientation: Tuple[float, float],
+                                                   left_orientation: OrientationVector,
                                                    horizontal: bool,
                                                    invert: bool) -> List[TraversalEdge]:
         edges = []
@@ -530,45 +552,45 @@ class TraversalGraphGenerator:
                     right_nodes.sort(key=lambda node: node.position.y)
 
                 upper_edges = self._create_intersection_connections_for_nodes(reference_nodes=upper_nodes,
-                                                                            ref_orientation=(0.0, 1.0),
+                                                                            ref_orientation=OrientationVector(0.0, 1.0),
                                                                             opposite_nodes=lower_nodes,
                                                                             right_nodes=left_nodes,
-                                                                            right_orientation=(-1.0, 0.0),
+                                                                            right_orientation=OrientationVector(-1.0, 0.0),
                                                                             left_nodes=right_nodes,
-                                                                            left_orientation=(1.0, 0.0),
+                                                                            left_orientation=OrientationVector(1.0, 0.0),
                                                                             horizontal=True,
                                                                             invert=False)
                 edges.extend(upper_edges)
 
                 lower_edges = self._create_intersection_connections_for_nodes(reference_nodes=lower_nodes,
-                                                                            ref_orientation=(0.0, -1.0),
+                                                                            ref_orientation=OrientationVector(0.0, -1.0),
                                                                             opposite_nodes=upper_nodes,
                                                                             right_nodes=right_nodes,
-                                                                            right_orientation=(1.0, 0.0),
+                                                                            right_orientation=OrientationVector(1.0, 0.0),
                                                                             left_nodes=left_nodes,
-                                                                            left_orientation=(-1.0, 0.0),
+                                                                            left_orientation=OrientationVector(-1.0, 0.0),
                                                                             horizontal=True,
                                                                             invert=True)
                 edges.extend(lower_edges)
 
                 right_edges = self._create_intersection_connections_for_nodes(reference_nodes=right_nodes,
-                                                                            ref_orientation=(-1.0, 0.0),
+                                                                            ref_orientation=OrientationVector(-1.0, 0.0),
                                                                             opposite_nodes=left_nodes,
                                                                             right_nodes=upper_nodes,
-                                                                            right_orientation=(0.0, -1.0),
+                                                                            right_orientation=OrientationVector(0.0, -1.0),
                                                                             left_nodes=lower_nodes,
-                                                                            left_orientation=(0.0, 1.0),
+                                                                            left_orientation=OrientationVector(0.0, 1.0),
                                                                             horizontal=False,
                                                                             invert=False)
                 edges.extend(right_edges)
 
                 left_edges = self._create_intersection_connections_for_nodes(reference_nodes=left_nodes,
-                                                                            ref_orientation=(1.0, 0.0),
+                                                                            ref_orientation=OrientationVector(1.0, 0.0),
                                                                             opposite_nodes=right_nodes,
                                                                             right_nodes=lower_nodes,
-                                                                            right_orientation=(0.0, 1.0),
+                                                                            right_orientation=OrientationVector(0.0, 1.0),
                                                                             left_nodes=upper_nodes,
-                                                                            left_orientation=(0.0, -1.0),
+                                                                            left_orientation=OrientationVector(0.0, -1.0),
                                                                             horizontal=False,
                                                                             invert=True)
                 edges.extend(left_edges)
@@ -607,30 +629,30 @@ class TraversalGraphGenerator:
                 left_node_location = Coordinate(x=doorway_start_x, y=lane_y)
                 right_node_location = Coordinate(x=doorway_end_x, y=lane_y)
                 if i == 0:
-                    orientation_vec = (-1.0, 0.0)  # Facing  left
+                    orientation_vec = OrientationVector(-1.0, 0.0)  # Facing  left
                 elif i == len(corridor.lanes) - 1:
-                    orientation_vec = (1.0, 0.0)  # Facing right
+                    orientation_vec = OrientationVector(1.0, 0.0)  # Facing right
                 else:
                     orientation_vec = None
                 if orientation_vec is None:
-                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                     for possible_orientation in possible_orientations:
-                        left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                     position=left_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         left_nodes.append(left_node)
                         right_nodes.append(right_node)
                 else:
-                    left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                    left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                    right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
@@ -639,7 +661,7 @@ class TraversalGraphGenerator:
 
             if doorway.start.y <= corridor.width_start.y:
                 if len(doorway.lanes) == 1:
-                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                     for possible_orientation in possible_orientations:
                         lane = doorway.lanes[0]
                         lane_x = lane.start_point.x
@@ -647,13 +669,13 @@ class TraversalGraphGenerator:
                         room_node_location = Coordinate(x=lane_x, y=(lane_y-self.doorway_node_offset))
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{possible_orientation}",
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
@@ -667,24 +689,24 @@ class TraversalGraphGenerator:
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
                         if i == 0:
-                            orientation_vec = (0.0, 1.0)  # Facing down
+                            orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                         else:
-                            orientation_vec = (0.0, -1.0)  # Facing up
+                            orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{orientation_vec}",
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         door_nodes.append(door_node)
             else:
                 if len(doorway.lanes) == 1:
-                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                     for possible_orientation in possible_orientations:
                         lane = doorway.lanes[0]
                         lane_x = lane.start_point.x
@@ -692,13 +714,13 @@ class TraversalGraphGenerator:
                         room_node_location = Coordinate(x=lane_x, y=(lane_y+self.doorway_node_offset))
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{possible_orientation}",
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
@@ -711,17 +733,17 @@ class TraversalGraphGenerator:
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
                         if i == 0:
-                            orientation_vec = (0.0, 1.0)  # Facing down
+                            orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                         else:
-                            orientation_vec = (0.0, -1.0)  # Facing up
+                            orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{orientation_vec}",
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
@@ -734,30 +756,30 @@ class TraversalGraphGenerator:
                 right_node_location = Coordinate(x=lane_x, y=doorway_start_y)
                 left_node_location = Coordinate(x=lane_x, y=doorway_end_y)
                 if i == 0:
-                    orientation_vec = (0.0, 1.0)  # Facing down
+                    orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                 elif i == len(corridor.lanes) - 1:
-                    orientation_vec = (0.0, -1.0)  # Facing up
+                    orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
                 else:
                     orientation_vec = None
                 if orientation_vec is None:
-                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                     for possible_orientation in possible_orientations:
-                        left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                     position=left_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         left_nodes.append(left_node)
                         right_nodes.append(right_node)
                 else:
-                    left_node = TraversalNode(label=f"{doorway.corridor_id}_left_{len(left_nodes)}",
+                    left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    right_node = TraversalNode(label=f"{doorway.corridor_id}_right_{len(right_nodes)}",
+                    right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
@@ -766,7 +788,7 @@ class TraversalGraphGenerator:
 
             if doorway.start.x <= corridor.width_start.x:
                 if len(doorway.lanes) == 1:
-                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    possible_orientations = [(OrientationVector(-1.0, 0.0)), (OrientationVector(1.0, 0.0))]
                     for possible_orientation in possible_orientations:
                         lane = doorway.lanes[0]
                         lane_x = lane.start_point.x
@@ -774,13 +796,13 @@ class TraversalGraphGenerator:
                         room_node_location = Coordinate(x=(lane_x-self.doorway_node_offset), y=lane_y)
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{possible_orientation}",
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
@@ -794,24 +816,24 @@ class TraversalGraphGenerator:
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
                         if i == 0:
-                            orientation_vec = (-1.0, 0.0) 
+                            orientation_vec = OrientationVector(-1.0, 0.0)
                         else:
-                            orientation_vec = (1.0, 0.0)
+                            orientation_vec = OrientationVector(1.0, 0.0)
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{orientation_vec}",
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         door_nodes.append(door_node)
             else:
                 if len(doorway.lanes) == 1:
-                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                     for possible_orientation in possible_orientations:
                         lane = doorway.lanes[0]
                         lane_x = lane.start_point.x
@@ -819,13 +841,13 @@ class TraversalGraphGenerator:
                         room_node_location = Coordinate(x=(lane_x+self.doorway_node_offset), y=lane_y)
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_0",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{possible_orientation}",
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_0",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
@@ -839,17 +861,17 @@ class TraversalGraphGenerator:
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
                         if i == 0:
-                            orientation_vec = (-1.0, 0.0)
+                            orientation_vec = OrientationVector(-1.0, 0.0)
                         else:
-                            orientation_vec = (1.0, 0.0)
+                            orientation_vec = OrientationVector(1.0, 0.0)
 
-                        room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
+                        room_node = TraversalNode(label=f"{room_node_location.x: .2f}_{room_node_location.y: .2f}_{orientation_vec}",
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         room_nodes.append(room_node)
 
-                        door_node = TraversalNode(label=f"{doorway.corridor_id}_door_{i}",
+                        door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
@@ -915,31 +937,31 @@ class TraversalGraphGenerator:
                 door_left_node = door_nodes[0]
                 corridor_right_nodes = right_nodes
                 corridor_left_nodes = left_nodes
-                right_orientation_vec = (1.0, 0.0)
-                left_orientation_vec = (-1.0, 0.0)
+                right_orientation_vec = OrientationVector(1.0, 0.0)
+                left_orientation_vec = OrientationVector(-1.0, 0.0)
             else:
                 door_right_node = door_nodes[0]
                 door_left_node = door_nodes[1]
                 corridor_right_nodes = left_nodes
                 corridor_left_nodes = right_nodes
-                right_orientation_vec = (-1.0, 0.0)
-                left_orientation_vec = (1.0, 0.0)
+                right_orientation_vec = OrientationVector(-1.0, 0.0)
+                left_orientation_vec = OrientationVector(1.0, 0.0)
         else:
             if doorway.start.x <= corridor.width_start.x:
                 door_right_node = door_nodes[0]
                 door_left_node = door_nodes[1]
                 corridor_right_nodes = right_nodes
                 corridor_left_nodes = left_nodes
-                right_orientation_vec = (0.0, -1.0)
-                left_orientation_vec = (0.0, 1.0)
+                right_orientation_vec = OrientationVector(0.0, -1.0)
+                left_orientation_vec = OrientationVector(0.0, 1.0)
             else:
                 door_right_node = door_nodes[1]
                 door_left_node = door_nodes[0]
                 corridor_right_nodes = left_nodes
                 corridor_left_nodes = right_nodes
-                right_orientation_vec = (0.0, 1.0)
-                left_orientation_vec = (0.0, -1.0)
-            
+                right_orientation_vec = OrientationVector(0.0, 1.0)
+                left_orientation_vec = OrientationVector(0.0, -1.0)
+
         for right_node in corridor_right_nodes:
             if right_node.orientation_vec == left_orientation_vec:
                 edge = self._create_edge_between_nodes(from_node=right_node,
@@ -1056,9 +1078,9 @@ class TraversalGraphGenerator:
             entry_corridor = self._get_corridor_by_id(drive_through.entry_corridor_id)
             entry_point = copy.deepcopy(lane.start_point)
             if entry_corridor.direction == "horizontal":
-                possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                 for possible_orientation in possible_orientations:
-                    entry_node = TraversalNode(label=f"{drive_through.entry_corridor_id}_entry_{len(entry_nodes)}",
+                    entry_node = TraversalNode(label=f"{entry_point.x: .2f}_{entry_point.y: .2f}_{possible_orientation}",
                                                 position=entry_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
@@ -1071,39 +1093,39 @@ class TraversalGraphGenerator:
                     left_node_location = Coordinate(x=left_lane_x, y=lane_y)
                     right_node_location = Coordinate(x=right_lane_x, y=lane_y)
                     if i == 0:
-                        orientation_vec = (-1.0, 0.0)  # Facing left
+                        orientation_vec = OrientationVector(-1.0, 0.0)  # Facing left
                     elif i == len(entry_corridor.lanes) - 1:
-                        orientation_vec = (1.0, 0.0)  # Facing right
+                        orientation_vec = OrientationVector(1.0, 0.0)  # Facing right
                     else:
                         orientation_vec = None
                     if orientation_vec is None:
-                        possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                        possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                         for possible_orientation in possible_orientations:
-                            left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                            left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                         position=left_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                            right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
                             left_entry_nodes.append(left_node)
                             right_entry_nodes.append(right_node)
                     else:
-                        left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         left_entry_nodes.append(left_node)
                         right_entry_nodes.append(right_node)
             else:
-                possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                 for possible_orientation in possible_orientations:
-                    entry_node = TraversalNode(label=f"{drive_through.entry_corridor_id}_entry_{len(entry_nodes)}",
+                    entry_node = TraversalNode(label=f"{entry_point.x: .2f}_{entry_point.y: .2f}_{possible_orientation}",
                                                 position=entry_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
@@ -1116,30 +1138,30 @@ class TraversalGraphGenerator:
                     left_node_location = Coordinate(x=lane_x, y=left_lane_y)
                     right_node_location = Coordinate(x=lane_x, y=right_lane_y)
                     if i == 0:
-                        orientation_vec = (0.0, 1.0)  # Facing down
+                        orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                     elif i == len(entry_corridor.lanes) - 1:
-                        orientation_vec = (0.0, -1.0)  # Facing up
+                        orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
                     else:
                         orientation_vec = None
                     if orientation_vec is None:
-                        possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                        possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                         for possible_orientation in possible_orientations:
-                            left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                            left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                         position=left_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                            right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
                             left_entry_nodes.append(left_node)
                             right_entry_nodes.append(right_node)
                     else:
-                        left_node = TraversalNode(label=f"{entry_corridor.corridor_id}_left_{len(left_entry_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{entry_corridor.corridor_id}_right_{len(right_entry_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
@@ -1149,9 +1171,9 @@ class TraversalGraphGenerator:
             exit_corridor = self._get_corridor_by_id(drive_through.exit_corridor_id)
             exit_point = copy.deepcopy(lane.end_point)
             if exit_corridor.direction == "horizontal":
-                possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                 for possible_orientation in possible_orientations:
-                    exit_node = TraversalNode(label=f"{drive_through.exit_corridor_id}_exit_{len(exit_nodes)}",
+                    exit_node = TraversalNode(label=f"{exit_point.x: .2f}_{exit_point.y: .2f}_{possible_orientation}",
                                                 position=exit_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
@@ -1164,39 +1186,39 @@ class TraversalGraphGenerator:
                     left_node_location = Coordinate(x=left_lane_x, y=lane_y)
                     right_node_location = Coordinate(x=right_lane_x, y=lane_y)
                     if i == 0:
-                        orientation_vec = (-1.0, 0.0)  # Facing left
+                        orientation_vec = OrientationVector(-1.0, 0.0)  # Facing left
                     elif i == len(exit_corridor.lanes) - 1:
-                        orientation_vec = (1.0, 0.0)  # Facing right
+                        orientation_vec = OrientationVector(1.0, 0.0)  # Facing right
                     else:
                         orientation_vec = None
                     if orientation_vec is None:
-                        possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                        possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                         for possible_orientation in possible_orientations:
-                            left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                            left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                         position=left_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                            right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
                             left_exit_nodes.append(left_node)
                             right_exit_nodes.append(right_node)
                     else:
-                        left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
                         left_exit_nodes.append(left_node)
                         right_exit_nodes.append(right_node)
             else:
-                possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                 for possible_orientation in possible_orientations:
-                    exit_node = TraversalNode(label=f"{drive_through.exit_corridor_id}_exit_{len(exit_nodes)}",
+                    exit_node = TraversalNode(label=f"{exit_point.x: .2f}_{exit_point.y: .2f}_{possible_orientation}",
                                                 position=exit_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
@@ -1209,30 +1231,30 @@ class TraversalGraphGenerator:
                     left_node_location = Coordinate(x=lane_x, y=left_lane_y)
                     right_node_location = Coordinate(x=lane_x, y=right_lane_y)
                     if i == 0:
-                        orientation_vec = (0.0, 1.0)  # Facing down
+                        orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                     elif i == len(exit_corridor.lanes) - 1:
-                        orientation_vec = (0.0, -1.0)  # Facing up
+                        orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
                     else:
                         orientation_vec = None
                     if orientation_vec is None:
-                        possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                        possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                         for possible_orientation in possible_orientations:
-                            left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                            left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                         position=left_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                            right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
                             left_exit_nodes.append(left_node)
                             right_exit_nodes.append(right_node)
                     else:
-                        left_node = TraversalNode(label=f"{exit_corridor.corridor_id}_left_{len(left_exit_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{exit_corridor.corridor_id}_right_{len(right_exit_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
@@ -1266,13 +1288,13 @@ class TraversalGraphGenerator:
             entry_corridor = self._get_corridor_by_id(drive_through.entry_corridor_id)
 
             if entry_corridor.direction == "horizontal":
-                left_orientation_vec = (-1.0, 0.0)
-                right_orientation_vec = (1.0, 0.0)
-                out_direction_vec = (0.0, -1.0)
+                left_orientation_vec = OrientationVector(-1.0, 0.0)
+                right_orientation_vec = OrientationVector(1.0, 0.0)
+                out_direction_vec = OrientationVector(0.0, -1.0)
             else:
-                left_orientation_vec = (0.0, 1.0)
-                right_orientation_vec = (0.0, -1.0)
-                out_direction_vec = (-1.0, 0.0)
+                left_orientation_vec = OrientationVector(0.0, 1.0)
+                right_orientation_vec = OrientationVector(0.0, -1.0)
+                out_direction_vec = OrientationVector(-1.0, 0.0)
 
             for left_entry_node in left_entry_nodes:
                 if entry_node.orientation_vec == out_direction_vec:
@@ -1375,30 +1397,30 @@ class TraversalGraphGenerator:
                 left_node_location = Coordinate(x=left_nodes_x, y=lane_y)
                 right_node_location = Coordinate(x=right_nodes_x, y=lane_y)
                 if i == 0:
-                    orientation_vec = (-1.0, 0.0)  # Facing left
+                    orientation_vec = OrientationVector(-1.0, 0.0)  # Facing left
                 elif i == len(corridor.lanes) - 1:
-                    orientation_vec = (1.0, 0.0)  # Facing right
+                    orientation_vec = OrientationVector(1.0, 0.0)  # Facing right
                 else:
                     orientation_vec = None
                 if orientation_vec is None:
-                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                     for possible_orientation in possible_orientations:
-                        left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{len(left_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                     position=left_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{len(right_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         left_nodes.append(left_node)
                         right_nodes.append(right_node)
                 else:
-                    left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{i}",
+                    left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{i}",
+                    right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
@@ -1412,30 +1434,30 @@ class TraversalGraphGenerator:
                 right_node_location = Coordinate(x=lane_x, y=right_nodes_y)
                 left_node_location = Coordinate(x=lane_x, y=left_nodes_y)
                 if i == 0:
-                    orientation_vec = (0.0, 1.0)  # Facing down
+                    orientation_vec = OrientationVector(0.0, 1.0)  # Facing down
                 elif i == len(corridor.lanes) - 1:
-                    orientation_vec = (0.0, -1.0)  # Facing up
+                    orientation_vec = OrientationVector(0.0, -1.0)  # Facing up
                 else:
                     orientation_vec = None
                 if orientation_vec is None:
-                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                     for possible_orientation in possible_orientations:
-                        left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{len(left_nodes)}",
+                        left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{possible_orientation}",
                                                     position=left_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{len(right_nodes)}",
+                        right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{possible_orientation}",
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
                         left_nodes.append(left_node)
                         right_nodes.append(right_node)
                 else:
-                    left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{i}",
+                    left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{i}",
+                    right_node = TraversalNode(label=f"{right_node_location.x: .2f}_{right_node_location.y: .2f}_{orientation_vec}",
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
@@ -1506,11 +1528,11 @@ class TraversalGraphGenerator:
                                                                      center=center)
         
         if corridor.direction == "horizontal":
-            original_ref_direction_vec = (1.0, 0.0)  # Facing right
-            inverted_ref_direction_vec = (-1.0, 0.0)  # Facing left
+            original_ref_direction_vec = OrientationVector(1.0, 0.0)  # Facing right
+            inverted_ref_direction_vec = OrientationVector(-1.0, 0.0)  # Facing left
         else:
-            original_ref_direction_vec = (0.0, -1.0)  # Facing up
-            inverted_ref_direction_vec = (0.0, 1.0)  # Facing down
+            original_ref_direction_vec = OrientationVector(0.0, -1.0)  # Facing up
+            inverted_ref_direction_vec = OrientationVector(0.0, 1.0)  # Facing down
 
         original_switching_edges = self._create_switching_point_connections_for_nodes(ref_nodes=left_nodes,
                                                                              opp_nodes=right_nodes,
@@ -1552,13 +1574,13 @@ class TraversalGraphGenerator:
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
             for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
-                if node.orientation_vec == (1.0, 0.0):
+                if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == (-1.0, 0.0):
+                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, 1.0):
+                elif node.orientation_vec == OrientationVector(0.0, 1.0):
                     ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, -1.0):
+                elif node.orientation_vec == OrientationVector(0.0, -1.0):
                     ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
 
         ax.set_title("Intersection Subgraph Overlay")
@@ -1594,13 +1616,13 @@ class TraversalGraphGenerator:
                     ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
 
             for node in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
-                if node.orientation_vec == (1.0, 0.0):
+                if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == (-1.0, 0.0):
+                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, 1.0):
+                elif node.orientation_vec == OrientationVector(0.0, 1.0):
                     ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, -1.0):
+                elif node.orientation_vec == OrientationVector(0.0, -1.0):
                     ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
 
         ax.set_title("Doorway Subgraph Overlay")
@@ -1674,13 +1696,13 @@ class TraversalGraphGenerator:
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
             for node in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
-                if node.orientation_vec == (1.0, 0.0):
+                if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == (-1.0, 0.0):
+                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, 1.0):
+                elif node.orientation_vec == OrientationVector(0.0, 1.0):
                     ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, -1.0):
+                elif node.orientation_vec == OrientationVector(0.0, -1.0):
                     ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
 
         ax.set_title("Drive-Through Subgraph Overlay")
