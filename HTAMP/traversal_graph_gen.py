@@ -99,6 +99,7 @@ class TraversalGraphGenerator:
         self.drive_throughs = self._extract_drive_throughs_from_config()
         self.doorways = self._extract_doorways_from_config()
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraph()
+        self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraph()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -379,7 +380,7 @@ class TraversalGraphGenerator:
                                                     connections=[])
                         right_nodes.append(right_node)
                 else:
-                    possible_orientations = [(1.0, 0.0), (-1.0, 0.0)]
+                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
                     for possible_orientation in possible_orientations:
                         if start_node_location is not None:
                             left_node = TraversalNode(label=f"{corridor.corridor_id}_{intersection_corridor.corridor_id}_left_{j}",
@@ -395,6 +396,23 @@ class TraversalGraphGenerator:
                             right_nodes.append(right_node)
 
         return upper_nodes, lower_nodes, left_nodes, right_nodes
+    
+    def _create_edge_between_nodes(self, 
+                                   from_node: TraversalNode, 
+                                   to_node: TraversalNode, 
+                                   action: str) -> TraversalEdge:
+        from_node.connections.append(to_node)
+        edge_connector = CurvedConnector(origin=from_node.position, 
+                                        destination=to_node.position, 
+                                        vec_origin=from_node.orientation_vec,
+                                        vec_destination=to_node.orientation_vec,
+                                        tangent_scaling_factor=self.tangent_scaling_factor,
+                                        num_samples=self.num_samples)
+        edge = TraversalEdge(from_node=from_node.label, 
+                            to_node=to_node.label, 
+                            action=action, 
+                            edge_connector=edge_connector)
+        return edge
     
     def _create_intersection_connections_for_nodes(self, 
                                                    reference_nodes: List[TraversalNode], 
@@ -417,33 +435,17 @@ class TraversalGraphGenerator:
                 if i == ref_index:
                     if len(opposite_nodes) > 0:
                         opp_node = opposite_nodes[i]
-                        ref_node.connections.append(opp_node)
-                        edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                        destination=opp_node.position, 
-                                                        vec_origin=ref_node.orientation_vec,
-                                                        vec_destination=opp_node.orientation_vec,
-                                                        tangent_scaling_factor=self.tangent_scaling_factor,
-                                                        num_samples=self.num_samples)
-                        edge = TraversalEdge(from_node=ref_node.label, 
-                                            to_node=opp_node.label, 
-                                            action="go_straight", 
-                                            edge_connector=edge_connector)
+                        edge = self._create_edge_between_nodes(from_node=ref_node, 
+                                                               to_node=opp_node, 
+                                                               action="go_straight")
                         edges.append(edge)
                     
                     if len(right_nodes) > 0:
                         for right_node in right_nodes:
                             if right_node.orientation_vec == right_orientation:
-                                ref_node.connections.append(right_node)
-                                edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                                destination=right_node.position, 
-                                                                vec_origin=ref_node.orientation_vec,
-                                                                vec_destination=right_node.orientation_vec,
-                                                                tangent_scaling_factor=self.tangent_scaling_factor,
-                                                                num_samples=self.num_samples)
-                                edge = TraversalEdge(from_node=ref_node.label, 
-                                                    to_node=right_node.label, 
-                                                    action="turn_right", 
-                                                    edge_connector=edge_connector)
+                                edge = self._create_edge_between_nodes(from_node=ref_node, 
+                                                                       to_node=right_node, 
+                                                                       action="turn_right")
                                 edges.append(edge)
                 else:
                     if len(opposite_nodes) > 0:
@@ -454,33 +456,17 @@ class TraversalGraphGenerator:
                                 directionality_flag = opp_node.position.y == ref_node.position.y
 
                             if opp_node.orientation_vec == ref_orientation and directionality_flag:
-                                ref_node.connections.append(opp_node)
-                                edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                                destination=opp_node.position, 
-                                                                vec_origin=ref_node.orientation_vec,
-                                                                vec_destination=opp_node.orientation_vec,
-                                                                tangent_scaling_factor=self.tangent_scaling_factor,
-                                                                num_samples=self.num_samples)
-                                edge = TraversalEdge(from_node=ref_node.label, 
-                                                    to_node=opp_node.label, 
-                                                    action="go_straight", 
-                                                    edge_connector=edge_connector)
+                                edge = self._create_edge_between_nodes(from_node=ref_node, 
+                                                                       to_node=opp_node, 
+                                                                       action="go_straight")
                                 edges.append(edge)
                     
                     if len(left_nodes) > 0:
                         for left_node in left_nodes:
                             if left_node.orientation_vec == left_orientation:
-                                ref_node.connections.append(left_node)
-                                edge_connector = CurvedConnector(origin=ref_node.position, 
-                                                                destination=left_node.position, 
-                                                                vec_origin=ref_node.orientation_vec,
-                                                                vec_destination=left_node.orientation_vec,
-                                                                tangent_scaling_factor=self.tangent_scaling_factor,
-                                                                num_samples=self.num_samples)
-                                edge = TraversalEdge(from_node=ref_node.label, 
-                                                    to_node=left_node.label, 
-                                                    action="turn_left", 
-                                                    edge_connector=edge_connector)
+                                edge = self._create_edge_between_nodes(from_node=ref_node,
+                                                                       to_node=left_node,
+                                                                       action="turn_left")
                                 edges.append(edge)
         return edges
 
@@ -719,8 +705,8 @@ class TraversalGraphGenerator:
             doorway_end_y = doorway.end.y
             for i, corridor_lane in enumerate(corridor.lanes):
                 lane_x = corridor_lane.start_point.x
-                left_node_location = Coordinate(x=lane_x, y=doorway_start_y)
-                right_node_location = Coordinate(x=lane_x, y=doorway_end_y)
+                right_node_location = Coordinate(x=lane_x, y=doorway_start_y)
+                left_node_location = Coordinate(x=lane_x, y=doorway_end_y)
                 if i == 0:
                     orientation_vec = (0.0, 1.0)  # Facing down
                 elif i == len(corridor.lanes) - 1:
@@ -799,7 +785,7 @@ class TraversalGraphGenerator:
                         door_nodes.append(door_node)
             else:
                 if len(doorway.lanes) == 1:
-                    possible_orientations = [(1.0, 0.0), (-1.0, 0.0)]
+                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
                     for possible_orientation in possible_orientations:
                         lane = doorway.lanes[0]
                         lane_x = lane.start_point.x
@@ -827,9 +813,9 @@ class TraversalGraphGenerator:
                         doorway_node_location = Coordinate(x=lane_x, y=lane_y)
 
                         if i == 0:
-                            orientation_vec = (1.0, 0.0)
-                        else:
                             orientation_vec = (-1.0, 0.0)
+                        else:
+                            orientation_vec = (1.0, 0.0)
 
                         room_node = TraversalNode(label=f"{doorway.corridor_id}_room_{i}",
                                                     position=room_node_location,
@@ -844,15 +830,139 @@ class TraversalGraphGenerator:
                         door_nodes.append(door_node)
 
         return room_nodes, door_nodes, left_nodes, right_nodes
+    
+    def _create_door_room_connections_for_nodes(self, 
+                                                doorway: Doorway,
+                                                corridor: Corridor,
+                                                room_nodes: List[TraversalNode], 
+                                                door_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+        edges = []
+        if corridor.direction == "horizontal":
+            if doorway.start.y <= corridor.width_start.y:
+                left_room_node = room_nodes[0]
+                right_room_node = room_nodes[1]
+                left_door_node = door_nodes[0]
+                right_door_node = door_nodes[1]
+            else:
+                left_room_node = room_nodes[1]
+                left_door_node = door_nodes[1]
+                right_room_node = room_nodes[0]
+                right_door_node = door_nodes[0]
+        else:
+            if doorway.start.x <= corridor.width_start.x:
+                left_room_node = room_nodes[1]
+                left_door_node = door_nodes[1]
+                right_room_node = room_nodes[0]
+                right_door_node = door_nodes[0]
+            else:
+                left_room_node = room_nodes[0]
+                left_door_node = door_nodes[0]
+                right_room_node = room_nodes[1]
+                right_door_node = door_nodes[1]
+            
+        right_edge = self._create_edge_between_nodes(from_node=right_door_node,
+                                                     to_node=right_room_node, 
+                                                     action="go_straight")
+        left_edge = self._create_edge_between_nodes(from_node=left_room_node,
+                                                    to_node=left_door_node, 
+                                                    action="go_straight")
+        switch_edge = self._create_edge_between_nodes(from_node=right_room_node,
+                                                    to_node=left_room_node, 
+                                                    action="switch_directions")
+        edges.append(right_edge)
+        edges.append(left_edge)
+        edges.append(switch_edge)
+            
+        
+        return edges
+    
+    def _create_door_corridor_connections_for_nodes(self, 
+                                                  doorway: Doorway,
+                                                  corridor: Corridor,
+                                                  door_nodes: List[TraversalNode], 
+                                                  left_nodes: List[TraversalNode], 
+                                                  right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+        edges = []
+        if corridor.direction == "horizontal":
+            if doorway.start.y <= corridor.width_start.y:
+                door_right_node = door_nodes[1]
+                door_left_node = door_nodes[0]
+                corridor_right_nodes = right_nodes
+                corridor_left_nodes = left_nodes
+                right_orientation_vec = (1.0, 0.0)
+                left_orientation_vec = (-1.0, 0.0)
+            else:
+                door_right_node = door_nodes[0]
+                door_left_node = door_nodes[1]
+                corridor_right_nodes = left_nodes
+                corridor_left_nodes = right_nodes
+                right_orientation_vec = (-1.0, 0.0)
+                left_orientation_vec = (1.0, 0.0)
+        else:
+            if doorway.start.x <= corridor.width_start.x:
+                door_right_node = door_nodes[0]
+                door_left_node = door_nodes[1]
+                corridor_right_nodes = right_node
+                corridor_left_nodes = left_nodes
+                right_orientation_vec = (0.0, -1.0)
+                left_orientation_vec = (0.0, 1.0)
+            else:
+                door_right_node = door_nodes[1]
+                door_left_node = door_nodes[0]
+                corridor_right_nodes = left_nodes
+                corridor_left_nodes = right_nodes
+                right_orientation_vec = (0.0, 1.0)
+                left_orientation_vec = (0.0, -1.0)
+            
+        for right_node in corridor_right_nodes:
+            if right_node.orientation_vec == left_orientation_vec:
+                edge = self._create_edge_between_nodes(from_node=right_node,
+                                                        to_node=door_right_node, 
+                                                        action="turn_right")
+                edges.append(edge)
+            else:
+                edge = self._create_edge_between_nodes(from_node=door_left_node,
+                                                        to_node=right_node, 
+                                                        action="turn_left")
+                edges.append(edge)
+        
+        for left_node in corridor_left_nodes:
+            if left_node.orientation_vec == right_orientation_vec:
+                edge = self._create_edge_between_nodes(from_node=left_node,
+                                                        to_node=door_right_node, 
+                                                        action="turn_left")
+                edges.append(edge)
+            else:
+                edge = self._create_edge_between_nodes(from_node=door_left_node,
+                                                        to_node=left_node, 
+                                                        action="turn_right")
+                edges.append(edge)
+                
+        return edges
 
-    def _create_doorway_connections_for_nodes(self, room_nodes: List[TraversalNode], 
+
+    def _create_doorway_connections_for_nodes(self, 
+                                              doorway: Doorway,
+                                              corridor: Corridor,
+                                              room_nodes: List[TraversalNode], 
                                               door_nodes: List[TraversalNode], 
                                               left_nodes: List[TraversalNode], 
                                               right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
-        # TODO: Implement connections between room, door, left, and right nodes
         edges = []
-        for i, room_node in enumerate(room_nodes):
-            pass
+
+        room_edges = self._create_door_room_connections_for_nodes(doorway=doorway,
+                                                                  corridor=corridor,
+                                                                  room_nodes=room_nodes,
+                                                                  door_nodes=door_nodes)
+        edges.extend(room_edges)
+
+        corridor_edges = self._create_door_corridor_connections_for_nodes(doorway=doorway,
+                                                                        corridor=corridor,
+                                                                        door_nodes=door_nodes,
+                                                                        left_nodes=left_nodes,
+                                                                        right_nodes=right_nodes)
+        edges.extend(corridor_edges)
+        
         return edges
 
     def _generate_doorway_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
@@ -868,8 +978,10 @@ class TraversalGraphGenerator:
 
             room_nodes, door_nodes, left_nodes, right_nodes = self._extract_doorway_intersection_nodes(doorway=doorway, 
                                                                                            corridor=corridor)
-            
-            doorway_edges = self._create_doorway_connections_for_nodes(room_nodes=room_nodes,
+
+            doorway_edges = self._create_doorway_connections_for_nodes(doorway=doorway,
+                                                                       corridor=corridor,
+                                                                       room_nodes=room_nodes,
                                                                        door_nodes=door_nodes,
                                                                        left_nodes=left_nodes,
                                                                        right_nodes=right_nodes)
