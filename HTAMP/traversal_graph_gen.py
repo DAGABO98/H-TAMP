@@ -1,4 +1,5 @@
 from collections.abc import Set
+import copy
 from typing import List, Tuple
 import yaml
 import argparse
@@ -1053,11 +1054,12 @@ class TraversalGraphGenerator:
 
         for lane in drive_through.lanes:
             entry_corridor = self._get_corridor_by_id(drive_through.entry_corridor_id)
+            entry_point = copy.deepcopy(lane.start_point)
             if entry_corridor.direction == "horizontal":
                 possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
                 for possible_orientation in possible_orientations:
                     entry_node = TraversalNode(label=f"{drive_through.entry_corridor_id}_entry_{len(entry_nodes)}",
-                                                position=lane.start_point,
+                                                position=entry_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
                     entry_nodes.append(entry_node)
@@ -1102,7 +1104,7 @@ class TraversalGraphGenerator:
                 possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
                 for possible_orientation in possible_orientations:
                     entry_node = TraversalNode(label=f"{drive_through.entry_corridor_id}_entry_{len(entry_nodes)}",
-                                                position=lane.start_point,
+                                                position=entry_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
                     entry_nodes.append(entry_node)
@@ -1145,11 +1147,12 @@ class TraversalGraphGenerator:
                         right_entry_nodes.append(right_node)
             
             exit_corridor = self._get_corridor_by_id(drive_through.exit_corridor_id)
+            exit_point = copy.deepcopy(lane.end_point)
             if exit_corridor.direction == "horizontal":
                 possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
                 for possible_orientation in possible_orientations:
                     exit_node = TraversalNode(label=f"{drive_through.exit_corridor_id}_exit_{len(exit_nodes)}",
-                                                position=lane.end_point,
+                                                position=exit_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
                     exit_nodes.append(exit_node)
@@ -1194,7 +1197,7 @@ class TraversalGraphGenerator:
                 possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
                 for possible_orientation in possible_orientations:
                     exit_node = TraversalNode(label=f"{drive_through.exit_corridor_id}_exit_{len(exit_nodes)}",
-                                                position=lane.end_point,
+                                                position=exit_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
                     exit_nodes.append(exit_node)
@@ -1265,38 +1268,66 @@ class TraversalGraphGenerator:
             if entry_corridor.direction == "horizontal":
                 left_orientation_vec = (-1.0, 0.0)
                 right_orientation_vec = (1.0, 0.0)
-                out_direction_vec = (1.0, 0.0)
+                out_direction_vec = (0.0, -1.0)
             else:
                 left_orientation_vec = (0.0, 1.0)
                 right_orientation_vec = (0.0, -1.0)
-                out_direction_vec = (0.0, -1.0)
+                out_direction_vec = (-1.0, 0.0)
 
             for left_entry_node in left_entry_nodes:
                 if entry_node.orientation_vec == out_direction_vec:
-                    if left_entry_node.orientation_vec == left_orientation_vec:
-                        edge = self._create_edge_between_nodes(from_node=entry_node,
-                                                            to_node=left_entry_node, 
-                                                            action="turn_right")
-                        edges.append(edge)
-                else:
                     if left_entry_node.orientation_vec == right_orientation_vec:
                         edge = self._create_edge_between_nodes(from_node=left_entry_node,
-                                                                to_node=entry_node, 
-                                                                action="turn_left")
+                                                            to_node=entry_node, 
+                                                            action="turn_left")
+                        edges.append(edge)
+                else:
+                    if left_entry_node.orientation_vec == left_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=entry_node,
+                                                                to_node=left_entry_node, 
+                                                                action="turn_right")
+                        edges.append(edge)
+            
+            for left_exit_node in left_exit_nodes:
+                if exit_node.orientation_vec == out_direction_vec:
+                    if left_exit_node.orientation_vec == left_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=exit_node,
+                                                            to_node=left_exit_node, 
+                                                            action="turn_left")
+                        edges.append(edge)
+                else:
+                    if left_exit_node.orientation_vec == right_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=left_exit_node,
+                                                                to_node=exit_node, 
+                                                                action="turn_right")
                         edges.append(edge)
             
             for right_entry_node in right_entry_nodes:
                 if entry_node.orientation_vec == out_direction_vec:
-                    if right_entry_node.orientation_vec == right_orientation_vec:
-                        edge = self._create_edge_between_nodes(from_node=entry_node,
-                                                            to_node=right_entry_node, 
-                                                            action="turn_left")
-                        edges.append(edge)
-                else:
                     if right_entry_node.orientation_vec == left_orientation_vec:
                         edge = self._create_edge_between_nodes(from_node=right_entry_node,
-                                                                to_node=entry_node, 
-                                                                action="turn_right")
+                                                            to_node=entry_node, 
+                                                            action="turn_right")
+                        edges.append(edge)
+                else:
+                    if right_entry_node.orientation_vec == right_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=entry_node,
+                                                                to_node=right_entry_node, 
+                                                                action="turn_left")
+                        edges.append(edge)
+            
+            for right_exit_node in right_exit_nodes:
+                if exit_node.orientation_vec == out_direction_vec:
+                    if right_exit_node.orientation_vec == right_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=exit_node,
+                                                            to_node=right_exit_node, 
+                                                            action="turn_right")
+                        edges.append(edge)
+                else:
+                    if right_exit_node.orientation_vec == left_orientation_vec:
+                        edge = self._create_edge_between_nodes(from_node=right_exit_node,
+                                                                to_node=exit_node, 
+                                                                action="turn_left")
                         edges.append(edge)
         return edges
 
@@ -1514,21 +1545,21 @@ class TraversalGraphGenerator:
                 samples_x = edge.edge_connector.connector_dict['X']
                 samples_y = edge.edge_connector.connector_dict['Y']
                 if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
                 elif edge.action == "turn_left":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
                 elif edge.action == "turn_right":
-                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
             for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
                 if node.orientation_vec == (1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == (-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
                 elif node.orientation_vec == (0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
                 elif node.orientation_vec == (0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
 
         ax.set_title("Intersection Subgraph Overlay")
         ax.set_xlabel("X (meters)")
@@ -1554,23 +1585,23 @@ class TraversalGraphGenerator:
                 samples_x = edge.edge_connector.connector_dict['X']
                 samples_y = edge.edge_connector.connector_dict['Y']
                 if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
                 elif edge.action == "turn_left":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
                 elif edge.action == "turn_right":
-                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
                 elif edge.action == "switch_directions":
-                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
 
             for node in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
                 if node.orientation_vec == (1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == (-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
                 elif node.orientation_vec == (0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
                 elif node.orientation_vec == (0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
 
         ax.set_title("Doorway Subgraph Overlay")
         ax.set_xlabel("X (meters)")
@@ -1596,23 +1627,63 @@ class TraversalGraphGenerator:
                 samples_x = edge.edge_connector.connector_dict['X']
                 samples_y = edge.edge_connector.connector_dict['Y']
                 if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
                 elif edge.action == "switch_directions":
-                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
                 elif edge.action == "switch_lanes":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5)
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
 
             for node in subgraph.left_nodes + subgraph.right_nodes:
                 if node.orientation_vec == (1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == (-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
                 elif node.orientation_vec == (0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
                 elif node.orientation_vec == (0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.5)
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
 
         ax.set_title("Switching Point Subgraph Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig(f"results/{filename}")
+        plt.close()
+    
+    def plot_drive_through_subgraphs(self, subgraphs: List[DriveThroughSubgraph], filename: str):
+        rows, cols = self.occupancy_map.shape
+        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
+        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            self.occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+        for subgraph in subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
+                elif edge.action == "turn_left":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
+                elif edge.action == "turn_right":
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
+
+            for node in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
+                if node.orientation_vec == (1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
+                elif node.orientation_vec == (-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
+                elif node.orientation_vec == (0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
+                elif node.orientation_vec == (0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
+
+        ax.set_title("Drive-Through Subgraph Overlay")
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
         plt.savefig(f"results/{filename}")
@@ -1679,5 +1750,6 @@ if __name__ == "__main__":
     subgraph = tg_generator._generate_switching_point_subgraph(center=Coordinate(38.5, 37.0), corridor=tg_generator.corridors[0])
     switching_point_subgraphs.append(subgraph)
     tg_generator.plot_switching_point_subgraphs(switching_point_subgraphs, filename="switching_point_subgraph_0.svg")
+    tg_generator.plot_drive_through_subgraphs(tg_generator.drive_through_subgraphs, filename="drive_through_subgraph_0.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)
