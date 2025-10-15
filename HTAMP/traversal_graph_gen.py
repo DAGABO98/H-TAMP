@@ -71,6 +71,12 @@ class DoorwaySubgraph:
     edges: list[TraversalEdge]
 
 @dataclass
+class SwitchingPointSubgraph:
+    left_nodes: list[TraversalNode]
+    right_nodes: list[TraversalNode]
+    edges: list[TraversalEdge]
+
+@dataclass
 class TraversalGraph:
     nodes: list[TraversalNode]
     edges: list[TraversalEdge]
@@ -78,13 +84,15 @@ class TraversalGraph:
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
-                 doorway_lane_threshold: float = 30.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0):
+                 doorway_lane_threshold: float = 30.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0,
+                 switching_point_offset: float = 10.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.tangent_scaling_factor = tangent_scaling_factor
         self.num_samples = num_samples
         self.meters_per_cell = meters_per_pixel * factor
         self.threshold = threshold * self.meters_per_cell
+        self.switching_point_offset = switching_point_offset * self.meters_per_cell
         self.num_lanes_per_corridor = num_lanes_per_corridor
         self.num_lanes_per_drive_through = num_lanes_per_drive_through
         self.doorway_node_offset = 2 * doorway_lane_threshold * self.meters_per_cell  # meters
@@ -98,8 +106,8 @@ class TraversalGraphGenerator:
         self.corridors = self._extract_corridors_from_config()
         self.drive_throughs = self._extract_drive_throughs_from_config()
         self.doorways = self._extract_doorways_from_config()
-        self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraph()
-        self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraph()
+        self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
+        self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -471,7 +479,7 @@ class TraversalGraphGenerator:
                                 edges.append(edge)
         return edges
 
-    def _generate_corridor_intersection_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
+    def _generate_corridor_intersection_traversal_subgraphs(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
         seen_corridors = set()
         subgraphs = []
         subgraph_indices = {}
@@ -984,7 +992,7 @@ class TraversalGraphGenerator:
 
         return edges
 
-    def _generate_doorway_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
+    def _generate_doorway_traversal_subgraphs(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
         subgraphs = []
         subgraph_indices = {}
         current_index = 0
@@ -1015,8 +1023,121 @@ class TraversalGraphGenerator:
             subgraph_indices.setdefault(doorway.corridor_id, []).append(current_index)
             current_index += 1
         return subgraphs, subgraph_indices
+    
+    def _extract_switching_point_nodes(self, 
+                                       corridor: Corridor,
+                                       center: Coordinate,):
+        left_nodes = []
+        right_nodes = []
+        if corridor.direction == "horizontal":
+            right_nodes_x = center.x + self.switching_point_offset
+            left_nodes_x = center.x - self.switching_point_offset
+            for i, lane in enumerate(corridor.lanes):
+                lane_y = lane.y
+                left_node_location = Coordinate(x=left_nodes_x, y=lane_y)
+                right_node_location = Coordinate(x=right_nodes_x, y=lane_y)
+                if i == 0:
+                    orientation_vec = (-1.0, 0.0)  # Facing left
+                elif i == len(corridor.lanes) - 1:
+                    orientation_vec = (1.0, 0.0)  # Facing right
+                else:
+                    orientation_vec = None
+                if orientation_vec is None:
+                    possible_orientations = [(-1.0, 0.0), (1.0, 0.0)]
+                    for possible_orientation in possible_orientations:
+                        left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{len(left_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{len(right_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        left_nodes.append(left_node)
+                        right_nodes.append(right_node)
+                else:
+                    left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{i}",
+                                                position=left_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{i}",
+                                                position=right_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    left_nodes.append(left_node)
+                    right_nodes.append(right_node)
+        else:
+            right_nodes_y = center.y - self.switching_point_offset
+            left_nodes_y = center.y + self.switching_point_offset
+            for i, lane in enumerate(corridor.lanes):
+                lane_x = lane.x
+                right_node_location = Coordinate(x=lane_x, y=right_nodes_y)
+                left_node_location = Coordinate(x=lane_x, y=left_nodes_y)
+                if i == 0:
+                    orientation_vec = (0.0, 1.0)  # Facing down
+                elif i == len(corridor.lanes) - 1:
+                    orientation_vec = (0.0, -1.0)  # Facing up
+                else:
+                    orientation_vec = None
+                if orientation_vec is None:
+                    possible_orientations = [(0.0, 1.0), (0.0, -1.0)]
+                    for possible_orientation in possible_orientations:
+                        left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{len(left_nodes)}",
+                                                    position=left_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{len(right_nodes)}",
+                                                    position=right_node_location,
+                                                    orientation_vec=possible_orientation,
+                                                    connections=[])
+                        left_nodes.append(left_node)
+                        right_nodes.append(right_node)
+                else:
+                    left_node = TraversalNode(label=f"{corridor.corridor_id}_left_{i}",
+                                                position=left_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    right_node = TraversalNode(label=f"{corridor.corridor_id}_right_{i}",
+                                                position=right_node_location,
+                                                orientation_vec=orientation_vec,
+                                                connections=[])
+                    left_nodes.append(left_node)
+                    right_nodes.append(right_node)
+        return left_nodes, right_nodes
+    
+    def _create_switching_point_connections_for_nodes(self, 
+                                                     left_nodes: List[TraversalNode], 
+                                                     right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+        # TODO: Implement more intelligent pairing based on proximity
+        edges = []
+        for left_node in left_nodes:
+            for right_node in right_nodes:
+                if left_node.position.x == right_node.position.x:
+                    edge = TraversalEdge(start=left_node, end=right_node, action="switch")
+                    edges.append(edge)
+        return edges
 
-    def plot_intersection_subgraph(self, subgraphs: List[IntersectionSubgraph], filename: str):
+    def _generate_switching_point_subgraph(self, 
+                                           center: Coordinate, 
+                                           corridor: Corridor) -> SwitchingPointSubgraph:
+        edges = []
+        left_nodes, right_nodes = self._extract_switching_point_nodes(corridor=corridor,
+                                                                     center=center)
+        
+        switching_edges = self._create_switching_point_connections_for_nodes(left_nodes=left_nodes,
+                                                                             right_nodes=right_nodes)
+        edges.extend(switching_edges)
+
+        straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_nodes,
+                                                                             right_nodes=right_nodes)
+        edges.extend(straight_edges)
+
+        switching_point_subgraph = SwitchingPointSubgraph(left_nodes=left_nodes,
+                                                          right_nodes=right_nodes,
+                                                          edges=edges)
+        return switching_point_subgraph
+
+    def plot_intersection_subgraphs(self, subgraphs: List[IntersectionSubgraph], filename: str):
         rows, cols = self.occupancy_map.shape
         xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
         ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
@@ -1056,7 +1177,7 @@ class TraversalGraphGenerator:
         plt.savefig(f"results/{filename}")
         plt.close()
     
-    def plot_doorway_subgraph(self, subgraphs: List[DoorwaySubgraph], filename: str):
+    def plot_doorway_subgraphs(self, subgraphs: List[DoorwaySubgraph], filename: str):
         rows, cols = self.occupancy_map.shape
         xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
         ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
@@ -1152,7 +1273,7 @@ if __name__ == "__main__":
                                            factor=args.factor)
     
     tg_generator.plot_extracted_structs()
-    tg_generator.plot_intersection_subgraph(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
-    tg_generator.plot_doorway_subgraph(tg_generator.doorway_subgraphs, filename="doorway_subgraph_0.svg")
+    tg_generator.plot_intersection_subgraphs(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
+    tg_generator.plot_doorway_subgraphs(tg_generator.doorway_subgraphs, filename="doorway_subgraph_0.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)
