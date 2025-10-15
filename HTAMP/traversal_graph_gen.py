@@ -1724,7 +1724,7 @@ class TraversalGraphGenerator:
         ax.set_title("Extracted Structs Overlay")
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
-        plt.savefig("results/extracted_structs.png")
+        plt.savefig("results/environment/extracted_structs.png")
         plt.close()
     
 
@@ -1743,13 +1743,13 @@ if __name__ == "__main__":
                                            factor=args.factor)
     
     tg_generator.plot_extracted_structs()
-    tg_generator.plot_intersection_subgraphs(tg_generator.corridor_intersection_subgraphs, filename="intersection_subgraph_0.svg")
-    tg_generator.plot_doorway_subgraphs(tg_generator.doorway_subgraphs, filename="doorway_subgraph_0.svg")
-    
+    tg_generator.plot_intersection_subgraphs(tg_generator.corridor_intersection_subgraphs, filename="environment/intersection_subgraph_0.svg")
+    tg_generator.plot_doorway_subgraphs(tg_generator.doorway_subgraphs, filename="environment/doorway_subgraph_0.svg")
+
     switching_point_subgraphs = []
     subgraph = tg_generator._generate_switching_point_subgraph(center=Coordinate(38.5, 37.0), corridor=tg_generator.corridors[0])
     switching_point_subgraphs.append(subgraph)
-    tg_generator.plot_switching_point_subgraphs(switching_point_subgraphs, filename="switching_point_subgraph_0.svg")
-    tg_generator.plot_drive_through_subgraphs(tg_generator.drive_through_subgraphs, filename="drive_through_subgraph_0.svg")
+    tg_generator.plot_switching_point_subgraphs(switching_point_subgraphs, filename="environment/switching_point_subgraph_0.svg")
+    tg_generator.plot_drive_through_subgraphs(tg_generator.drive_through_subgraphs, filename="environment/drive_through_subgraph_0.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)

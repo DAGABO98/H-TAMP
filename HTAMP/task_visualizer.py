@@ -55,7 +55,7 @@ class TaskVisualizer:
         plt.xlabel('Hour of Day')
         plt.ylabel('Year-Week')
         plt.tight_layout()
-        plt.savefig('results/hourly_admissions_heatmap_per_week.png')
+        plt.savefig('results/task_data/hourly_admissions_heatmap_per_week.png')
         plt.close()
     
     def plot_hourly_discharge_frequency_per_week(self):
@@ -87,7 +87,7 @@ class TaskVisualizer:
         plt.xlabel('Hour of Day')
         plt.ylabel('Year-Week')
         plt.tight_layout()
-        plt.savefig('results/hourly_discharges_heatmap_per_week.png')
+        plt.savefig('results/task_data/hourly_discharges_heatmap_per_week.png')
         plt.close()
     
     def plot_hourly_medications_frequency_per_week(self):
@@ -116,7 +116,7 @@ class TaskVisualizer:
         plt.xlabel('Hour of Day')
         plt.ylabel('Year-Week')
         plt.tight_layout()
-        plt.savefig('results/hourly_medications_heatmap_per_week.png')
+        plt.savefig('results/task_data/hourly_medications_heatmap_per_week.png')
         plt.close()
     
     def plot_hourly_admissions_frequency_per_month(self):
@@ -146,7 +146,7 @@ class TaskVisualizer:
         plt.xlabel('Hour of Day')
         plt.ylabel('Year-Month')
         plt.tight_layout()
-        plt.savefig('results/hourly_admissions_heatmap_per_month.png')
+        plt.savefig('results/task_data/hourly_admissions_heatmap_per_month.png')
         plt.close()
     
     def plot_hourly_discharge_frequency_per_month(self):
@@ -176,7 +176,7 @@ class TaskVisualizer:
         plt.xlabel('Hour of Day')
         plt.ylabel('Year-Month')
         plt.tight_layout()
-        plt.savefig('results/hourly_discharges_heatmap_per_month.png')
+        plt.savefig('results/task_data/hourly_discharges_heatmap_per_month.png')
         plt.close()
     
     def plot_hourly_medications_frequency_per_month(self):
@@ -203,7 +203,7 @@ class TaskVisualizer:
         plt.xlabel('Hour of Day')
         plt.ylabel('Year-Month')
         plt.tight_layout()
-        plt.savefig('results/hourly_medications_heatmap_per_month.png')
+        plt.savefig('results/task_data/hourly_medications_heatmap_per_month.png')
         plt.close()
     
     def plot_daily_admissions_frequency_per_week(self):
@@ -237,7 +237,7 @@ class TaskVisualizer:
         plt.xlabel('Day of Week')
         plt.ylabel('Year-Week')
         plt.tight_layout()
-        plt.savefig('results/daily_admissions_heatmap_per_week.png')
+        plt.savefig('results/task_data/daily_admissions_heatmap_per_week.png')
         plt.close()
     
     def plot_daily_discharge_frequency_per_week(self):
@@ -271,7 +271,7 @@ class TaskVisualizer:
         plt.xlabel('Day of Week')
         plt.ylabel('Year-Week')
         plt.tight_layout()
-        plt.savefig('results/daily_discharges_heatmap_per_week.png')
+        plt.savefig('results/task_data/daily_discharges_heatmap_per_week.png')
         plt.close()
     
     def plot_daily_medications_frequency_per_week(self):
@@ -302,7 +302,7 @@ class TaskVisualizer:
         plt.xlabel('Day of Week')
         plt.ylabel('Year-Week')
         plt.tight_layout()
-        plt.savefig('results/daily_medications_heatmap_per_week.png')
+        plt.savefig('results/task_data/daily_medications_heatmap_per_week.png')
         plt.close()
     
     def plot_daily_admissions_frequency_per_month(self):
@@ -336,7 +336,7 @@ class TaskVisualizer:
         plt.xlabel('Day of Week')
         plt.ylabel('Year-Month')
         plt.tight_layout()
-        plt.savefig('results/daily_admissions_heatmap_per_month.png')
+        plt.savefig('results/task_data/daily_admissions_heatmap_per_month.png')
         plt.close()
     
     def plot_daily_discharge_frequency_per_month(self):
@@ -370,7 +370,7 @@ class TaskVisualizer:
         plt.xlabel('Day of Week')
         plt.ylabel('Year-Month')
         plt.tight_layout()
-        plt.savefig('results/daily_discharges_heatmap_per_month.png')
+        plt.savefig('results/task_data/daily_discharges_heatmap_per_month.png')
         plt.close()
     
     def plot_daily_medications_frequency_per_month(self):
@@ -401,7 +401,7 @@ class TaskVisualizer:
         plt.xlabel('Day of Week')
         plt.ylabel('Year-Month')
         plt.tight_layout()
-        plt.savefig('results/daily_medications_heatmap_per_month.png')
+        plt.savefig('results/task_data/daily_medications_heatmap_per_month.png')
         plt.close()
 
 def main():

@@ -477,7 +477,7 @@ class GridWorld:
         ax.set_ylim(0, height * cell_size)
         ax.set_title("Grid World • Circular Robot Covering Multiple Cells • Potential Moves")
         ax.legend()
-        plt.savefig("results/grid_move_example.png")
+        plt.savefig("results/motion_planning/grid_move_example.png")
         plt.close()
 
     def plot_reservations(self, 
@@ -531,7 +531,7 @@ class GridWorld:
         unique_handles = [handles[labels.index(ul)] for ul in unique_labels]
         ax.legend(unique_handles, unique_labels, title="Time Intervals (s)")
 
-        plt.savefig("results/grid_reservations_example.png")
+        plt.savefig("results/motion_planning/grid_reservations_example.png")
         plt.close()
 
 if __name__ == "__main__":

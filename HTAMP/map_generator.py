@@ -138,8 +138,8 @@ class MapGenerator:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--image_path", type=str, default="maps/FA3/FA3_Top_View.png", help="Path to the input image")
-    parser.add_argument("--map_vis_path", type=str, default="results/map_visualization.png", help="Path to save the map visualization")
-    parser.add_argument("--comparison_vis_path", type=str, default="results/comparison_visualization.png", help="Path to save the comparison visualization")
+    parser.add_argument("--map_vis_path", type=str, default="results/environment/map_visualization.png", help="Path to save the map visualization")
+    parser.add_argument("--comparison_vis_path", type=str, default="results/environment/comparison_visualization.png", help="Path to save the comparison visualization")
     parser.add_argument("--map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to save the occupancy map")
     parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")

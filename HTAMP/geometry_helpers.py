@@ -338,7 +338,7 @@ if __name__ == "__main__":
                                                 tangent_scaling_factor=tangent_scaling_factor,
                                                 num_samples=num_samples)
     curved_connector_same_dir.plot_connector(title="Curved Connector: Same Direction",
-                                             output_path="results/curved_connector_same.png")
+                                             output_path="results/geometry/curved_connector_same.png")
 
     curved_connector_opp_dir = CurvedConnector(origin=origin,
                                                 destination=destination1,
@@ -347,7 +347,7 @@ if __name__ == "__main__":
                                                 tangent_scaling_factor=tangent_scaling_factor,
                                                 num_samples=num_samples)
     curved_connector_opp_dir.plot_connector(title="Curved Connector: Opposite Direction",
-                                             output_path="results/curved_connector_opp.png")
+                                             output_path="results/geometry/curved_connector_opp.png")
     
     curved_connector_perp_dir = CurvedConnector(origin=origin,
                                                 destination=destination2,
@@ -356,7 +356,7 @@ if __name__ == "__main__":
                                                 tangent_scaling_factor=tangent_scaling_factor,
                                                 num_samples=num_samples)
     curved_connector_perp_dir.plot_connector(title="Curved Connector: Perpendicular Direction",
-                                             output_path="results/curved_connector_perp.png")
+                                             output_path="results/geometry/curved_connector_perp.png")
 
     segments, info = curved_connector_perp_dir.split_connector_into_n(n_segments=10, tol_len=1e-8, n_samples=400)
     print(f"t_list: {[f'{t:.9f}' for t in info['t_list']]}")
@@ -367,4 +367,4 @@ if __name__ == "__main__":
     print("Segment lengths:", [f"{L:.9f}" for L in lens])
     GeometryHelper.plot_segments(segments, 
                                  title="Curved Connector Split into 10 Equal-Length Segments", 
-                                 output_path="results/curved_connector_perp_split10.png")
+                                 output_path="results/geometry/curved_connector_perp_split10.png")

@@ -422,8 +422,8 @@ class MotionPlanner:
             end, end_interval = path[-1]
             circle = Circle((end.x, end.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
             ax.add_patch(circle)
-        
-        plt.savefig("results/planned_paths.png")
+
+        plt.savefig("results/motion_planning/planned_paths.png")
         plt.close()
 
 def main():
