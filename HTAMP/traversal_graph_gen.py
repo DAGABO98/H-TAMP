@@ -435,6 +435,7 @@ class TraversalGraphGenerator:
                 if i == ref_index:
                     if len(opposite_nodes) > 0:
                         opp_node = opposite_nodes[i]
+                        assert opp_node.orientation_vec == ref_node.orientation_vec
                         edge = self._create_edge_between_nodes(from_node=ref_node, 
                                                                to_node=opp_node, 
                                                                action="go_straight")
@@ -939,6 +940,20 @@ class TraversalGraphGenerator:
                 edges.append(edge)
                 
         return edges
+    
+    def _create_corridor_straight_connections_for_nodes(self,
+                                                         left_nodes: List[TraversalNode], 
+                                                         right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+          edges = []
+          for i, left_node in enumerate(left_nodes):
+                if i < len(right_nodes):
+                    right_node = right_nodes[i]
+                    assert right_node.orientation_vec == left_node.orientation_vec
+                    edge = self._create_edge_between_nodes(from_node=left_node,
+                                                            to_node=right_node, 
+                                                            action="go_straight")
+                    edges.append(edge)
+          return edges
 
 
     def _create_doorway_connections_for_nodes(self, 
@@ -962,7 +977,11 @@ class TraversalGraphGenerator:
                                                                         left_nodes=left_nodes,
                                                                         right_nodes=right_nodes)
         edges.extend(corridor_edges)
-        
+
+        straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_nodes,
+                                                                             right_nodes=right_nodes)
+        edges.extend(straight_edges)
+
         return edges
 
     def _generate_doorway_traversal_subgraph(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
