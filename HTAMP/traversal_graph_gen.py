@@ -1,5 +1,5 @@
 import copy
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 import yaml
 import argparse
 import numpy as np
@@ -229,11 +229,12 @@ class TraversalGraphGenerator:
     
     def _extract_corridor_intersection_nodes(self, 
                                              corridor: Corridor,
-                                             intersection_corridor: Corridor) -> Tuple[List[TraversalNode], List[TraversalNode], List[TraversalNode], List[TraversalNode]]:
+                                             intersection_corridor: Corridor) -> Tuple[List[str], List[str], List[str], List[str], Dict[str, TraversalNode]]:
         upper_nodes = []
         lower_nodes = []
         left_nodes = []
         right_nodes = []
+        nodes_dict = {}
 
         if corridor.direction == "horizontal":
             vertical_start_y = corridor.width_start.y
@@ -264,13 +265,15 @@ class TraversalGraphGenerator:
                                                     position=start_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        upper_nodes.append(upper_node)
+                        nodes_dict[upper_node.label] = upper_node
+                        upper_nodes.append(upper_node.label)
                     if end_node_location is not None:
                         lower_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{orientation_vec}",
                                                     position=end_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        lower_nodes.append(lower_node)
+                        nodes_dict[lower_node.label] = lower_node
+                        lower_nodes.append(lower_node.label)
                 else:
                     possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
                     for possible_orientation in possible_orientations:
@@ -279,13 +282,15 @@ class TraversalGraphGenerator:
                                                         position=start_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            upper_nodes.append(upper_node)
+                            nodes_dict[upper_node.label] = upper_node
+                            upper_nodes.append(upper_node.label)
                         if end_node_location is not None:
                             lower_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{possible_orientation}",
                                                     position=end_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                            lower_nodes.append(lower_node)
+                            nodes_dict[lower_node.label] = lower_node
+                            lower_nodes.append(lower_node.label)
 
             horizontal_start_x = intersection_corridor.width_start.x
             horizontal_end_x = intersection_corridor.width_end.x
@@ -316,13 +321,15 @@ class TraversalGraphGenerator:
                                                     position=start_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        left_nodes.append(left_node)
+                        nodes_dict[left_node.label] = left_node
+                        left_nodes.append(left_node.label)
                     if end_node_location is not None:
                         right_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{orientation_vec}",
                                                     position=end_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        right_nodes.append(right_node)
+                        nodes_dict[right_node.label] = right_node
+                        right_nodes.append(right_node.label)
                 else:
                     possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                     for possible_orientation in possible_orientations:
@@ -331,15 +338,17 @@ class TraversalGraphGenerator:
                                                         position=start_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            left_nodes.append(left_node)
+                            nodes_dict[left_node.label] = left_node
+                            left_nodes.append(left_node.label)
                         if end_node_location is not None:
                             right_node = TraversalNode(label=f"{end_node_location.x: .2f}_{end_node_location.y: .2f}_{possible_orientation}",
                                                     position=end_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                            right_nodes.append(right_node)
+                            nodes_dict[right_node.label] = right_node
+                            right_nodes.append(right_node.label)
 
-        return upper_nodes, lower_nodes, left_nodes, right_nodes
+        return upper_nodes, lower_nodes, left_nodes, right_nodes, nodes_dict
     
     def _create_edge_between_nodes(self, 
                                    from_node: TraversalNode, 
@@ -358,43 +367,53 @@ class TraversalGraphGenerator:
                             edge_connector=edge_connector)
         return edge
     
+    def _get_corridor_by_id(self, corridor_id: str) -> Corridor:
+        for corridor in self.corridors:
+            if corridor.corridor_id == corridor_id:
+                return corridor
+        return None
+    
     def _create_intersection_connections_for_nodes(self, 
-                                                   reference_nodes: List[TraversalNode], 
+                                                   reference_nodes_labels: List[str], 
                                                    ref_orientation: OrientationVector,
-                                                   opposite_nodes: List[TraversalNode],
-                                                   right_nodes: List[TraversalNode],
+                                                   opposite_nodes_labels: List[str],
+                                                   right_nodes_labels: List[str],
                                                    right_orientation: OrientationVector,
-                                                   left_nodes: List[TraversalNode],
+                                                   left_nodes_labels: List[str],
                                                    left_orientation: OrientationVector,
+                                                   nodes_dict: Dict[str, TraversalNode],
                                                    horizontal: bool,
                                                    invert: bool) -> List[TraversalEdge]:
         edges = []
         if invert:
-            ref_index = len(reference_nodes) - 1
+            ref_index = len(reference_nodes_labels) - 1
         else:
             ref_index = 0
 
-        for i, ref_node in enumerate(reference_nodes):
+        for i, ref_node_label in enumerate(reference_nodes_labels):
+            ref_node = nodes_dict[ref_node_label]
             if ref_node.orientation_vec == ref_orientation:
                 if i == ref_index:
-                    if len(opposite_nodes) > 0:
-                        opp_node = opposite_nodes[i]
+                    if len(opposite_nodes_labels) > 0:
+                        opp_node = nodes_dict[opposite_nodes_labels[i]]
                         assert opp_node.orientation_vec == ref_node.orientation_vec
                         edge = self._create_edge_between_nodes(from_node=ref_node, 
                                                                to_node=opp_node, 
                                                                action="go_straight")
                         edges.append(edge)
                     
-                    if len(right_nodes) > 0:
-                        for right_node in right_nodes:
+                    if len(right_nodes_labels) > 0:
+                        for right_node_label in right_nodes_labels:
+                            right_node = nodes_dict[right_node_label]
                             if right_node.orientation_vec == right_orientation:
                                 edge = self._create_edge_between_nodes(from_node=ref_node, 
                                                                        to_node=right_node, 
                                                                        action="turn_right")
                                 edges.append(edge)
                 else:
-                    if len(opposite_nodes) > 0:
-                        for opp_node in opposite_nodes:
+                    if len(opposite_nodes_labels) > 0:
+                        for opp_node_label in opposite_nodes_labels:
+                            opp_node = nodes_dict[opp_node_label]
                             if horizontal:
                                 directionality_flag = opp_node.position.x == ref_node.position.x
                             else:
@@ -405,9 +424,10 @@ class TraversalGraphGenerator:
                                                                        to_node=opp_node, 
                                                                        action="go_straight")
                                 edges.append(edge)
-                    
-                    if len(left_nodes) > 0:
-                        for left_node in left_nodes:
+
+                    if len(left_nodes_labels) > 0:
+                        for left_node_label in left_nodes_labels:
+                            left_node = nodes_dict[left_node_label]
                             if left_node.orientation_vec == left_orientation:
                                 edge = self._create_edge_between_nodes(from_node=ref_node,
                                                                        to_node=left_node,
@@ -434,67 +454,65 @@ class TraversalGraphGenerator:
                 if intersection_corridor.corridor_id in seen_corridors:
                     continue
 
-                upper_nodes, lower_nodes, left_nodes, right_nodes  = self._extract_corridor_intersection_nodes(corridor=corridor, 
-                                                                                                               intersection_corridor=intersection_corridor)
+                extraction_results = self._extract_corridor_intersection_nodes(corridor=corridor,
+                                                                               intersection_corridor=intersection_corridor)
+                
+                upper_nodes_labels, lower_nodes_labels, left_nodes_labels, right_nodes_labels, nodes_dict = extraction_results
                 
                 seen_corridors.add(corridor.corridor_id)
 
-                if len(upper_nodes) > 0:
-                    upper_nodes.sort(key=lambda node: node.position.x)
-                if len(lower_nodes) > 0:
-                    lower_nodes.sort(key=lambda node: node.position.x)
-                if len(left_nodes) > 0:
-                    left_nodes.sort(key=lambda node: node.position.y)
-                if len(right_nodes) > 0:
-                    right_nodes.sort(key=lambda node: node.position.y)
-
-                upper_edges = self._create_intersection_connections_for_nodes(reference_nodes=upper_nodes,
+                upper_edges = self._create_intersection_connections_for_nodes(reference_nodes_labels=upper_nodes_labels,
                                                                             ref_orientation=OrientationVector(0.0, 1.0),
-                                                                            opposite_nodes=lower_nodes,
-                                                                            right_nodes=left_nodes,
+                                                                            opposite_nodes_labels=lower_nodes_labels,
+                                                                            right_nodes_labels=left_nodes_labels,
                                                                             right_orientation=OrientationVector(-1.0, 0.0),
-                                                                            left_nodes=right_nodes,
+                                                                            left_nodes_labels=right_nodes_labels,
                                                                             left_orientation=OrientationVector(1.0, 0.0),
+                                                                            nodes_dict=nodes_dict,
                                                                             horizontal=True,
                                                                             invert=False)
                 edges.extend(upper_edges)
 
-                lower_edges = self._create_intersection_connections_for_nodes(reference_nodes=lower_nodes,
+                lower_edges = self._create_intersection_connections_for_nodes(reference_nodes_labels=lower_nodes_labels,
                                                                             ref_orientation=OrientationVector(0.0, -1.0),
-                                                                            opposite_nodes=upper_nodes,
-                                                                            right_nodes=right_nodes,
+                                                                            opposite_nodes_labels=upper_nodes_labels,
+                                                                            right_nodes_labels=right_nodes_labels,
                                                                             right_orientation=OrientationVector(1.0, 0.0),
-                                                                            left_nodes=left_nodes,
+                                                                            left_nodes_labels=left_nodes_labels,
                                                                             left_orientation=OrientationVector(-1.0, 0.0),
+                                                                            nodes_dict=nodes_dict,
                                                                             horizontal=True,
                                                                             invert=True)
                 edges.extend(lower_edges)
 
-                right_edges = self._create_intersection_connections_for_nodes(reference_nodes=right_nodes,
+                right_edges = self._create_intersection_connections_for_nodes(reference_nodes_labels=right_nodes_labels,
                                                                             ref_orientation=OrientationVector(-1.0, 0.0),
-                                                                            opposite_nodes=left_nodes,
-                                                                            right_nodes=upper_nodes,
+                                                                            opposite_nodes_labels=left_nodes_labels,
+                                                                            right_nodes_labels=upper_nodes_labels,
                                                                             right_orientation=OrientationVector(0.0, -1.0),
-                                                                            left_nodes=lower_nodes,
+                                                                            left_nodes_labels=lower_nodes_labels,
                                                                             left_orientation=OrientationVector(0.0, 1.0),
+                                                                            nodes_dict=nodes_dict,
                                                                             horizontal=False,
                                                                             invert=False)
                 edges.extend(right_edges)
 
-                left_edges = self._create_intersection_connections_for_nodes(reference_nodes=left_nodes,
+                left_edges = self._create_intersection_connections_for_nodes(reference_nodes_labels=left_nodes_labels,
                                                                             ref_orientation=OrientationVector(1.0, 0.0),
-                                                                            opposite_nodes=right_nodes,
-                                                                            right_nodes=lower_nodes,
+                                                                            opposite_nodes_labels=right_nodes_labels,
+                                                                            right_nodes_labels=lower_nodes_labels,
                                                                             right_orientation=OrientationVector(0.0, 1.0),
-                                                                            left_nodes=upper_nodes,
+                                                                            left_nodes_labels=upper_nodes_labels,
                                                                             left_orientation=OrientationVector(0.0, -1.0),
+                                                                            nodes_dict=nodes_dict,
                                                                             horizontal=False,
                                                                             invert=True)
                 edges.extend(left_edges)
-                current_subgraph = IntersectionSubgraph(upper_nodes=upper_nodes, 
-                                                        lower_nodes=lower_nodes, 
-                                                        left_nodes=left_nodes, 
-                                                        right_nodes=right_nodes, 
+                current_subgraph = IntersectionSubgraph(upper_nodes=upper_nodes_labels, 
+                                                        lower_nodes=lower_nodes_labels, 
+                                                        left_nodes=left_nodes_labels, 
+                                                        right_nodes=right_nodes_labels, 
+                                                        nodes_dict=nodes_dict,
                                                         edges=edges)
 
                 subgraphs.append(current_subgraph)
@@ -503,20 +521,15 @@ class TraversalGraphGenerator:
                 current_index += 1
 
         return subgraphs, subgraph_indices
-    
-    def _get_corridor_by_id(self, corridor_id: str) -> Corridor:
-        for corridor in self.corridors:
-            if corridor.corridor_id == corridor_id:
-                return corridor
-        return None
 
     def _extract_doorway_intersection_nodes(self, 
                                              doorway: Doorway,
-                                             corridor: Corridor) -> Tuple[List[TraversalNode], List[TraversalNode], List[TraversalNode]]:
+                                             corridor: Corridor) -> Tuple[List[str], List[str], List[str], List[str], Dict[str, TraversalNode]]:
         room_nodes = []
         door_nodes = []
         left_nodes = []
         right_nodes = []
+        nodes_dict = {}
 
         if corridor.direction == "horizontal":
             doorway_start_x = doorway.start.x
@@ -542,8 +555,10 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        left_nodes.append(left_node)
-                        right_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_nodes.append(left_node.label)
+                        right_nodes.append(right_node.label)
                 else:
                     left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
@@ -553,8 +568,10 @@ class TraversalGraphGenerator:
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    left_nodes.append(left_node)
-                    right_nodes.append(right_node)
+                    nodes_dict[left_node.label] = left_node
+                    nodes_dict[right_node.label] = right_node
+                    left_nodes.append(left_node.label)
+                    right_nodes.append(right_node.label)
 
             if doorway.start.y <= corridor.width_start.y:
                 if len(doorway.lanes) == 1:
@@ -570,13 +587,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
                 else:
 
                     for i, lane in enumerate(doorway.lanes):
@@ -594,13 +613,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
             else:
                 if len(doorway.lanes) == 1:
                     possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
@@ -615,13 +636,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
                 else:
                     for i, lane in enumerate(doorway.lanes):
                         lane_x = lane.start_point.x
@@ -638,13 +661,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
         else:
             doorway_start_y = doorway.start.y
             doorway_end_y = doorway.end.y
@@ -669,8 +694,10 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        left_nodes.append(left_node)
-                        right_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_nodes.append(left_node.label)
+                        right_nodes.append(right_node.label)
                 else:
                     left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
@@ -680,8 +707,10 @@ class TraversalGraphGenerator:
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    left_nodes.append(left_node)
-                    right_nodes.append(right_node)
+                    nodes_dict[left_node.label] = left_node
+                    nodes_dict[right_node.label] = right_node
+                    left_nodes.append(left_node.label)
+                    right_nodes.append(right_node.label)
 
             if doorway.start.x <= corridor.width_start.x:
                 if len(doorway.lanes) == 1:
@@ -697,13 +726,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
                 else:
 
                     for i, lane in enumerate(doorway.lanes):
@@ -721,13 +752,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
             else:
                 if len(doorway.lanes) == 1:
                     possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
@@ -742,13 +775,15 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{possible_orientation}",
                                                     position=doorway_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
                 else:
                     
                     for i, lane in enumerate(doorway.lanes):
@@ -766,44 +801,52 @@ class TraversalGraphGenerator:
                                                     position=room_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        room_nodes.append(room_node)
+                        nodes_dict[room_node.label] = room_node
+                        room_nodes.append(room_node.label)
 
                         door_node = TraversalNode(label=f"{doorway_node_location.x: .2f}_{doorway_node_location.y: .2f}_{orientation_vec}",
                                                     position=doorway_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        door_nodes.append(door_node)
+                        nodes_dict[door_node.label] = door_node
+                        door_nodes.append(door_node.label)
 
-        return room_nodes, door_nodes, left_nodes, right_nodes
+        return room_nodes, door_nodes, left_nodes, right_nodes, nodes_dict
     
     def _create_door_room_connections_for_nodes(self, 
                                                 doorway: Doorway,
                                                 corridor: Corridor,
-                                                room_nodes: List[TraversalNode], 
-                                                door_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+                                                room_nodes: List[str], 
+                                                door_nodes: List[str],
+                                                nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
         edges = []
         if corridor.direction == "horizontal":
             if doorway.start.y <= corridor.width_start.y:
-                left_room_node = room_nodes[0]
-                right_room_node = room_nodes[1]
-                left_door_node = door_nodes[0]
-                right_door_node = door_nodes[1]
+                left_room_node_label = room_nodes[0]
+                right_room_node_label = room_nodes[1]
+                left_door_node_label = door_nodes[0]
+                right_door_node_label = door_nodes[1]
             else:
-                left_room_node = room_nodes[1]
-                left_door_node = door_nodes[1]
-                right_room_node = room_nodes[0]
-                right_door_node = door_nodes[0]
+                left_room_node_label = room_nodes[1]
+                left_door_node_label = door_nodes[1]
+                right_room_node_label = room_nodes[0]
+                right_door_node_label = door_nodes[0]
         else:
             if doorway.start.x <= corridor.width_start.x:
-                left_room_node = room_nodes[1]
-                left_door_node = door_nodes[1]
-                right_room_node = room_nodes[0]
-                right_door_node = door_nodes[0]
+                left_room_node_label = room_nodes[1]
+                left_door_node_label = door_nodes[1]
+                right_room_node_label = room_nodes[0]
+                right_door_node_label = door_nodes[0]
             else:
-                left_room_node = room_nodes[0]
-                left_door_node = door_nodes[0]
-                right_room_node = room_nodes[1]
-                right_door_node = door_nodes[1]
+                left_room_node_label = room_nodes[0]
+                left_door_node_label = door_nodes[0]
+                right_room_node_label = room_nodes[1]
+                right_door_node_label = door_nodes[1]
+        
+        right_room_node = nodes_dict[right_room_node_label]
+        right_door_node = nodes_dict[right_door_node_label]
+        left_room_node = nodes_dict[left_room_node_label]
+        left_door_node = nodes_dict[left_door_node_label]
             
         right_edge = self._create_edge_between_nodes(from_node=right_door_node,
                                                      to_node=right_room_node, 
@@ -816,50 +859,54 @@ class TraversalGraphGenerator:
                                                     action="switch_directions")
         edges.append(right_edge)
         edges.append(left_edge)
-        edges.append(switch_edge)
-            
+        edges.append(switch_edge)   
         
         return edges
     
     def _create_door_corridor_connections_for_nodes(self, 
                                                   doorway: Doorway,
                                                   corridor: Corridor,
-                                                  door_nodes: List[TraversalNode], 
-                                                  left_nodes: List[TraversalNode], 
-                                                  right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+                                                  door_nodes: List[str], 
+                                                  left_nodes: List[str], 
+                                                  right_nodes: List[str],
+                                                  nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
         edges = []
         if corridor.direction == "horizontal":
             if doorway.start.y <= corridor.width_start.y:
-                door_right_node = door_nodes[1]
-                door_left_node = door_nodes[0]
-                corridor_right_nodes = right_nodes
-                corridor_left_nodes = left_nodes
+                door_right_node_label = door_nodes[1]
+                door_left_node_label = door_nodes[0]
+                corridor_right_nodes_labels = right_nodes
+                corridor_left_nodes_labels = left_nodes
                 right_orientation_vec = OrientationVector(1.0, 0.0)
                 left_orientation_vec = OrientationVector(-1.0, 0.0)
             else:
-                door_right_node = door_nodes[0]
-                door_left_node = door_nodes[1]
-                corridor_right_nodes = left_nodes
-                corridor_left_nodes = right_nodes
+                door_right_node_label = door_nodes[0]
+                door_left_node_label = door_nodes[1]
+                corridor_right_nodes_labels = left_nodes
+                corridor_left_nodes_labels = right_nodes
                 right_orientation_vec = OrientationVector(-1.0, 0.0)
                 left_orientation_vec = OrientationVector(1.0, 0.0)
         else:
             if doorway.start.x <= corridor.width_start.x:
-                door_right_node = door_nodes[0]
-                door_left_node = door_nodes[1]
-                corridor_right_nodes = right_nodes
-                corridor_left_nodes = left_nodes
+                door_right_node_label = door_nodes[0]
+                door_left_node_label = door_nodes[1]
+                corridor_right_nodes_labels = right_nodes
+                corridor_left_nodes_labels = left_nodes
                 right_orientation_vec = OrientationVector(0.0, -1.0)
                 left_orientation_vec = OrientationVector(0.0, 1.0)
             else:
-                door_right_node = door_nodes[1]
-                door_left_node = door_nodes[0]
-                corridor_right_nodes = left_nodes
-                corridor_left_nodes = right_nodes
+                door_right_node_label = door_nodes[1]
+                door_left_node_label = door_nodes[0]
+                corridor_right_nodes_labels = left_nodes
+                corridor_left_nodes_labels = right_nodes
                 right_orientation_vec = OrientationVector(0.0, 1.0)
                 left_orientation_vec = OrientationVector(0.0, -1.0)
 
-        for right_node in corridor_right_nodes:
+        door_right_node = nodes_dict[door_right_node_label]
+        door_left_node = nodes_dict[door_left_node_label]
+
+        for right_node_label in corridor_right_nodes_labels:
+            right_node = nodes_dict[right_node_label]
             if right_node.orientation_vec == left_orientation_vec:
                 edge = self._create_edge_between_nodes(from_node=right_node,
                                                         to_node=door_right_node, 
@@ -870,8 +917,9 @@ class TraversalGraphGenerator:
                                                         to_node=right_node, 
                                                         action="turn_left")
                 edges.append(edge)
-        
-        for left_node in corridor_left_nodes:
+
+        for left_node_label in corridor_left_nodes_labels:
+            left_node = nodes_dict[left_node_label]
             if left_node.orientation_vec == right_orientation_vec:
                 edge = self._create_edge_between_nodes(from_node=left_node,
                                                         to_node=door_right_node, 
@@ -886,12 +934,15 @@ class TraversalGraphGenerator:
         return edges
     
     def _create_corridor_straight_connections_for_nodes(self,
-                                                         left_nodes: List[TraversalNode], 
-                                                         right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+                                                         left_nodes: List[str], 
+                                                         right_nodes: List[str],
+                                                         nodes_dict: dict[str, TraversalNode]) -> List[TraversalEdge]:
           edges = []
-          for i, left_node in enumerate(left_nodes):
+          for i, left_node_label in enumerate(left_nodes):
                 if i < len(right_nodes):
-                    right_node = right_nodes[i]
+                    right_node_label = right_nodes[i]
+                    left_node = nodes_dict[left_node_label]
+                    right_node = nodes_dict[right_node_label]
                     assert right_node.orientation_vec == left_node.orientation_vec
                     edge = self._create_edge_between_nodes(from_node=left_node,
                                                             to_node=right_node, 
@@ -903,27 +954,31 @@ class TraversalGraphGenerator:
     def _create_doorway_connections_for_nodes(self, 
                                               doorway: Doorway,
                                               corridor: Corridor,
-                                              room_nodes: List[TraversalNode], 
-                                              door_nodes: List[TraversalNode], 
-                                              left_nodes: List[TraversalNode], 
-                                              right_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+                                              room_nodes: List[str], 
+                                              door_nodes: List[str], 
+                                              left_nodes: List[str], 
+                                              right_nodes: List[str],
+                                              nodes_dict: dict[str, TraversalNode]) -> List[TraversalEdge]:
         edges = []
 
         room_edges = self._create_door_room_connections_for_nodes(doorway=doorway,
                                                                   corridor=corridor,
                                                                   room_nodes=room_nodes,
-                                                                  door_nodes=door_nodes)
+                                                                  door_nodes=door_nodes,
+                                                                  nodes_dict=nodes_dict)
         edges.extend(room_edges)
 
         corridor_edges = self._create_door_corridor_connections_for_nodes(doorway=doorway,
                                                                         corridor=corridor,
                                                                         door_nodes=door_nodes,
                                                                         left_nodes=left_nodes,
-                                                                        right_nodes=right_nodes)
+                                                                        right_nodes=right_nodes,
+                                                                        nodes_dict=nodes_dict)
         edges.extend(corridor_edges)
 
         straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_nodes,
-                                                                             right_nodes=right_nodes)
+                                                                             right_nodes=right_nodes,
+                                                                             nodes_dict=nodes_dict)
         edges.extend(straight_edges)
 
         return edges
@@ -939,21 +994,23 @@ class TraversalGraphGenerator:
                 print(f"Warning: Doorway corridor ID '{doorway.corridor_id}' not found among corridors.")
                 continue
 
-            room_nodes, door_nodes, left_nodes, right_nodes = self._extract_doorway_intersection_nodes(doorway=doorway, 
-                                                                                           corridor=corridor)
+            room_nodes, door_nodes, left_nodes, right_nodes, nodes_dict = self._extract_doorway_intersection_nodes(doorway=doorway, 
+                                                                                                                   corridor=corridor)
 
             doorway_edges = self._create_doorway_connections_for_nodes(doorway=doorway,
                                                                        corridor=corridor,
                                                                        room_nodes=room_nodes,
                                                                        door_nodes=door_nodes,
                                                                        left_nodes=left_nodes,
-                                                                       right_nodes=right_nodes)
+                                                                       right_nodes=right_nodes,
+                                                                       nodes_dict=nodes_dict)
             edges.extend(doorway_edges)
 
             current_subgraph = DoorwaySubgraph(room_nodes=room_nodes, 
                                                 doorway_nodes=door_nodes, 
                                                 left_nodes=left_nodes, 
                                                 right_nodes=right_nodes, 
+                                                nodes_dict=nodes_dict,
                                                 edges=edges)
             subgraphs.append(current_subgraph)
             subgraph_indices.setdefault(doorway.corridor_id, []).append(current_index)
@@ -963,13 +1020,15 @@ class TraversalGraphGenerator:
     def _extract_drive_through_intersection_nodes(self,
                                                   drive_through: DriveThrough) -> Tuple[List[TraversalNode], List[TraversalNode], 
                                                                                     List[TraversalNode], List[TraversalNode],
-                                                                                    List[TraversalNode], List[TraversalNode]]:
+                                                                                    List[TraversalNode], List[TraversalNode],
+                                                                                    Dict[str, TraversalNode]]:
         entry_nodes = []
         exit_nodes = []
         left_entry_nodes = []
         right_entry_nodes = []
         left_exit_nodes = []
         right_exit_nodes = []
+        nodes_dict = {}
 
         for lane in drive_through.lanes:
             entry_corridor = self._get_corridor_by_id(drive_through.entry_corridor_id)
@@ -981,7 +1040,8 @@ class TraversalGraphGenerator:
                                                 position=entry_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
-                    entry_nodes.append(entry_node)
+                    nodes_dict[entry_node.label] = entry_node
+                    entry_nodes.append(entry_node.label)
                 
                 for i, corridor_lane in enumerate(entry_corridor.lanes):
                     lane_y = corridor_lane.start_point.y
@@ -1006,8 +1066,10 @@ class TraversalGraphGenerator:
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            left_entry_nodes.append(left_node)
-                            right_entry_nodes.append(right_node)
+                            nodes_dict[left_node.label] = left_node
+                            nodes_dict[right_node.label] = right_node
+                            left_entry_nodes.append(left_node.label)
+                            right_entry_nodes.append(right_node.label)
                     else:
                         left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
@@ -1017,8 +1079,10 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        left_entry_nodes.append(left_node)
-                        right_entry_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_entry_nodes.append(left_node.label)
+                        right_entry_nodes.append(right_node.label)
             else:
                 possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                 for possible_orientation in possible_orientations:
@@ -1026,8 +1090,9 @@ class TraversalGraphGenerator:
                                                 position=entry_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
-                    entry_nodes.append(entry_node)
-                
+                    nodes_dict[entry_node.label] = entry_node
+                    entry_nodes.append(entry_node.label)
+
                 for i, corridor_lane in enumerate(entry_corridor.lanes):
                     lane_x = corridor_lane.start_point.x
                     left_lane_y = drive_through.entry_start.y
@@ -1051,8 +1116,10 @@ class TraversalGraphGenerator:
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            left_entry_nodes.append(left_node)
-                            right_entry_nodes.append(right_node)
+                            nodes_dict[left_node.label] = left_node
+                            nodes_dict[right_node.label] = right_node
+                            left_entry_nodes.append(left_node.label)
+                            right_entry_nodes.append(right_node.label)
                     else:
                         left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
@@ -1062,9 +1129,11 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        left_entry_nodes.append(left_node)
-                        right_entry_nodes.append(right_node)
-            
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_entry_nodes.append(left_node.label)
+                        right_entry_nodes.append(right_node.label)
+
             exit_corridor = self._get_corridor_by_id(drive_through.exit_corridor_id)
             exit_point = copy.deepcopy(lane.end_point)
             if exit_corridor.direction == "horizontal":
@@ -1074,7 +1143,8 @@ class TraversalGraphGenerator:
                                                 position=exit_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
-                    exit_nodes.append(exit_node)
+                    nodes_dict[exit_node.label] = exit_node
+                    exit_nodes.append(exit_node.label)
                 
                 for i, corridor_lane in enumerate(exit_corridor.lanes):
                     lane_y = corridor_lane.start_point.y
@@ -1099,8 +1169,10 @@ class TraversalGraphGenerator:
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            left_exit_nodes.append(left_node)
-                            right_exit_nodes.append(right_node)
+                            nodes_dict[left_node.label] = left_node
+                            nodes_dict[right_node.label] = right_node
+                            left_exit_nodes.append(left_node.label)
+                            right_exit_nodes.append(right_node.label)
                     else:
                         left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
@@ -1110,8 +1182,10 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        left_exit_nodes.append(left_node)
-                        right_exit_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_exit_nodes.append(left_node.label)
+                        right_exit_nodes.append(right_node.label)
             else:
                 possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
                 for possible_orientation in possible_orientations:
@@ -1119,8 +1193,9 @@ class TraversalGraphGenerator:
                                                 position=exit_point,
                                                 orientation_vec=possible_orientation,
                                                 connections=[])
-                    exit_nodes.append(exit_node)
-                
+                    nodes_dict[exit_node.label] = exit_node
+                    exit_nodes.append(exit_node.label)
+
                 for i, corridor_lane in enumerate(exit_corridor.lanes):
                     lane_x = corridor_lane.start_point.x
                     left_lane_y = drive_through.exit_start.y
@@ -1144,8 +1219,10 @@ class TraversalGraphGenerator:
                                                         position=right_node_location,
                                                         orientation_vec=possible_orientation,
                                                         connections=[])
-                            left_exit_nodes.append(left_node)
-                            right_exit_nodes.append(right_node)
+                            nodes_dict[left_node.label] = left_node
+                            nodes_dict[right_node.label] = right_node
+                            left_exit_nodes.append(left_node.label)
+                            right_exit_nodes.append(right_node.label)
                     else:
                         left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                     position=left_node_location,
@@ -1155,29 +1232,36 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=orientation_vec,
                                                     connections=[])
-                        left_exit_nodes.append(left_node)
-                        right_exit_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_exit_nodes.append(left_node.label)
+                        right_exit_nodes.append(right_node.label)
 
-        return entry_nodes, exit_nodes, left_entry_nodes, right_entry_nodes, left_exit_nodes, right_exit_nodes
+        return entry_nodes, exit_nodes, left_entry_nodes, right_entry_nodes, left_exit_nodes, right_exit_nodes, nodes_dict
 
     def _create_drive_through_connections_for_nodes(self, 
                                                     drive_through: DriveThrough,
-                                                    entry_nodes: List[TraversalNode],
-                                                    exit_nodes: List[TraversalNode],
-                                                    left_entry_nodes: List[TraversalNode],
-                                                    right_entry_nodes: List[TraversalNode],
-                                                    left_exit_nodes: List[TraversalNode],
-                                                    right_exit_nodes: List[TraversalNode]) -> List[TraversalEdge]:
+                                                    entry_nodes: List[str],
+                                                    exit_nodes: List[str],
+                                                    left_entry_nodes: List[str],
+                                                    right_entry_nodes: List[str],
+                                                    left_exit_nodes: List[str],
+                                                    right_exit_nodes: List[str],
+                                                    nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
         edges = []
         straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_entry_nodes,
-                                                                             right_nodes=right_entry_nodes)
+                                                                             right_nodes=right_entry_nodes,
+                                                                             nodes_dict=nodes_dict)
         edges.extend(straight_edges)
         straight_edges = self._create_corridor_straight_connections_for_nodes(left_nodes=left_exit_nodes,
-                                                                             right_nodes=right_exit_nodes)
+                                                                             right_nodes=right_exit_nodes,
+                                                                             nodes_dict=nodes_dict)
         edges.extend(straight_edges)
 
-        for i, entry_node in enumerate(entry_nodes):
-            exit_node = exit_nodes[i]
+        for i, entry_node_label in enumerate(entry_nodes):
+            exit_node_label = exit_nodes[i]
+            entry_node = nodes_dict[entry_node_label]
+            exit_node = nodes_dict[exit_node_label]
             assert entry_node.orientation_vec == exit_node.orientation_vec
             edge = self._create_edge_between_nodes(from_node=entry_node, to_node=exit_node, action="go_straight")
             edges.append(edge)
@@ -1193,7 +1277,8 @@ class TraversalGraphGenerator:
                 right_orientation_vec = OrientationVector(0.0, -1.0)
                 out_direction_vec = OrientationVector(-1.0, 0.0)
 
-            for left_entry_node in left_entry_nodes:
+            for left_entry_node_label in left_entry_nodes:
+                left_entry_node = nodes_dict[left_entry_node_label]
                 if entry_node.orientation_vec == out_direction_vec:
                     if left_entry_node.orientation_vec == right_orientation_vec:
                         edge = self._create_edge_between_nodes(from_node=left_entry_node,
@@ -1206,8 +1291,9 @@ class TraversalGraphGenerator:
                                                                 to_node=left_entry_node, 
                                                                 action="turn_right")
                         edges.append(edge)
-            
-            for left_exit_node in left_exit_nodes:
+
+            for left_exit_node_label in left_exit_nodes:
+                left_exit_node = nodes_dict[left_exit_node_label]
                 if exit_node.orientation_vec == out_direction_vec:
                     if left_exit_node.orientation_vec == left_orientation_vec:
                         edge = self._create_edge_between_nodes(from_node=exit_node,
@@ -1220,8 +1306,9 @@ class TraversalGraphGenerator:
                                                                 to_node=exit_node, 
                                                                 action="turn_right")
                         edges.append(edge)
-            
-            for right_entry_node in right_entry_nodes:
+
+            for right_entry_node_label in right_entry_nodes:
+                right_entry_node = nodes_dict[right_entry_node_label]
                 if entry_node.orientation_vec == out_direction_vec:
                     if right_entry_node.orientation_vec == left_orientation_vec:
                         edge = self._create_edge_between_nodes(from_node=right_entry_node,
@@ -1234,8 +1321,9 @@ class TraversalGraphGenerator:
                                                                 to_node=right_entry_node, 
                                                                 action="turn_left")
                         edges.append(edge)
-            
-            for right_exit_node in right_exit_nodes:
+
+            for right_exit_node_label in right_exit_nodes:
+                right_exit_node = nodes_dict[right_exit_node_label]
                 if exit_node.orientation_vec == out_direction_vec:
                     if right_exit_node.orientation_vec == right_orientation_vec:
                         edge = self._create_edge_between_nodes(from_node=exit_node,
@@ -1257,7 +1345,7 @@ class TraversalGraphGenerator:
         for drive_through in self.drive_throughs:
             edges = []
             extraction_result = self._extract_drive_through_intersection_nodes(drive_through=drive_through)
-            entry_nodes, exit_nodes, left_entry_nodes, right_entry_nodes, left_exit_nodes, right_exit_nodes = extraction_result
+            entry_nodes, exit_nodes, left_entry_nodes, right_entry_nodes, left_exit_nodes, right_exit_nodes, nodes_dict = extraction_result
 
             drive_through_edges = self._create_drive_through_connections_for_nodes(drive_through=drive_through,
                                                                                    entry_nodes=entry_nodes,
@@ -1265,7 +1353,8 @@ class TraversalGraphGenerator:
                                                                                    left_entry_nodes=left_entry_nodes,
                                                                                    right_entry_nodes=right_entry_nodes,
                                                                                    left_exit_nodes=left_exit_nodes,
-                                                                                   right_exit_nodes=right_exit_nodes)
+                                                                                   right_exit_nodes=right_exit_nodes,
+                                                                                   nodes_dict=nodes_dict)
             edges.extend(drive_through_edges)
 
             current_subgraph = DriveThroughSubgraph(entry_nodes=entry_nodes,
@@ -1274,6 +1363,7 @@ class TraversalGraphGenerator:
                                                     left_exit_nodes=left_exit_nodes,
                                                     right_exit_nodes=right_exit_nodes,
                                                     exit_nodes=exit_nodes,
+                                                    nodes_dict=nodes_dict,
                                                     edges=edges)
             subgraphs.append(current_subgraph)
             subgraph_indices.setdefault(drive_through.entry_corridor_id, []).append(current_index)
@@ -1283,9 +1373,10 @@ class TraversalGraphGenerator:
     
     def _extract_switching_point_nodes(self, 
                                        corridor: Corridor,
-                                       center: Coordinate,):
+                                       center: Coordinate,) -> Tuple[List[str], List[str], Dict[str, TraversalNode]]:
         left_nodes = []
         right_nodes = []
+        nodes_dict = {}
         if corridor.direction == "horizontal":
             right_nodes_x = center.x + self.switching_point_offset
             left_nodes_x = center.x - self.switching_point_offset
@@ -1310,8 +1401,10 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        left_nodes.append(left_node)
-                        right_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_nodes.append(left_node.label)
+                        right_nodes.append(right_node.label)
                 else:
                     left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
@@ -1321,8 +1414,10 @@ class TraversalGraphGenerator:
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    left_nodes.append(left_node)
-                    right_nodes.append(right_node)
+                    nodes_dict[left_node.label] = left_node
+                    nodes_dict[right_node.label] = right_node
+                    left_nodes.append(left_node.label)
+                    right_nodes.append(right_node.label)
         else:
             right_nodes_y = center.y - self.switching_point_offset
             left_nodes_y = center.y + self.switching_point_offset
@@ -1347,8 +1442,10 @@ class TraversalGraphGenerator:
                                                     position=right_node_location,
                                                     orientation_vec=possible_orientation,
                                                     connections=[])
-                        left_nodes.append(left_node)
-                        right_nodes.append(right_node)
+                        nodes_dict[left_node.label] = left_node
+                        nodes_dict[right_node.label] = right_node
+                        left_nodes.append(left_node.label)
+                        right_nodes.append(right_node.label)
                 else:
                     left_node = TraversalNode(label=f"{left_node_location.x: .2f}_{left_node_location.y: .2f}_{orientation_vec}",
                                                 position=left_node_location,
@@ -1358,19 +1455,24 @@ class TraversalGraphGenerator:
                                                 position=right_node_location,
                                                 orientation_vec=orientation_vec,
                                                 connections=[])
-                    left_nodes.append(left_node)
-                    right_nodes.append(right_node)
-        return left_nodes, right_nodes
+                    nodes_dict[left_node.label] = left_node
+                    nodes_dict[right_node.label] = right_node
+                    left_nodes.append(left_node.label)
+                    right_nodes.append(right_node.label)
+        return left_nodes, right_nodes, nodes_dict
     
     def _create_turn_point_connections_for_nodes(self, 
-                                                 ref_nodes: List[TraversalNode],
-                                                 ref_direction_vec: Tuple[float, float]
+                                                 ref_nodes: List[str],
+                                                 ref_direction_vec: Tuple[float, float],
+                                                 nodes_dict: Dict[str, TraversalNode]
                                                  ) -> List[TraversalEdge]:
         edges = []
 
-        for ref_node in ref_nodes:
+        for ref_node_label in ref_nodes:
+            ref_node = nodes_dict[ref_node_label]
             if ref_node.orientation_vec == ref_direction_vec:
-                for second_node in ref_nodes:
+                for second_node_label in ref_nodes:
+                    second_node = nodes_dict[second_node_label]
                     if second_node.orientation_vec != ref_direction_vec and second_node.position != ref_node.position:
                         edge = self._create_edge_between_nodes(from_node=ref_node,
                                                         to_node=second_node, 
@@ -1380,14 +1482,17 @@ class TraversalGraphGenerator:
         return edges
     
     def _create_lane_switches_for_nodes(self, 
-                                       ref_nodes: List[TraversalNode], 
-                                       opp_nodes: List[TraversalNode],
-                                       ref_direction_vec: Tuple[float, float]
+                                       ref_nodes: List[str], 
+                                       opp_nodes: List[str],
+                                       ref_direction_vec: Tuple[float, float],
+                                       nodes_dict: Dict[str, TraversalNode]
                                        ) -> List[TraversalEdge]:
         edges = []
-        for ref_node in ref_nodes:
+        for ref_node_label in ref_nodes:
+            ref_node = nodes_dict[ref_node_label]
             if ref_node.orientation_vec == ref_direction_vec:
-                for opp_node in opp_nodes:
+                for opp_node_label in opp_nodes:
+                    opp_node = nodes_dict[opp_node_label]
                     if opp_node.orientation_vec == ref_direction_vec:
                         if opp_node.position.x == ref_node.position.x or opp_node.position.y == ref_node.position.y:
                             edge = self._create_edge_between_nodes(from_node=ref_node,
@@ -1403,16 +1508,19 @@ class TraversalGraphGenerator:
     def _create_switching_point_connections_for_nodes(self, 
                                                      ref_nodes: List[TraversalNode], 
                                                      opp_nodes: List[TraversalNode],
-                                                     ref_direction_vec: Tuple[float, float]
+                                                     ref_direction_vec: Tuple[float, float],
+                                                     nodes_dict: Dict[str, TraversalNode]
                                                      ) -> List[TraversalEdge]:
         edges = []
         turn_edges = self._create_turn_point_connections_for_nodes(ref_nodes=ref_nodes,
-                                                                   ref_direction_vec=ref_direction_vec)
+                                                                   ref_direction_vec=ref_direction_vec,
+                                                                   nodes_dict=nodes_dict)
         edges.extend(turn_edges)
 
         lane_switch_edges = self._create_lane_switches_for_nodes(ref_nodes=ref_nodes,
                                                                  opp_nodes=opp_nodes,
-                                                                 ref_direction_vec=ref_direction_vec)
+                                                                 ref_direction_vec=ref_direction_vec,
+                                                                 nodes_dict=nodes_dict)
         edges.extend(lane_switch_edges)
 
         return edges
@@ -1421,8 +1529,8 @@ class TraversalGraphGenerator:
                                            center: Coordinate, 
                                            corridor: Corridor) -> SwitchingPointSubgraph:
         edges = []
-        left_nodes, right_nodes = self._extract_switching_point_nodes(corridor=corridor,
-                                                                     center=center)
+        left_nodes, right_nodes, nodes_dict = self._extract_switching_point_nodes(corridor=corridor,
+                                                                                  center=center)
         
         if corridor.direction == "horizontal":
             original_ref_direction_vec = OrientationVector(1.0, 0.0)  # Facing right
@@ -1433,16 +1541,19 @@ class TraversalGraphGenerator:
 
         original_switching_edges = self._create_switching_point_connections_for_nodes(ref_nodes=left_nodes,
                                                                              opp_nodes=right_nodes,
-                                                                             ref_direction_vec=original_ref_direction_vec)
+                                                                             ref_direction_vec=original_ref_direction_vec,
+                                                                             nodes_dict=nodes_dict)
         edges.extend(original_switching_edges)
 
         inverted_switching_edges = self._create_switching_point_connections_for_nodes(ref_nodes=right_nodes,
                                                                              opp_nodes=left_nodes,
-                                                                             ref_direction_vec=inverted_ref_direction_vec)
+                                                                             ref_direction_vec=inverted_ref_direction_vec,
+                                                                             nodes_dict=nodes_dict)
         edges.extend(inverted_switching_edges)
 
         switching_point_subgraph = SwitchingPointSubgraph(left_nodes=left_nodes,
                                                           right_nodes=right_nodes,
+                                                          nodes_dict=nodes_dict,
                                                           edges=edges)
         return switching_point_subgraph
     
@@ -1458,12 +1569,69 @@ class TraversalGraphGenerator:
             return (subgraph_a.left_nodes[0].position.y >= subgraph_b.right_nodes[0].position.y and
                     subgraph_a.right_nodes[0].position.y <= subgraph_b.left_nodes[0].position.y )
     
+    def _find_doorway_node_by_label(self,
+                                    subgraph: DoorwaySubgraph,
+                                    label: str) -> Optional[TraversalNode]:
+        for node in subgraph.left_nodes + subgraph.right_nodes + subgraph.room_nodes + subgraph.doorway_nodes:
+            if node.label == label:
+                return node
+        return None
+
+    def _replace_node_in_doorway_subgraph(self,
+                                   subgraph: DoorwaySubgraph,
+                                   old_node: TraversalNode,
+                                   new_node: TraversalNode):
+        for traversal_edges in subgraph.edges:
+            if traversal_edges.from_node == old_node.label:
+                traversal_edges.from_node = new_node.label
+            if traversal_edges.to_node == old_node.label:
+                origin_node = self._find_doorway_node_by_label(subgraph=subgraph,
+                                                               label=traversal_edges.from_node)
+                if origin_node is not None:
+                    traversal_edges.from_node = origin_node.label
+                    origin_node.connections.remove(old_node)
+                    origin_node.connections.append(new_node)
+                traversal_edges.to_node = new_node.label
+
+                #TODO: Also need to update connections in nodes
+                for i in range(len(subgraph.left_nodes)):
+                    if subgraph.left_nodes[i] == old_node:
+                        subgraph.left_nodes[i] = new_node
+                    if subgraph.right_nodes[i] == old_node:
+                        subgraph.right_nodes[i] = new_node
+
     def _merge_doorway_subgraphs(self,
                                  direction: str,
                                  subgraph_a: DoorwaySubgraph,
                                  subgraph_b: DoorwaySubgraph):
-        # Merge nodes
-        pass
+        if direction == "horizontal":
+            for i in range(len(subgraph_b.left_nodes)):
+                new_left_x = min(subgraph_a.left_nodes[i].position.x, subgraph_b.left_nodes[i].position.x)
+                y_position = subgraph_a.left_nodes[i].position.y 
+
+                new_left_node = TraversalNode(label=f"{new_left_x: .2f}_{y_position: .2f}_{subgraph_a.left_nodes[i].orientation_vec}",
+                                            position=Coordinate(x=new_left_x, y=y_position),
+                                            orientation_vec=subgraph_a.left_nodes[i].orientation_vec,
+                                            connections=subgraph_a.left_nodes[i].connections+subgraph_b.left_nodes[i].connections)
+                
+                new_right_x = max(subgraph_a.right_nodes[i].position.x, subgraph_b.right_nodes[i].position.x)
+                new_right_node = TraversalNode(label=f"{new_right_x: .2f}_{y_position: .2f}_{subgraph_a.right_nodes[i].orientation_vec}",
+                                            position=Coordinate(x=new_right_x, y=y_position),
+                                            orientation_vec=subgraph_a.right_nodes[i].orientation_vec,
+                                            connections=subgraph_a.right_nodes[i].connections+subgraph_b.right_nodes[i].connections)
+        else:
+            new_left_y = max(subgraph_a.left_nodes[0].position.y, subgraph_b.left_nodes[0].position.y)
+            new_right_y = min(subgraph_a.right_nodes[0].position.y, subgraph_b.right_nodes[0].position.y)
+            x_position = subgraph_a.left_nodes[0].position.x  # Assuming both have the same x position
+
+            new_left_node = TraversalNode(label=f"{x_position: .2f}_{new_left_y: .2f}_merged",
+                                          position=Coordinate(x=x_position, y=new_left_y),
+                                          orientation_vec=subgraph_a.left_nodes[0].orientation_vec,
+                                          connections=[])
+            new_right_node = TraversalNode(label=f"{x_position: .2f}_{new_right_y: .2f}_merged",
+                                           position=Coordinate(x=x_position, y=new_right_y),
+                                           orientation_vec=subgraph_a.right_nodes[0].orientation_vec,
+                                           connections=[])
 
     def _merge_overlapping_doorway_subgraphs(self):
 
@@ -1479,12 +1647,12 @@ class TraversalGraphGenerator:
                         compare_subgraph_index = subgraph_indices[j]
                         compare_subgraph = self.doorway_subgraphs[compare_subgraph_index]
 
-                        if self._are_doorway_subgraphs_overlapping(direction=current_direction,
-                                                                   subgraph_a=current_subgraph,
-                                                                   subgraph_b=compare_subgraph):
-                            self._merge_doorway_subgraphs(direction=current_direction,
-                                                          subgraph_a=current_subgraph,
-                                                          subgraph_b=compare_subgraph)
+                        # if self._are_doorway_subgraphs_overlapping(direction=current_direction,
+                        #                                            subgraph_a=current_subgraph,
+                        #                                            subgraph_b=compare_subgraph):
+                        #     self._merge_doorway_subgraphs(direction=current_direction,
+                        #                                   subgraph_a=current_subgraph,
+                        #                                   subgraph_b=compare_subgraph)
         
     
 

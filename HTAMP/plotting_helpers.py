@@ -43,7 +43,8 @@ class TraversalGraphPlottingHelper:
                 elif edge.action == "turn_right":
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
-            for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
+            for node_label in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(-1.0, 0.0):
@@ -90,8 +91,9 @@ class TraversalGraphPlottingHelper:
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
                 elif edge.action == "switch_directions":
                     ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
-
-            for node in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
+    
+            for node_label in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(-1.0, 0.0):
@@ -137,7 +139,8 @@ class TraversalGraphPlottingHelper:
                 elif edge.action == "switch_lanes":
                     ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
 
-            for node in subgraph.left_nodes + subgraph.right_nodes:
+            for node_label in subgraph.left_nodes + subgraph.right_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == (1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == (-1.0, 0.0):
@@ -183,7 +186,8 @@ class TraversalGraphPlottingHelper:
                 elif edge.action == "turn_right":
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
-            for node in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
+            for node_label in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(-1.0, 0.0):
@@ -231,7 +235,8 @@ class TraversalGraphPlottingHelper:
                 elif edge.action == "turn_right":
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
-            for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
+            for node_label in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(-1.0, 0.0):
@@ -253,7 +258,8 @@ class TraversalGraphPlottingHelper:
                 elif edge.action == "switch_directions":
                     ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
 
-            for node in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
+            for node_label in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(-1.0, 0.0):
@@ -274,7 +280,8 @@ class TraversalGraphPlottingHelper:
                 elif edge.action == "turn_right":
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
-            for node in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
+            for node_label in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
+                node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(-1.0, 0.0):
