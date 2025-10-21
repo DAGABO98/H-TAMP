@@ -14,7 +14,7 @@ from HTAMP.plotting_helpers import TraversalGraphPlottingHelper
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
-                 doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0,
+                 doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.2, num_samples: int = 10, threshold: float = 10.0,
                  switching_point_offset: float = 15.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
@@ -39,6 +39,7 @@ class TraversalGraphGenerator:
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
         self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
         self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
+        self.old_doorway_subgraphs = copy.deepcopy(self.doorway_subgraphs)
         self._merge_overlapping_doorway_subgraphs()
         # self._merge_overlapping_drive_through_doorway_subgraphs()
         # self._merge_overlapping_intersections_doorway_subgraphs()
@@ -354,7 +355,7 @@ class TraversalGraphGenerator:
                                    from_node: TraversalNode, 
                                    to_node: TraversalNode, 
                                    action: str) -> TraversalEdge:
-        from_node.connections.append(to_node)
+        from_node.connections.append(to_node.label)
         edge_connector = CurvedConnector(origin=from_node.position, 
                                         destination=to_node.position, 
                                         vec_origin=(from_node.orientation_vec.x, from_node.orientation_vec.y),
@@ -1562,76 +1563,109 @@ class TraversalGraphGenerator:
                                            subgraph_a: DoorwaySubgraph,
                                            subgraph_b: DoorwaySubgraph) -> bool:
         
+        subgraph_a_left_node_label = subgraph_a.left_nodes[0]
+        subgraph_a_left_node = subgraph_a.nodes_dict[subgraph_a_left_node_label]
+        subgraph_a_right_node_label = subgraph_a.right_nodes[0]
+        subgraph_a_right_node = subgraph_a.nodes_dict[subgraph_a_right_node_label]
+        subgraph_b_left_node_label = subgraph_b.left_nodes[0]
+        subgraph_b_left_node = subgraph_b.nodes_dict[subgraph_b_left_node_label]
+        subgraph_b_right_node_label = subgraph_b.right_nodes[0]
+        subgraph_b_right_node = subgraph_b.nodes_dict[subgraph_b_right_node_label]
+        
         if direction == "horizontal":
-            return (subgraph_a.left_nodes[0].position.x <= subgraph_b.right_nodes[0].position.x and
-                    subgraph_a.right_nodes[0].position.x >= subgraph_b.left_nodes[0].position.x )
+            return (subgraph_a_left_node.position.x <= subgraph_b_right_node.position.x and
+                    subgraph_a_right_node.position.x >= subgraph_b_left_node.position.x )
         else:
-            return (subgraph_a.left_nodes[0].position.y >= subgraph_b.right_nodes[0].position.y and
-                    subgraph_a.right_nodes[0].position.y <= subgraph_b.left_nodes[0].position.y )
-    
-    def _find_doorway_node_by_label(self,
-                                    subgraph: DoorwaySubgraph,
-                                    label: str) -> Optional[TraversalNode]:
-        for node in subgraph.left_nodes + subgraph.right_nodes + subgraph.room_nodes + subgraph.doorway_nodes:
-            if node.label == label:
-                return node
-        return None
+            return (subgraph_a_left_node.position.y >= subgraph_b_right_node.position.y and
+                    subgraph_a_right_node.position.y <= subgraph_b_left_node.position.y )
 
     def _replace_node_in_doorway_subgraph(self,
-                                   subgraph: DoorwaySubgraph,
-                                   old_node: TraversalNode,
-                                   new_node: TraversalNode):
-        for traversal_edges in subgraph.edges:
-            if traversal_edges.from_node == old_node.label:
-                traversal_edges.from_node = new_node.label
-            if traversal_edges.to_node == old_node.label:
-                origin_node = self._find_doorway_node_by_label(subgraph=subgraph,
-                                                               label=traversal_edges.from_node)
-                if origin_node is not None:
-                    traversal_edges.from_node = origin_node.label
-                    origin_node.connections.remove(old_node)
-                    origin_node.connections.append(new_node)
-                traversal_edges.to_node = new_node.label
+                                          subgraph: DoorwaySubgraph,
+                                          old_node_label: str,
+                                          new_node: TraversalNode):
+        for i, traversal_edge in enumerate(subgraph.edges):
+            if traversal_edge.from_node == old_node_label:
+                new_edge = self._create_edge_between_nodes(from_node=new_node,
+                                                           to_node=subgraph.nodes_dict[traversal_edge.to_node],
+                                                           action=traversal_edge.action)
+                subgraph.edges[i] = new_edge
 
-                #TODO: Also need to update connections in nodes
-                for i in range(len(subgraph.left_nodes)):
-                    if subgraph.left_nodes[i] == old_node:
-                        subgraph.left_nodes[i] = new_node
-                    if subgraph.right_nodes[i] == old_node:
-                        subgraph.right_nodes[i] = new_node
+            elif traversal_edge.to_node == old_node_label:
+                origin_node = subgraph.nodes_dict.get(traversal_edge.from_node)
+                assert origin_node is not None
+                origin_node.connections.remove(old_node_label)
+                new_edge = self._create_edge_between_nodes(from_node=origin_node,
+                                                           to_node=new_node,
+                                                           action=traversal_edge.action)
+                subgraph.edges[i] = new_edge
+
+        for i in range(len(subgraph.left_nodes)):
+            if subgraph.left_nodes[i] == old_node_label:
+                subgraph.left_nodes[i] = new_node.label
+            elif subgraph.right_nodes[i] == old_node_label:
+                subgraph.right_nodes[i] = new_node.label
+        
+        subgraph.nodes_dict.pop(old_node_label)
+        subgraph.nodes_dict[new_node.label] = new_node
+        
 
     def _merge_doorway_subgraphs(self,
                                  direction: str,
                                  subgraph_a: DoorwaySubgraph,
                                  subgraph_b: DoorwaySubgraph):
-        if direction == "horizontal":
-            for i in range(len(subgraph_b.left_nodes)):
-                new_left_x = min(subgraph_a.left_nodes[i].position.x, subgraph_b.left_nodes[i].position.x)
-                y_position = subgraph_a.left_nodes[i].position.y 
+        
+        for i in range(len(subgraph_b.left_nodes)):
+            subgraph_a_left_node_label = subgraph_a.left_nodes[i]
+            subgraph_a_left_node = subgraph_a.nodes_dict[subgraph_a_left_node_label]
+            subgraph_b_left_node_label = subgraph_b.left_nodes[i]
+            subgraph_b_left_node = subgraph_b.nodes_dict[subgraph_b_left_node_label]
+            subgraph_a_right_node_label = subgraph_a.right_nodes[i]
+            subgraph_a_right_node = subgraph_a.nodes_dict[subgraph_a_right_node_label]
+            subgraph_b_right_node_label = subgraph_b.right_nodes[i]
+            subgraph_b_right_node = subgraph_b.nodes_dict[subgraph_b_right_node_label]
 
-                new_left_node = TraversalNode(label=f"{new_left_x: .2f}_{y_position: .2f}_{subgraph_a.left_nodes[i].orientation_vec}",
-                                            position=Coordinate(x=new_left_x, y=y_position),
-                                            orientation_vec=subgraph_a.left_nodes[i].orientation_vec,
-                                            connections=subgraph_a.left_nodes[i].connections+subgraph_b.left_nodes[i].connections)
+            if direction == "horizontal":
+                new_left_x = min(subgraph_a_left_node.position.x, subgraph_b_left_node.position.x)
+                y_position = subgraph_a_left_node.position.y
+
+                new_left_node = TraversalNode(label=f"{new_left_x: .2f}_{y_position: .2f}_{subgraph_a_left_node.orientation_vec}",
+                                                position=Coordinate(x=new_left_x, y=y_position),
+                                                orientation_vec=subgraph_a_left_node.orientation_vec,
+                                                connections=[])
+
+                new_right_x = max(subgraph_a_right_node.position.x, subgraph_b_right_node.position.x)
+                new_right_node = TraversalNode(label=f"{new_right_x: .2f}_{y_position: .2f}_{subgraph_a_right_node.orientation_vec}",
+                                                position=Coordinate(x=new_right_x, y=y_position),
+                                                orientation_vec=subgraph_a_right_node.orientation_vec,
+                                                connections=[])
+            else:
+                new_left_y = max(subgraph_a_left_node.position.y, subgraph_b_left_node.position.y)
+                x_position = subgraph_a_left_node.position.x
+
+                new_left_node = TraversalNode(label=f"{x_position: .2f}_{new_left_y: .2f}_{subgraph_a_left_node.orientation_vec}",
+                                                position=Coordinate(x=x_position, y=new_left_y),
+                                                orientation_vec=subgraph_a_left_node.orientation_vec,
+                                                connections=[])
+
+                new_right_y = min(subgraph_a_right_node.position.y, subgraph_b_right_node.position.y)
+                new_right_node = TraversalNode(label=f"{x_position: .2f}_{new_right_y: .2f}_{subgraph_a_right_node.orientation_vec}",
+                                                position=Coordinate(x=x_position, y=new_right_y),
+                                                orientation_vec=subgraph_a_right_node.orientation_vec,
+                                                connections=[])
                 
-                new_right_x = max(subgraph_a.right_nodes[i].position.x, subgraph_b.right_nodes[i].position.x)
-                new_right_node = TraversalNode(label=f"{new_right_x: .2f}_{y_position: .2f}_{subgraph_a.right_nodes[i].orientation_vec}",
-                                            position=Coordinate(x=new_right_x, y=y_position),
-                                            orientation_vec=subgraph_a.right_nodes[i].orientation_vec,
-                                            connections=subgraph_a.right_nodes[i].connections+subgraph_b.right_nodes[i].connections)
-        else:
-            new_left_y = max(subgraph_a.left_nodes[0].position.y, subgraph_b.left_nodes[0].position.y)
-            new_right_y = min(subgraph_a.right_nodes[0].position.y, subgraph_b.right_nodes[0].position.y)
-            x_position = subgraph_a.left_nodes[0].position.x  # Assuming both have the same x position
-
-            new_left_node = TraversalNode(label=f"{x_position: .2f}_{new_left_y: .2f}_merged",
-                                          position=Coordinate(x=x_position, y=new_left_y),
-                                          orientation_vec=subgraph_a.left_nodes[0].orientation_vec,
-                                          connections=[])
-            new_right_node = TraversalNode(label=f"{x_position: .2f}_{new_right_y: .2f}_merged",
-                                           position=Coordinate(x=x_position, y=new_right_y),
-                                           orientation_vec=subgraph_a.right_nodes[0].orientation_vec,
-                                           connections=[])
+            self._replace_node_in_doorway_subgraph(subgraph=subgraph_a,
+                                                   old_node_label=subgraph_a_left_node_label,
+                                                   new_node=new_left_node)
+            self._replace_node_in_doorway_subgraph(subgraph=subgraph_b,
+                                                    old_node_label=subgraph_b_left_node_label,
+                                                    new_node=new_left_node)
+            self._replace_node_in_doorway_subgraph(subgraph=subgraph_a,
+                                                    old_node_label=subgraph_a_right_node_label,
+                                                    new_node=new_right_node)
+            self._replace_node_in_doorway_subgraph(subgraph=subgraph_b,
+                                                    old_node_label=subgraph_b_right_node_label,
+                                                    new_node=new_right_node)
+            
 
     def _merge_overlapping_doorway_subgraphs(self):
 
@@ -1647,14 +1681,12 @@ class TraversalGraphGenerator:
                         compare_subgraph_index = subgraph_indices[j]
                         compare_subgraph = self.doorway_subgraphs[compare_subgraph_index]
 
-                        # if self._are_doorway_subgraphs_overlapping(direction=current_direction,
-                        #                                            subgraph_a=current_subgraph,
-                        #                                            subgraph_b=compare_subgraph):
-                        #     self._merge_doorway_subgraphs(direction=current_direction,
-                        #                                   subgraph_a=current_subgraph,
-                        #                                   subgraph_b=compare_subgraph)
-        
-    
+                        if self._are_doorway_subgraphs_overlapping(direction=current_direction,
+                                                                   subgraph_a=current_subgraph,
+                                                                   subgraph_b=compare_subgraph):
+                            self._merge_doorway_subgraphs(direction=current_direction,
+                                                          subgraph_a=current_subgraph,
+                                                          subgraph_b=compare_subgraph)
 
     
 if __name__ == "__main__":
@@ -1688,8 +1720,15 @@ if __name__ == "__main__":
                                                         origin_x=tg_generator.origin_x,
                                                         origin_y=tg_generator.origin_y,
                                                         resolution=tg_generator.resolution,
-                                                        subgraphs=tg_generator.doorway_subgraphs,
+                                                        subgraphs=tg_generator.old_doorway_subgraphs,
                                                         filename="results/environment/doorway_subgraph_0.svg")
+    
+    TraversalGraphPlottingHelper.plot_doorway_subgraphs(occupancy_map=tg_generator.occupancy_map,
+                                                        origin_x=tg_generator.origin_x,
+                                                        origin_y=tg_generator.origin_y,
+                                                        resolution=tg_generator.resolution,
+                                                        subgraphs=tg_generator.doorway_subgraphs,
+                                                        filename="results/environment/doorway_subgraph_1.svg")
 
     switching_point_subgraphs = []
     subgraph = tg_generator._generate_switching_point_subgraph(center=Coordinate(38.5, 37.0), corridor=tg_generator.corridors[0])
