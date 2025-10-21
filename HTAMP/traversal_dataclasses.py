@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
 from HTAMP.loc_dataclasses import Coordinate, OrientationVector
 from HTAMP.geometry_helpers import CurvedConnector
@@ -40,7 +40,7 @@ class TraversalNode:
     label: str
     position: Coordinate
     orientation_vec: OrientationVector
-    connections: list["TraversalNode"]
+    connections: list[str]
 
 @dataclass
 class TraversalEdge:
@@ -51,42 +51,47 @@ class TraversalEdge:
 
 @dataclass
 class IntersectionSubgraph:
-    upper_nodes: list[TraversalNode]
-    lower_nodes: list[TraversalNode]
-    left_nodes: list[TraversalNode]
-    right_nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
+    upper_nodes: list[str]
+    lower_nodes: list[str]
+    left_nodes: list[str]
+    right_nodes: list[str]
+    nodes_dict: Dict[str, TraversalNode]
+    edges: List[TraversalEdge]
 
 @dataclass
 class DoorwaySubgraph:
-    room_nodes: list[TraversalNode]
-    doorway_nodes: list[TraversalNode]
-    left_nodes: list[TraversalNode]
-    right_nodes: list[TraversalNode]
+    room_nodes: list[str]
+    doorway_nodes: list[str]
+    left_nodes: list[str]
+    right_nodes: list[str]
+    nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
 
 @dataclass
 class EndPointSubgraph:
-    corridor_nodes: list[TraversalNode]
+    corridor_nodes: list[str]
+    nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
 
 @dataclass
 class DriveThroughSubgraph:
-    entry_nodes: list[TraversalNode]
-    left_entry_nodes: list[TraversalNode]
-    right_entry_nodes: list[TraversalNode]
-    exit_nodes: list[TraversalNode]
-    left_exit_nodes: list[TraversalNode]
-    right_exit_nodes: list[TraversalNode]
+    entry_nodes: list[str]
+    left_entry_nodes: list[str]
+    right_entry_nodes: list[str]
+    exit_nodes: list[str]
+    left_exit_nodes: list[str]
+    right_exit_nodes: list[str]
+    nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
 
 @dataclass
 class SwitchingPointSubgraph:
-    left_nodes: list[TraversalNode]
-    right_nodes: list[TraversalNode]
+    left_nodes: list[str]
+    right_nodes: list[str]
+    nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
 
 @dataclass
 class TraversalGraph:
-    nodes: list[TraversalNode]
+    nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
