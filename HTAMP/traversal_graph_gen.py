@@ -1,128 +1,20 @@
-from collections.abc import Set
 import copy
 from typing import List, Tuple
 import yaml
 import argparse
 import numpy as np
-import matplotlib.pyplot as plt
-from dataclasses import dataclass
 
+from HTAMP.traversal_dataclasses import Lane, OrientationVector, Corridor, DriveThrough, Coordinate
+from HTAMP.traversal_dataclasses import Doorway, TraversalNode, TraversalEdge, IntersectionSubgraph
+from HTAMP.traversal_dataclasses import DoorwaySubgraph, DriveThroughSubgraph, SwitchingPointSubgraph
+from HTAMP.traversal_dataclasses import EndPointSubgraph, TraversalGraph
 from HTAMP.geometry_helpers import CurvedConnector
-from HTAMP.grid_world import Coordinate
-
-@dataclass
-class OrientationVector:
-    x: float
-    y: float
-
-    def __repr__(self):
-        if self.x == 0.0 and self.y == 1.0:
-            return "Down"
-        elif self.x == 0.0 and self.y == -1.0:
-            return "Up"
-        elif self.x == 1.0 and self.y == 0.0:
-            return "Right"
-        elif self.x == -1.0 and self.y == 0.0:
-            return "Left"
-        else:
-            return f"({self.x}, {self.y})"
-    
-    def __eq__(self, other):
-        if not isinstance(other, OrientationVector):
-            return NotImplemented
-        return np.isclose(self.x, other.x) and np.isclose(self.y, other.y)
-
-@dataclass
-class Lane:
-    start_point: Coordinate
-    end_point: Coordinate
-
-@dataclass
-class Corridor:
-    corridor_id: str
-    direction: str
-    width_start: Coordinate
-    width_end: Coordinate
-    lanes: List[Lane]
-    intersections: List[str]
-
-@dataclass
-class DriveThrough:
-    entry_start: Coordinate
-    entry_end: Coordinate
-    exit_start: Coordinate
-    exit_end: Coordinate
-    entry_corridor_id: str
-    exit_corridor_id: str
-    lanes: List[Lane]
-
-@dataclass
-class Doorway:
-    start: Coordinate
-    end: Coordinate
-    lanes: List[Lane]
-    corridor_id: str
-
-@dataclass
-class TraversalNode:
-    label: str
-    position: Coordinate
-    orientation_vec: OrientationVector
-    connections: list["TraversalNode"]
-
-@dataclass
-class TraversalEdge:
-    from_node: str
-    to_node: str
-    action: str
-    edge_connector: CurvedConnector
-
-@dataclass
-class IntersectionSubgraph:
-    upper_nodes: list[TraversalNode]
-    lower_nodes: list[TraversalNode]
-    left_nodes: list[TraversalNode]
-    right_nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
-
-@dataclass
-class DoorwaySubgraph:
-    room_nodes: list[TraversalNode]
-    doorway_nodes: list[TraversalNode]
-    left_nodes: list[TraversalNode]
-    right_nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
-
-@dataclass
-class EndPointSubgraph:
-    corridor_nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
-
-@dataclass
-class DriveThroughSubgraph:
-    entry_nodes: list[TraversalNode]
-    left_entry_nodes: list[TraversalNode]
-    right_entry_nodes: list[TraversalNode]
-    exit_nodes: list[TraversalNode]
-    left_exit_nodes: list[TraversalNode]
-    right_exit_nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
-
-@dataclass
-class SwitchingPointSubgraph:
-    left_nodes: list[TraversalNode]
-    right_nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
-
-@dataclass
-class TraversalGraph:
-    nodes: list[TraversalNode]
-    edges: list[TraversalEdge]
+from HTAMP.plotting_helpers import TraversalGraphPlottingHelper
 
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
-                 doorway_lane_threshold: float = 30.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0,
+                 doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.0, num_samples: int = 10, threshold: float = 10.0,
                  switching_point_offset: float = 15.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
@@ -147,6 +39,11 @@ class TraversalGraphGenerator:
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
         self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
         self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
+        self._merge_overlapping_doorway_subgraphs()
+        # self._merge_overlapping_drive_through_doorway_subgraphs()
+        # self._merge_overlapping_intersections_doorway_subgraphs()
+        # self._merge_adjacent_nodes()
+        # self.traversal_graph = self._assemble_traversal_graph()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -1548,206 +1445,47 @@ class TraversalGraphGenerator:
                                                           right_nodes=right_nodes,
                                                           edges=edges)
         return switching_point_subgraph
-
-    def plot_intersection_subgraphs(self, subgraphs: List[IntersectionSubgraph], filename: str):
-        rows, cols = self.occupancy_map.shape
-        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
-        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        im = ax.imshow(
-            self.occupancy_map,
-            cmap="gray_r",
-            origin="upper",              # flip so (0,0) is top-left
-            extent=[xmin, xmax, ymax, ymin],  # still in meters
-            aspect="equal"
-        )
-        for subgraph in subgraphs:
-            for edge in subgraph.edges:
-                samples_x = edge.edge_connector.connector_dict['X']
-                samples_y = edge.edge_connector.connector_dict['Y']
-                if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
-                elif edge.action == "turn_left":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
-                elif edge.action == "turn_right":
-                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
-
-            for node in subgraph.upper_nodes + subgraph.lower_nodes + subgraph.left_nodes + subgraph.right_nodes:
-                if node.orientation_vec == OrientationVector(1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
-
-        ax.set_title("Intersection Subgraph Overlay")
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-        plt.savefig(f"results/{filename}")
-        plt.close()
     
-    def plot_doorway_subgraphs(self, subgraphs: List[DoorwaySubgraph], filename: str):
-        rows, cols = self.occupancy_map.shape
-        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
-        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        im = ax.imshow(
-            self.occupancy_map,
-            cmap="gray_r",
-            origin="upper",              # flip so (0,0) is top-left
-            extent=[xmin, xmax, ymax, ymin],  # still in meters
-            aspect="equal"
-        )
-        for subgraph in subgraphs:
-            for edge in subgraph.edges:
-                samples_x = edge.edge_connector.connector_dict['X']
-                samples_y = edge.edge_connector.connector_dict['Y']
-                if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
-                elif edge.action == "turn_left":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
-                elif edge.action == "turn_right":
-                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
-                elif edge.action == "switch_directions":
-                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
-
-            for node in subgraph.room_nodes + subgraph.doorway_nodes + subgraph.left_nodes + subgraph.right_nodes:
-                if node.orientation_vec == OrientationVector(1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
-
-        ax.set_title("Doorway Subgraph Overlay")
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-        plt.savefig(f"results/{filename}")
-        plt.close()
+    def _are_doorway_subgraphs_overlapping(self,
+                                           direction: str,
+                                           subgraph_a: DoorwaySubgraph,
+                                           subgraph_b: DoorwaySubgraph) -> bool:
+        
+        if direction == "horizontal":
+            return (subgraph_a.left_nodes[0].position.x <= subgraph_b.right_nodes[0].position.x and
+                    subgraph_a.right_nodes[0].position.x >= subgraph_b.left_nodes[0].position.x )
+        else:
+            return (subgraph_a.left_nodes[0].position.y >= subgraph_b.right_nodes[0].position.y and
+                    subgraph_a.right_nodes[0].position.y <= subgraph_b.left_nodes[0].position.y )
     
-    def plot_switching_point_subgraphs(self, subgraphs: List[SwitchingPointSubgraph], filename: str):
-        rows, cols = self.occupancy_map.shape
-        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
-        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
+    def _merge_doorway_subgraphs(self,
+                                 direction: str,
+                                 subgraph_a: DoorwaySubgraph,
+                                 subgraph_b: DoorwaySubgraph):
+        # Merge nodes
+        pass
 
-        fig, ax = plt.subplots(figsize=(8, 8))
-        im = ax.imshow(
-            self.occupancy_map,
-            cmap="gray_r",
-            origin="upper",              # flip so (0,0) is top-left
-            extent=[xmin, xmax, ymax, ymin],  # still in meters
-            aspect="equal"
-        )
-        for subgraph in subgraphs:
-            for edge in subgraph.edges:
-                samples_x = edge.edge_connector.connector_dict['X']
-                samples_y = edge.edge_connector.connector_dict['Y']
-                if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
-                elif edge.action == "switch_directions":
-                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
-                elif edge.action == "switch_lanes":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
+    def _merge_overlapping_doorway_subgraphs(self):
 
-            for node in subgraph.left_nodes + subgraph.right_nodes:
-                if node.orientation_vec == (1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == (-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == (0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
+        for corridor_id in self.doorway_subgraph_indices.keys():
+            subgraph_indices = self.doorway_subgraph_indices[corridor_id]
+            current_corridor = self._get_corridor_by_id(corridor_id)
+            current_direction = current_corridor.direction
 
-        ax.set_title("Switching Point Subgraph Overlay")
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-        plt.savefig(f"results/{filename}")
-        plt.close()
-    
-    def plot_drive_through_subgraphs(self, subgraphs: List[DriveThroughSubgraph], filename: str):
-        rows, cols = self.occupancy_map.shape
-        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
-        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
+            if len(subgraph_indices) > 1:
+                for i, subgraph_index in enumerate(subgraph_indices):
+                    current_subgraph = self.doorway_subgraphs[subgraph_index]
+                    for j in range(i + 1, len(subgraph_indices)):
+                        compare_subgraph_index = subgraph_indices[j]
+                        compare_subgraph = self.doorway_subgraphs[compare_subgraph_index]
 
-        fig, ax = plt.subplots(figsize=(8, 8))
-        im = ax.imshow(
-            self.occupancy_map,
-            cmap="gray_r",
-            origin="upper",              # flip so (0,0) is top-left
-            extent=[xmin, xmax, ymax, ymin],  # still in meters
-            aspect="equal"
-        )
-        for subgraph in subgraphs:
-            for edge in subgraph.edges:
-                samples_x = edge.edge_connector.connector_dict['X']
-                samples_y = edge.edge_connector.connector_dict['Y']
-                if edge.action == "go_straight":
-                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
-                elif edge.action == "turn_left":
-                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
-                elif edge.action == "turn_right":
-                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
-
-            for node in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
-                if node.orientation_vec == OrientationVector(1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
-                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(0.0, 1.0):
-                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
-                elif node.orientation_vec == OrientationVector(0.0, -1.0):
-                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
-
-        ax.set_title("Drive-Through Subgraph Overlay")
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-        plt.savefig(f"results/{filename}")
-        plt.close()
-
-    def plot_extracted_structs(self):
-        rows, cols = self.occupancy_map.shape
-        xmin, xmax = self.origin_x, self.origin_x + cols * self.resolution
-        ymin, ymax = self.origin_y, self.origin_y + rows * self.resolution
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        im = ax.imshow(
-            self.occupancy_map,
-            cmap="gray_r",
-            origin="upper",              # flip so (0,0) is top-left
-            extent=[xmin, xmax, ymax, ymin],  # still in meters
-            aspect="equal"
-        )
-
-        for corridor in self.corridors:
-            for lane in corridor.lanes:
-                ax.plot([lane.start_point.x, lane.end_point.x],
-                        [lane.start_point.y, lane.end_point.y],
-                        color='blue', linewidth=1)
-                
-        for dt in self.drive_throughs:
-            for lane in dt.lanes:
-                ax.plot([lane.start_point.x, lane.end_point.x],
-                        [lane.start_point.y, lane.end_point.y],
-                        color='green', linewidth=1)
-                
-        for dw in self.doorways:
-            for lane in dw.lanes:
-                ax.scatter([lane.start_point.x, lane.end_point.x],
-                        [lane.start_point.y, lane.end_point.y],
-                        color='red', s=1)
-                
-        ax.set_title("Extracted Structs Overlay")
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-        plt.savefig("results/environment/extracted_structs.png")
-        plt.close()
+                        if self._are_doorway_subgraphs_overlapping(direction=current_direction,
+                                                                   subgraph_a=current_subgraph,
+                                                                   subgraph_b=compare_subgraph):
+                            self._merge_doorway_subgraphs(direction=current_direction,
+                                                          subgraph_a=current_subgraph,
+                                                          subgraph_b=compare_subgraph)
+        
     
 
     
@@ -1763,15 +1501,51 @@ if __name__ == "__main__":
                                            config_path=args.config_path,
                                            meters_per_pixel=args.meters_per_pixel,
                                            factor=args.factor)
-    
-    tg_generator.plot_extracted_structs()
-    tg_generator.plot_intersection_subgraphs(tg_generator.corridor_intersection_subgraphs, filename="environment/intersection_subgraph_0.svg")
-    tg_generator.plot_doorway_subgraphs(tg_generator.doorway_subgraphs, filename="environment/doorway_subgraph_0.svg")
+
+    TraversalGraphPlottingHelper.plot_extracted_structs(occupancy_map=tg_generator.occupancy_map,
+                                                        origin_x=tg_generator.origin_x,
+                                                        origin_y=tg_generator.origin_y,
+                                                        resolution=tg_generator.resolution,
+                                                        corridors=tg_generator.corridors,
+                                                        drive_throughs=tg_generator.drive_throughs,
+                                                        doorways=tg_generator.doorways,
+                                                        filename="results/environment/extracted_structs.svg")
+    TraversalGraphPlottingHelper.plot_intersection_subgraphs(occupancy_map=tg_generator.occupancy_map,
+                                                             origin_x=tg_generator.origin_x,
+                                                             origin_y=tg_generator.origin_y,
+                                                             resolution=tg_generator.resolution,
+                                                             subgraphs=tg_generator.corridor_intersection_subgraphs,
+                                                             filename="results/environment/intersection_subgraph_0.svg")
+    TraversalGraphPlottingHelper.plot_doorway_subgraphs(occupancy_map=tg_generator.occupancy_map,
+                                                        origin_x=tg_generator.origin_x,
+                                                        origin_y=tg_generator.origin_y,
+                                                        resolution=tg_generator.resolution,
+                                                        subgraphs=tg_generator.doorway_subgraphs,
+                                                        filename="results/environment/doorway_subgraph_0.svg")
 
     switching_point_subgraphs = []
     subgraph = tg_generator._generate_switching_point_subgraph(center=Coordinate(38.5, 37.0), corridor=tg_generator.corridors[0])
     switching_point_subgraphs.append(subgraph)
-    tg_generator.plot_switching_point_subgraphs(switching_point_subgraphs, filename="environment/switching_point_subgraph_0.svg")
-    tg_generator.plot_drive_through_subgraphs(tg_generator.drive_through_subgraphs, filename="environment/drive_through_subgraph_0.svg")
+    TraversalGraphPlottingHelper.plot_switching_point_subgraphs(occupancy_map=tg_generator.occupancy_map,
+                                                               origin_x=tg_generator.origin_x,
+                                                               origin_y=tg_generator.origin_y,
+                                                               resolution=tg_generator.resolution,
+                                                               subgraphs=switching_point_subgraphs,
+                                                               filename="results/environment/switching_point_subgraph_0.svg")
+    TraversalGraphPlottingHelper.plot_drive_through_subgraphs(occupancy_map=tg_generator.occupancy_map,
+                                                               origin_x=tg_generator.origin_x,
+                                                               origin_y=tg_generator.origin_y,
+                                                               resolution=tg_generator.resolution,
+                                                               subgraphs=tg_generator.drive_through_subgraphs,
+                                                               filename="results/environment/drive_through_subgraph_0.svg")
+    TraversalGraphPlottingHelper.plot_subgraphs_in_one_plot(occupancy_map=tg_generator.occupancy_map,
+                                                             origin_x=tg_generator.origin_x,
+                                                             origin_y=tg_generator.origin_y,
+                                                             resolution=tg_generator.resolution,
+                                                             intersection_subgraphs=tg_generator.corridor_intersection_subgraphs,
+                                                             doorway_subgraphs=tg_generator.doorway_subgraphs,
+                                                             drive_through_subgraphs=tg_generator.drive_through_subgraphs,
+                                                             filename="results/environment/all_subgraphs.svg")
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)
+    print(tg_generator.drive_through_subgraph_indices)
