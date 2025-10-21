@@ -1,5 +1,5 @@
 import copy
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 import yaml
 import argparse
 import numpy as np
@@ -41,7 +41,7 @@ class TraversalGraphGenerator:
         self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
         self.old_doorway_subgraphs = copy.deepcopy(self.doorway_subgraphs)
         self._merge_overlapping_doorway_subgraphs()
-        # self._merge_overlapping_drive_through_doorway_subgraphs()
+        self._merge_overlapping_drive_through_doorway_subgraphs()
         # self._merge_overlapping_intersections_doorway_subgraphs()
         # self._merge_adjacent_nodes()
         # self.traversal_graph = self._assemble_traversal_graph()
@@ -1359,11 +1359,13 @@ class TraversalGraphGenerator:
             edges.extend(drive_through_edges)
 
             current_subgraph = DriveThroughSubgraph(entry_nodes=entry_nodes,
+                                                    entry_corridor_id=drive_through.entry_corridor_id,
                                                     left_entry_nodes=left_entry_nodes,
                                                     right_entry_nodes=right_entry_nodes,
                                                     left_exit_nodes=left_exit_nodes,
                                                     right_exit_nodes=right_exit_nodes,
                                                     exit_nodes=exit_nodes,
+                                                    exit_corridor_id=drive_through.exit_corridor_id,
                                                     nodes_dict=nodes_dict,
                                                     edges=edges)
             subgraphs.append(current_subgraph)
@@ -1687,6 +1689,213 @@ class TraversalGraphGenerator:
                             self._merge_doorway_subgraphs(direction=current_direction,
                                                           subgraph_a=current_subgraph,
                                                           subgraph_b=compare_subgraph)
+    def _are_drive_through_and_doorway_subgraphs_overlapping(self,
+                                                           direction: str,
+                                                           doorway_subgraph: DoorwaySubgraph,
+                                                           drive_through_subgraph: DriveThroughSubgraph,
+                                                           exit_flag: bool) -> bool:
+        
+        doorway_left_node_label = doorway_subgraph.left_nodes[0]
+        doorway_left_node = doorway_subgraph.nodes_dict[doorway_left_node_label]
+        doorway_right_node_label = doorway_subgraph.right_nodes[0]
+        doorway_right_node = doorway_subgraph.nodes_dict[doorway_right_node_label]
+
+        if exit_flag:
+            drive_through_left_node_label = drive_through_subgraph.left_exit_nodes[0]
+            drive_through_right_node_label = drive_through_subgraph.right_exit_nodes[0]
+        else:
+            drive_through_left_node_label = drive_through_subgraph.left_entry_nodes[0]
+            drive_through_right_node_label = drive_through_subgraph.right_entry_nodes[0]
+        
+        drive_through_left_node = drive_through_subgraph.nodes_dict[drive_through_left_node_label]
+        drive_through_right_node = drive_through_subgraph.nodes_dict[drive_through_right_node_label]
+
+        if direction == "horizontal":
+            return (doorway_left_node.position.x <= drive_through_right_node.position.x and
+                    doorway_right_node.position.x >= drive_through_left_node.position.x )
+        else:
+            return (doorway_left_node.position.y >= drive_through_right_node.position.y and
+                    doorway_right_node.position.y <= drive_through_left_node.position.y )
+    
+    def _replace_node_in_drive_through_subgraph(self,
+                                                subgraph: DriveThroughSubgraph,
+                                                old_node_label: str,
+                                                new_node: TraversalNode,
+                                                exit_flag: bool) -> None:
+        
+        subgraph.nodes_dict[old_node_label] = new_node
+        for i, traversal_edge in enumerate(subgraph.edges):
+            if traversal_edge.from_node == old_node_label:
+                new_edge = self._create_edge_between_nodes(from_node=new_node,
+                                                            to_node=subgraph.nodes_dict[traversal_edge.to_node],
+                                                            action=traversal_edge.action)
+                subgraph.edges[i] = new_edge
+
+            elif traversal_edge.to_node == old_node_label:
+                origin_node = subgraph.nodes_dict.get(traversal_edge.from_node)
+                assert origin_node is not None
+                origin_node.connections.remove(old_node_label)
+                new_edge = self._create_edge_between_nodes(from_node=origin_node,
+                                                            to_node=new_node,
+                                                            action=traversal_edge.action)
+                subgraph.edges[i] = new_edge
+        
+        if exit_flag:
+            for i in range(len(subgraph.left_exit_nodes)):
+                if subgraph.left_exit_nodes[i] == old_node_label:
+                    subgraph.left_exit_nodes[i] = new_node.label
+                elif subgraph.right_exit_nodes[i] == old_node_label:
+                    subgraph.right_exit_nodes[i] = new_node.label
+        else:
+            for i in range(len(subgraph.left_entry_nodes)):
+                if subgraph.left_entry_nodes[i] == old_node_label:
+                    subgraph.left_entry_nodes[i] = new_node.label
+                elif subgraph.right_entry_nodes[i] == old_node_label:
+                    subgraph.right_entry_nodes[i] = new_node.label
+        
+        subgraph.nodes_dict.pop(old_node_label)
+        subgraph.nodes_dict[new_node.label] = new_node
+
+    def _merge_drive_through_and_doorway_subgraphs(self,
+                                                   direction: str,
+                                                   doorway_subgraph: DoorwaySubgraph,
+                                                   drive_through_subgraph: DriveThroughSubgraph,
+                                                   exit_flag: bool):
+        if exit_flag:
+            for i in range(len(drive_through_subgraph.left_exit_nodes)):
+                doorway_left_node_label = doorway_subgraph.left_nodes[i]
+                doorway_left_node = doorway_subgraph.nodes_dict[doorway_left_node_label]
+                drive_through_left_node_label = drive_through_subgraph.left_exit_nodes[i]
+                drive_through_left_node = drive_through_subgraph.nodes_dict[drive_through_left_node_label]
+
+                doorway_right_node_label = doorway_subgraph.right_nodes[i]
+                doorway_right_node = doorway_subgraph.nodes_dict[doorway_right_node_label]
+                drive_through_right_node_label = drive_through_subgraph.right_exit_nodes[i]
+                drive_through_right_node = drive_through_subgraph.nodes_dict[drive_through_right_node_label]
+
+                if direction == "horizontal":
+                    new_left_x = min(doorway_left_node.position.x, drive_through_left_node.position.x)
+                    y_position = doorway_left_node.position.y
+                    new_left_node = TraversalNode(label=f"{new_left_x: .2f}_{y_position: .2f}_{doorway_left_node.orientation_vec}",
+                                             position=Coordinate(x=new_left_x, y=y_position),
+                                             orientation_vec=doorway_left_node.orientation_vec,
+                                             connections=[])
+                    new_right_x = max(doorway_right_node.position.x, drive_through_right_node.position.x)
+                    new_right_node = TraversalNode(label=f"{new_right_x: .2f}_{y_position: .2f}_{doorway_right_node.orientation_vec}",
+                                                  position=Coordinate(x=new_right_x, y=y_position),
+                                                  orientation_vec=doorway_right_node.orientation_vec,
+                                                  connections=[])
+                else:
+                    new_left_y = max(doorway_left_node.position.y, drive_through_left_node.position.y)
+                    x_position = doorway_left_node.position.x
+                    new_left_node = TraversalNode(label=f"{x_position: .2f}_{new_left_y: .2f}_{doorway_left_node.orientation_vec}",
+                                             position=Coordinate(x=x_position, y=new_left_y),
+                                             orientation_vec=doorway_left_node.orientation_vec,
+                                             connections=[])
+                    new_right_y = min(doorway_right_node.position.y, drive_through_right_node.position.y)
+                    new_right_node = TraversalNode(label=f"{x_position: .2f}_{new_right_y: .2f}_{doorway_right_node.orientation_vec}",
+                                                  position=Coordinate(x=x_position, y=new_right_y),
+                                                  orientation_vec=doorway_right_node.orientation_vec,
+                                                  connections=[])
+
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_left_node_label,
+                                                       new_node=new_left_node)
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_right_node_label,
+                                                       new_node=new_right_node)
+                
+                self._replace_node_in_drive_through_subgraph(subgraph=drive_through_subgraph,
+                                                         old_node_label=drive_through_left_node_label,
+                                                         new_node=new_left_node,
+                                                         exit_flag=exit_flag)
+
+                self._replace_node_in_drive_through_subgraph(subgraph=drive_through_subgraph,
+                                                         old_node_label=drive_through_right_node_label,
+                                                         new_node=new_right_node,
+                                                         exit_flag=exit_flag)
+        else:
+            for i in range(len(drive_through_subgraph.left_entry_nodes)):
+                doorway_left_node_label = doorway_subgraph.left_nodes[i]
+                doorway_left_node = doorway_subgraph.nodes_dict[doorway_left_node_label]
+                drive_through_left_node_label = drive_through_subgraph.left_entry_nodes[i]
+                drive_through_left_node = drive_through_subgraph.nodes_dict[drive_through_left_node_label]
+
+                doorway_right_node_label = doorway_subgraph.right_nodes[i]
+                doorway_right_node = doorway_subgraph.nodes_dict[doorway_right_node_label]
+                drive_through_right_node_label = drive_through_subgraph.right_entry_nodes[i]
+                drive_through_right_node = drive_through_subgraph.nodes_dict[drive_through_right_node_label]
+
+                if direction == "horizontal":
+                    new_left_x = min(doorway_left_node.position.x, drive_through_left_node.position.x)
+                    y_position = doorway_left_node.position.y
+                    new_left_node = TraversalNode(label=f"{new_left_x: .2f}_{y_position: .2f}_{doorway_left_node.orientation_vec}",
+                                             position=Coordinate(x=new_left_x, y=y_position),
+                                             orientation_vec=doorway_left_node.orientation_vec,
+                                             connections=[])
+                    new_right_x = max(doorway_right_node.position.x, drive_through_right_node.position.x)
+                    new_right_node = TraversalNode(label=f"{new_right_x: .2f}_{y_position: .2f}_{doorway_right_node.orientation_vec}",
+                                                  position=Coordinate(x=new_right_x, y=y_position),
+                                                  orientation_vec=doorway_right_node.orientation_vec,
+                                                  connections=[])
+                else:
+                    new_left_y = max(doorway_left_node.position.y, drive_through_left_node.position.y)
+                    x_position = doorway_left_node.position.x
+                    new_left_node = TraversalNode(label=f"{x_position: .2f}_{new_left_y: .2f}_{doorway_left_node.orientation_vec}",
+                                             position=Coordinate(x=x_position, y=new_left_y),
+                                             orientation_vec=doorway_left_node.orientation_vec,
+                                             connections=[])
+                    new_right_y = min(doorway_right_node.position.y, drive_through_right_node.position.y)
+                    new_right_node = TraversalNode(label=f"{x_position: .2f}_{new_right_y: .2f}_{doorway_right_node.orientation_vec}",
+                                                  position=Coordinate(x=x_position, y=new_right_y),
+                                                  orientation_vec=doorway_right_node.orientation_vec,
+                                                  connections=[])
+                
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_left_node_label,
+                                                       new_node=new_left_node)
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_right_node_label,
+                                                       new_node=new_right_node)
+                
+                self._replace_node_in_drive_through_subgraph(subgraph=drive_through_subgraph,
+                                                         old_node_label=drive_through_left_node_label,
+                                                         new_node=new_left_node,
+                                                         exit_flag=exit_flag)
+
+                self._replace_node_in_drive_through_subgraph(subgraph=drive_through_subgraph,
+                                                         old_node_label=drive_through_right_node_label,
+                                                         new_node=new_right_node,
+                                                         exit_flag=exit_flag)
+
+    def _merge_overlapping_drive_through_doorway_subgraphs(self):
+
+        for corridor_id in self.doorway_subgraph_indices.keys():
+            doorway_subgraph_indices = self.doorway_subgraph_indices[corridor_id]
+            drive_through_subgraph_indices = self.drive_through_subgraph_indices.get(corridor_id, [])
+            current_corridor = self._get_corridor_by_id(corridor_id)
+            current_direction = current_corridor.direction
+
+            if len(doorway_subgraph_indices) > 0 and len(drive_through_subgraph_indices) > 0:
+                for j in range(len(drive_through_subgraph_indices)):
+                    drive_through_subgraph_index = drive_through_subgraph_indices[j]
+                    compare_drive_through_subgraph = self.drive_through_subgraphs[drive_through_subgraph_index]
+
+                    if compare_drive_through_subgraph.entry_corridor_id == corridor_id:
+                        exit_flag = False
+                    else:
+                        exit_flag = True
+                    for doorway_subgraph_index in doorway_subgraph_indices:
+                        current_doorway_subgraph = self.doorway_subgraphs[doorway_subgraph_index]
+
+                        if self._are_drive_through_and_doorway_subgraphs_overlapping(direction=current_direction,
+                                                                                     doorway_subgraph=current_doorway_subgraph,
+                                                                                     drive_through_subgraph=compare_drive_through_subgraph,
+                                                                                     exit_flag=exit_flag):
+                            self._merge_drive_through_and_doorway_subgraphs(direction=current_direction,
+                                                                            doorway_subgraph=current_doorway_subgraph,
+                                                                            drive_through_subgraph=compare_drive_through_subgraph,
+                                                                            exit_flag=exit_flag)
 
     
 if __name__ == "__main__":

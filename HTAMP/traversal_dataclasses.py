@@ -76,9 +76,11 @@ class EndPointSubgraph:
 @dataclass
 class DriveThroughSubgraph:
     entry_nodes: list[str]
+    entry_corridor_id: str
     left_entry_nodes: list[str]
     right_entry_nodes: list[str]
     exit_nodes: list[str]
+    exit_corridor_id: str
     left_exit_nodes: list[str]
     right_exit_nodes: list[str]
     nodes_dict: Dict[str, TraversalNode]
