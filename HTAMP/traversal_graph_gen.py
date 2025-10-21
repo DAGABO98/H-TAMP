@@ -1,5 +1,5 @@
 import copy
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 import yaml
 import argparse
 import numpy as np
@@ -43,8 +43,7 @@ class TraversalGraphGenerator:
         self._merge_overlapping_doorway_subgraphs()
         self._merge_overlapping_drive_through_doorway_subgraphs()
         self._merge_overlapping_intersections_doorway_subgraphs()
-        # self._merge_adjacent_nodes()
-        # self.traversal_graph = self._assemble_traversal_graph()
+        self.traversal_graph = self._assemble_traversal_graph()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -2054,6 +2053,191 @@ class TraversalGraphGenerator:
                             self._merge_intersections_and_doorway_subgraphs(direction=current_direction,
                                                                             doorway_subgraph=current_doorway_subgraph,
                                                                             intersection_subgraph=compare_intersection_subgraph)
+    
+    def _get_subgraphs_for_corridor(self,
+                                    corridor_id: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]]:
+        sub_graphs = []
+        doorway_subgraph_indices = self.doorway_subgraph_indices[corridor_id]
+        intersection_subgraph_indices = self.corridor_intersection_subgraph_indices.get(corridor_id, [])
+        drive_through_subgraph_indices = self.drive_through_subgraph_indices.get(corridor_id, [])
+
+        if len(doorway_subgraph_indices) > 0:
+            for doorway_subgraph_index in doorway_subgraph_indices:
+                current_doorway_subgraph = self.doorway_subgraphs[doorway_subgraph_index]
+                sub_graphs.append(current_doorway_subgraph)
+
+        if len(intersection_subgraph_indices) > 0:
+            for intersection_subgraph_index in intersection_subgraph_indices:
+                current_intersection_subgraph = self.corridor_intersection_subgraphs[intersection_subgraph_index]
+                sub_graphs.append(current_intersection_subgraph)
+
+        if len(drive_through_subgraph_indices) > 0:
+            for drive_through_subgraph_index in drive_through_subgraph_indices:
+                current_drive_through_subgraph = self.drive_through_subgraphs[drive_through_subgraph_index]
+                sub_graphs.append(current_drive_through_subgraph)
+        
+        return sub_graphs
+    
+    def _subgraph_sort_key(self,
+                           corridor_id: str,
+                           direction: str,
+                           subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]) -> float:
+        if direction == "horizontal":
+            if isinstance(subgraph, DriveThroughSubgraph):
+                if corridor_id in subgraph.entry_corridor_id:
+                    if subgraph.right_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.right_entry_nodes[0]].position.x
+                    elif subgraph.left_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.left_entry_nodes[0]].position.x
+                else:
+                    if subgraph.right_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.right_exit_nodes[0]].position.x
+                    elif subgraph.left_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.left_exit_nodes[0]].position.x
+            elif isinstance(subgraph, DoorwaySubgraph):
+                if subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].position.x
+                elif subgraph.left_nodes:
+                    return subgraph.nodes_dict[subgraph.left_nodes[0]].position.x
+            elif isinstance(subgraph, IntersectionSubgraph):
+                if subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].position.x
+                elif subgraph.left_nodes:
+                    return subgraph.nodes_dict[subgraph.left_nodes[0]].position.x
+            else:
+                raise ValueError("Invalid subgraph type for sorting.")
+        else:
+            if isinstance(subgraph, DriveThroughSubgraph):
+                if corridor_id in subgraph.entry_corridor_id:
+                    if subgraph.right_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.right_entry_nodes[0]].position.y
+                    elif subgraph.left_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.left_entry_nodes[0]].position.y
+                else:
+                    if subgraph.right_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.right_exit_nodes[0]].position.y
+                    elif subgraph.left_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.left_exit_nodes[0]].position.y
+            elif isinstance(subgraph, DoorwaySubgraph):
+                if subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].position.y
+                elif subgraph.left_nodes:
+                    return subgraph.nodes_dict[subgraph.left_nodes[0]].position.y
+            elif isinstance(subgraph, IntersectionSubgraph):
+                if subgraph.lower_nodes:
+                    return subgraph.nodes_dict[subgraph.lower_nodes[0]].position.y
+                elif subgraph.upper_nodes:
+                    return subgraph.nodes_dict[subgraph.upper_nodes[0]].position.y
+            else:
+                raise ValueError("Invalid subgraph type for sorting.")
+
+    def _sort_subgraphs(self,
+                        corridor_id: str,
+                        subgraphs: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                        direction: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]]:
+        if direction == "horizontal":
+            sorted_subgraphs = sorted(subgraphs,
+                                      key=lambda sg: self._subgraph_sort_key(corridor_id, direction, sg))
+        else:
+            sorted_subgraphs = sorted(subgraphs,
+                                      key=lambda sg: self._subgraph_sort_key(corridor_id, direction, sg))
+        return sorted_subgraphs
+    
+    def _connect_subgraphs(self,
+                           current_direction: str,
+                           current_subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph],
+                           current_nodes_labels: list[str],
+                           next_subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph],
+                           next_nodes_labels: list[str]) -> None:
+        
+        # TODO: check that nodes are different and that they are not already connected
+        # TODO: if nodes are closer than a threshold, merge the nodes into a single node placed at the average position
+        # TODO: insert switching points if distance is greater than a threshold
+        
+        for i in range(len(current_nodes_labels)):
+            current_node_label = current_nodes_labels[i]
+            current_node = current_subgraph.nodes_dict[current_node_label]
+
+            next_node_label = next_nodes_labels[i]
+            next_node = next_subgraph.nodes_dict[next_node_label]
+
+            new_edge = self._create_edge_between_nodes(from_node=current_node, 
+                                                   to_node=next_node, 
+                                                   action="go_straight")
+            current_subgraph.edges.append(new_edge)
+        
+            
+    def _assemble_traversal_graph(self) -> TraversalGraph:
+        traversal_graph = TraversalGraph(nodes_dict={}, edges=[])
+
+        for corridor_id in self.doorway_subgraph_indices.keys():
+            current_corridor = self._get_corridor_by_id(corridor_id)
+            current_direction = current_corridor.direction
+
+            sub_graphs = self._get_subgraphs_for_corridor(corridor_id=corridor_id)
+            
+            sorted_subgraphs = self._sort_subgraphs(corridor_id=corridor_id,
+                                                    subgraphs=sub_graphs,
+                                                    direction=current_direction)
+            
+            # TODO: insert end points at the beginning and end of the corridor
+            
+            for i in range(len(sorted_subgraphs)-1):
+                current_subgraph = sorted_subgraphs[i]
+                next_subgraph = sorted_subgraphs[i+1]
+                current_nodes_labels = []
+                next_nodes_labels = []
+
+                if current_direction == "horizontal":
+                    if isinstance(current_subgraph, DriveThroughSubgraph):
+                        if corridor_id in current_subgraph.entry_corridor_id:
+                            current_nodes_labels = current_subgraph.right_entry_nodes
+                        else:
+                            current_nodes_labels = current_subgraph.right_exit_nodes
+                    elif isinstance(current_subgraph, DoorwaySubgraph):
+                        current_nodes_labels = current_subgraph.right_nodes
+                    elif isinstance(current_subgraph, IntersectionSubgraph):
+                        current_nodes_labels = current_subgraph.right_nodes
+
+                    if isinstance(next_subgraph, DriveThroughSubgraph):
+                        if corridor_id in next_subgraph.entry_corridor_id:
+                            next_nodes_labels = next_subgraph.left_entry_nodes
+                        else:
+                            next_nodes_labels = next_subgraph.left_exit_nodes
+                    elif isinstance(next_subgraph, DoorwaySubgraph):
+                        next_nodes_labels = next_subgraph.left_nodes
+                    elif isinstance(next_subgraph, IntersectionSubgraph):
+                        next_nodes_labels = next_subgraph.left_nodes
+
+                else:
+                    if isinstance(current_subgraph, DriveThroughSubgraph):
+                        if corridor_id in current_subgraph.entry_corridor_id:
+                            current_nodes_labels = current_subgraph.left_entry_nodes
+                        else:
+                            current_nodes_labels = current_subgraph.left_exit_nodes
+                    elif isinstance(current_subgraph, DoorwaySubgraph):
+                        current_nodes_labels = current_subgraph.left_nodes
+                    elif isinstance(current_subgraph, IntersectionSubgraph):
+                        current_nodes_labels = current_subgraph.lower_nodes
+
+                    if isinstance(next_subgraph, DriveThroughSubgraph):
+                        if corridor_id in next_subgraph.entry_corridor_id:
+                            next_nodes_labels = next_subgraph.right_entry_nodes
+                        else:
+                            next_nodes_labels = next_subgraph.right_exit_nodes
+                    elif isinstance(next_subgraph, DoorwaySubgraph):
+                        next_nodes_labels = next_subgraph.right_nodes
+                    elif isinstance(next_subgraph, IntersectionSubgraph):
+                        next_nodes_labels = next_subgraph.upper_nodes
+
+                self._connect_subgraphs(current_direction=current_direction,
+                                        current_subgraph=current_subgraph,
+                                        current_nodes_labels=current_nodes_labels,
+                                        next_subgraph=next_subgraph,
+                                        next_nodes_labels=next_nodes_labels)
+
+
+        return traversal_graph
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
