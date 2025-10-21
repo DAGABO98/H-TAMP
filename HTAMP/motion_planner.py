@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple, Dict, Any
 from matplotlib.patches import Rectangle, Circle
 
-from HTAMP.grid_world import Coordinate, TimeInterval, GridWorld, GridIndex, RobotProfile
+from HTAMP.loc_dataclasses import Coordinate
+from HTAMP.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
 
 @dataclass
 class TimeReservation:

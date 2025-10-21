@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 
 from matplotlib import pyplot as plt
 import numpy as np
-from HTAMP.grid_world import Coordinate
+from HTAMP.loc_dataclasses import Coordinate
 
 class GeometryHelper:
 
