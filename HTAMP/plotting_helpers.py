@@ -211,6 +211,7 @@ class TraversalGraphPlottingHelper:
                                    intersection_subgraphs: List[IntersectionSubgraph],
                                    doorway_subgraphs: List[DoorwaySubgraph],
                                    drive_through_subgraphs: List[DriveThroughSubgraph],
+                                   switching_point_subgraphs: List[SwitchingPointSubgraph],
                                    filename: str):
         rows, cols = occupancy_map.shape
         xmin, xmax = origin_x, origin_x + cols * resolution
@@ -282,6 +283,28 @@ class TraversalGraphPlottingHelper:
                     ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
 
             for node_label in subgraph.entry_nodes + subgraph.exit_nodes + subgraph.left_entry_nodes + subgraph.right_entry_nodes + subgraph.left_exit_nodes + subgraph.right_exit_nodes:
+                node = subgraph.nodes_dict[node_label]
+                if node.orientation_vec == OrientationVector(1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
+        
+        for subgraph in switching_point_subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
+                elif edge.action == "switch_directions":
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
+                elif edge.action == "switch_lanes":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
+
+            for node_label in subgraph.left_nodes + subgraph.right_nodes:
                 node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
