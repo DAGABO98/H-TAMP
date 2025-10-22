@@ -245,6 +245,7 @@ class TraversalGraphPlottingHelper:
                     ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
                 elif node.orientation_vec == OrientationVector(0.0, -1.0):
                     ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
+                    
         for subgraph in doorway_subgraphs:
             for edge in subgraph.edges:
                 samples_x = edge.edge_connector.connector_dict['X']

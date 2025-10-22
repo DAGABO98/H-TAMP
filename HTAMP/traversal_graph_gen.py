@@ -39,7 +39,6 @@ class TraversalGraphGenerator:
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
         self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
         self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
-        self.old_doorway_subgraphs = copy.deepcopy(self.doorway_subgraphs)
         self._merge_overlapping_doorway_subgraphs()
         self._merge_overlapping_drive_through_doorway_subgraphs()
         self._merge_overlapping_intersections_doorway_subgraphs()
@@ -1580,7 +1579,7 @@ class TraversalGraphGenerator:
             return (subgraph_a_left_node.position.y >= subgraph_b_right_node.position.y and
                     subgraph_a_right_node.position.y <= subgraph_b_left_node.position.y )
     
-    def _replace_node_in_general_subgraph(self,
+    def _replace_node_in_edges(self,
                                 subgraph: IntersectionSubgraph | DoorwaySubgraph | DriveThroughSubgraph,
                                 old_node_label: str,
                                 new_node: TraversalNode):
@@ -1606,7 +1605,7 @@ class TraversalGraphGenerator:
                                           old_node_label: str,
                                           new_node: TraversalNode):
         
-        self._replace_node_in_general_subgraph(subgraph, old_node_label, new_node)
+        self._replace_node_in_edges(subgraph, old_node_label, new_node)
 
         for i in range(len(subgraph.left_nodes)):
             if subgraph.left_nodes[i] == old_node_label:
@@ -1678,6 +1677,9 @@ class TraversalGraphGenerator:
 
     def _merge_overlapping_doorway_subgraphs(self):
 
+        # TODO: only works when only two structures are overlapping. Generalize this to more structures later by 
+        # grouping overlapped subgraphs and merging them all together
+
         for corridor_id in self.doorway_subgraph_indices.keys():
             subgraph_indices = self.doorway_subgraph_indices[corridor_id]
             current_corridor = self._get_corridor_by_id(corridor_id)
@@ -1730,7 +1732,7 @@ class TraversalGraphGenerator:
                                                 new_node: TraversalNode,
                                                 exit_flag: bool) -> None:
         
-        self._replace_node_in_general_subgraph(subgraph, old_node_label, new_node)
+        self._replace_node_in_edges(subgraph, old_node_label, new_node)
         
         if exit_flag:
             for i in range(len(subgraph.left_exit_nodes)):
@@ -1926,7 +1928,7 @@ class TraversalGraphGenerator:
                                                old_node_label: str,
                                                new_node: TraversalNode):
         
-        self._replace_node_in_general_subgraph(subgraph, old_node_label, new_node)
+        self._replace_node_in_edges(subgraph, old_node_label, new_node)
 
         if direction == "horizontal":
             for i in range(len(subgraph.left_nodes)):
@@ -2109,20 +2111,20 @@ class TraversalGraphGenerator:
         else:
             if isinstance(subgraph, DriveThroughSubgraph):
                 if corridor_id in subgraph.entry_corridor_id:
-                    if subgraph.right_entry_nodes:
-                        return subgraph.nodes_dict[subgraph.right_entry_nodes[0]].position.y
-                    elif subgraph.left_entry_nodes:
+                    if subgraph.left_entry_nodes:
                         return subgraph.nodes_dict[subgraph.left_entry_nodes[0]].position.y
+                    elif subgraph.right_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.right_entry_nodes[0]].position.y
                 else:
-                    if subgraph.right_exit_nodes:
-                        return subgraph.nodes_dict[subgraph.right_exit_nodes[0]].position.y
-                    elif subgraph.left_exit_nodes:
+                    if subgraph.left_exit_nodes:
                         return subgraph.nodes_dict[subgraph.left_exit_nodes[0]].position.y
+                    elif subgraph.right_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.right_exit_nodes[0]].position.y
             elif isinstance(subgraph, DoorwaySubgraph):
-                if subgraph.right_nodes:
-                    return subgraph.nodes_dict[subgraph.right_nodes[0]].position.y
-                elif subgraph.left_nodes:
+                if subgraph.left_nodes:
                     return subgraph.nodes_dict[subgraph.left_nodes[0]].position.y
+                elif subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].position.y
             elif isinstance(subgraph, IntersectionSubgraph):
                 if subgraph.lower_nodes:
                     return subgraph.nodes_dict[subgraph.lower_nodes[0]].position.y
@@ -2143,30 +2145,264 @@ class TraversalGraphGenerator:
                                       key=lambda sg: self._subgraph_sort_key(corridor_id, direction, sg))
         return sorted_subgraphs
     
-    def _connect_subgraphs(self,
-                           current_direction: str,
-                           current_subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph],
-                           current_nodes_labels: list[str],
-                           next_subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph],
-                           next_nodes_labels: list[str]) -> None:
+    def _subgraph_repr_key(self,
+                           corridor_id: str,
+                           direction: str,
+                           subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]) -> float:
+        if direction == "horizontal":
+            if isinstance(subgraph, DriveThroughSubgraph):
+                if corridor_id in subgraph.entry_corridor_id:
+                    if subgraph.right_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.right_entry_nodes[0]].label
+                    elif subgraph.left_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.left_entry_nodes[0]].label
+                else:
+                    if subgraph.right_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.right_exit_nodes[0]].label
+                    elif subgraph.left_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.left_exit_nodes[0]].label
+            elif isinstance(subgraph, DoorwaySubgraph):
+                if subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].label
+                elif subgraph.left_nodes:
+                    return subgraph.nodes_dict[subgraph.left_nodes[0]].label
+            elif isinstance(subgraph, IntersectionSubgraph):
+                if subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].label
+                elif subgraph.left_nodes:
+                    return subgraph.nodes_dict[subgraph.left_nodes[0]].label
+            else:
+                raise ValueError("Invalid subgraph type for sorting.")
+        else:
+            if isinstance(subgraph, DriveThroughSubgraph):
+                if corridor_id in subgraph.entry_corridor_id:
+                    if subgraph.left_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.left_entry_nodes[0]].label
+                    elif subgraph.right_entry_nodes:
+                        return subgraph.nodes_dict[subgraph.right_entry_nodes[0]].label
+                else:
+                    if subgraph.left_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.left_exit_nodes[0]].label
+                    elif subgraph.right_exit_nodes:
+                        return subgraph.nodes_dict[subgraph.right_exit_nodes[0]].label
+            elif isinstance(subgraph, DoorwaySubgraph):
+                if subgraph.left_nodes:
+                    return subgraph.nodes_dict[subgraph.left_nodes[0]].label
+                elif subgraph.right_nodes:
+                    return subgraph.nodes_dict[subgraph.right_nodes[0]].label
+            elif isinstance(subgraph, IntersectionSubgraph):
+                if subgraph.lower_nodes:
+                    return subgraph.nodes_dict[subgraph.lower_nodes[0]].label
+                elif subgraph.upper_nodes:
+                    return subgraph.nodes_dict[subgraph.upper_nodes[0]].label
+            else:
+                raise ValueError("Invalid subgraph type for sorting.")
+    
+    def _group_subgraphs_with_shared_nodes(self,
+                                           corridor_id: str,
+                                           direction: str,
+                                           subgraphs: List[Union[IntersectionSubgraph, 
+                                                                  DoorwaySubgraph, 
+                                                                  DriveThroughSubgraph]]) -> Dict[str, List[Union[IntersectionSubgraph, 
+                                                                                                                  DoorwaySubgraph, 
+                                                                                                                  DriveThroughSubgraph]]]:
+        node_to_subgraphs: Dict[str, List[Union[IntersectionSubgraph, 
+                                               DoorwaySubgraph, 
+                                               DriveThroughSubgraph]]] = {}
         
-        # TODO: check that nodes are different and that they are not already connected
-        # TODO: if nodes are closer than a threshold, merge the nodes into a single node placed at the average position
-        # TODO: insert switching points if distance is greater than a threshold
+        for subgraph in subgraphs:
+            subgraph_key = self._subgraph_repr_key(corridor_id=corridor_id, 
+                                                   direction=direction,
+                                                   subgraph=subgraph)
+            if subgraph_key not in node_to_subgraphs:
+                node_to_subgraphs[subgraph_key] = []
+            node_to_subgraphs[subgraph_key].append(subgraph)
+        
+        return node_to_subgraphs
+    
+    def _obtain_representative_nodes_from_subgraphs(self,
+                                                    current_direction: str,
+                                                    current_subgraph: Union[IntersectionSubgraph, 
+                                                                            DoorwaySubgraph, 
+                                                                            DriveThroughSubgraph],
+                                                    next_subgraph: Union[IntersectionSubgraph, 
+                                                                         DoorwaySubgraph, 
+                                                                         DriveThroughSubgraph],
+                                                    corridor_id: str) -> Tuple[List[str], List[str]]:
+        
+        current_nodes_labels = []
+        next_nodes_labels = []
+
+        if current_direction == "horizontal":
+            if isinstance(current_subgraph, DriveThroughSubgraph):
+                if corridor_id in current_subgraph.entry_corridor_id:
+                    current_nodes_labels = current_subgraph.right_entry_nodes
+                else:
+                    current_nodes_labels = current_subgraph.right_exit_nodes
+            elif isinstance(current_subgraph, DoorwaySubgraph):
+                current_nodes_labels = current_subgraph.right_nodes
+            elif isinstance(current_subgraph, IntersectionSubgraph):
+                current_nodes_labels = current_subgraph.right_nodes
+
+            if isinstance(next_subgraph, DriveThroughSubgraph):
+                if corridor_id in next_subgraph.entry_corridor_id:
+                    next_nodes_labels = next_subgraph.left_entry_nodes
+                else:
+                    next_nodes_labels = next_subgraph.left_exit_nodes
+            elif isinstance(next_subgraph, DoorwaySubgraph):
+                next_nodes_labels = next_subgraph.left_nodes
+            elif isinstance(next_subgraph, IntersectionSubgraph):
+                next_nodes_labels = next_subgraph.left_nodes
+
+        else:
+            if isinstance(current_subgraph, DriveThroughSubgraph):
+                if corridor_id in current_subgraph.entry_corridor_id:
+                    current_nodes_labels = current_subgraph.left_entry_nodes
+                else:
+                    current_nodes_labels = current_subgraph.left_exit_nodes
+            elif isinstance(current_subgraph, DoorwaySubgraph):
+                current_nodes_labels = current_subgraph.left_nodes
+            elif isinstance(current_subgraph, IntersectionSubgraph):
+                current_nodes_labels = current_subgraph.lower_nodes
+
+            if isinstance(next_subgraph, DriveThroughSubgraph):
+                if corridor_id in next_subgraph.entry_corridor_id:
+                    next_nodes_labels = next_subgraph.right_entry_nodes
+                else:
+                    next_nodes_labels = next_subgraph.right_exit_nodes
+            elif isinstance(next_subgraph, DoorwaySubgraph):
+                next_nodes_labels = next_subgraph.right_nodes
+            elif isinstance(next_subgraph, IntersectionSubgraph):
+                next_nodes_labels = next_subgraph.upper_nodes
+
+        return current_nodes_labels, next_nodes_labels
+    
+    def _replace_node_in_subgraph(self,
+                                  current_direction: str,
+                                  subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph],
+                                  old_node_label: str,
+                                  new_node: TraversalNode) -> None:
+        
+        if isinstance(subgraph, DoorwaySubgraph):
+            self._replace_node_in_doorway_subgraph(subgraph=subgraph,
+                                                    old_node_label=old_node_label,
+                                                    new_node=new_node)
+        elif isinstance(subgraph, IntersectionSubgraph):
+            self._replace_node_in_intersection_subgraph(direction=current_direction,
+                                                        subgraph=subgraph,
+                                                        old_node_label=old_node_label,
+                                                        new_node=new_node)
+        elif isinstance(subgraph, DriveThroughSubgraph):
+            self._replace_node_in_drive_through_subgraph(subgraph=subgraph,
+                                                         old_node_label=old_node_label,
+                                                         new_node=new_node,
+                                                         exit_flag=(old_node_label in subgraph.right_exit_nodes or
+                                                                    old_node_label in subgraph.left_exit_nodes))
+        
+        assert old_node_label not in subgraph.nodes_dict
+
+
+    def _merge_nodes(self,
+                     current_direction: str,
+                     current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                     current_nodes_labels: list[str],
+                     next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                     next_nodes_labels: list[str]) -> None:
         
         for i in range(len(current_nodes_labels)):
             current_node_label = current_nodes_labels[i]
-            current_node = current_subgraph.nodes_dict[current_node_label]
-
             next_node_label = next_nodes_labels[i]
-            next_node = next_subgraph.nodes_dict[next_node_label]
+
+            if current_node_label != next_node_label:
+                current_node = current_subgraph_group[0].nodes_dict[current_node_label]
+                next_node = next_subgraph_group[0].nodes_dict[next_node_label]
+
+                if current_direction == "horizontal":
+                    merged_x = (current_node.position.x + next_node.position.x) / 2.0
+                    merged_node = TraversalNode(label=f"{merged_x: .2f}_{current_node.position.y: .2f}_{current_node.orientation_vec}",
+                                                position=Coordinate(x=merged_x, y=current_node.position.y),
+                                                orientation_vec=current_node.orientation_vec,
+                                                connections=[])
+                else:
+                    merged_y = (current_node.position.y + next_node.position.y) / 2.0
+                    merged_node = TraversalNode(label=f"{current_node.position.x: .2f}_{merged_y: .2f}_{current_node.orientation_vec}",
+                                                position=Coordinate(x=current_node.position.x, y=merged_y),
+                                                orientation_vec=current_node.orientation_vec,
+                                                connections=[])
+                    
+                for j in range(len(current_subgraph_group)):
+                    current_subgraph = current_subgraph_group[j]
+                    self._replace_node_in_subgraph(current_direction=current_direction,
+                                                subgraph=current_subgraph,
+                                                old_node_label=current_node_label,
+                                                new_node=merged_node)
+                
+                for m in range(len(next_subgraph_group)):
+                    next_subgraph = next_subgraph_group[m]
+                    self._replace_node_in_subgraph(current_direction=current_direction,
+                                                subgraph=next_subgraph,
+                                                old_node_label=next_node_label,
+                                                new_node=merged_node)
+    
+    def _connect_subgraphs(self,
+                           current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, 
+                                                   DriveThroughSubgraph, SwitchingPointSubgraph]],
+                           current_nodes_labels: list[str],
+                           next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, 
+                                                DriveThroughSubgraph, SwitchingPointSubgraph]],
+                           next_nodes_labels: list[str]) -> None:
+        
+        for i in range(len(current_nodes_labels)):
+            current_node_label = current_nodes_labels[i]
+            next_node_label = next_nodes_labels[i]
+            current_node = current_subgraph_group[0].nodes_dict[current_node_label]
+            next_node = next_subgraph_group[0].nodes_dict[next_node_label]
 
             new_edge = self._create_edge_between_nodes(from_node=current_node, 
-                                                   to_node=next_node, 
-                                                   action="go_straight")
-            current_subgraph.edges.append(new_edge)
-        
-            
+                                                        to_node=next_node, 
+                                                        action="go_straight")
+
+            for subgraph_index in range(len(current_subgraph_group)):
+                current_subgraph = current_subgraph_group[subgraph_index]
+                current_subgraph.edges.append(new_edge)
+    
+    def _create_connective_structure_between_subgraphs(self,
+                                                       current_corridor: Corridor,
+                                                       current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                                                       current_nodes_labels: list[str],
+                                                       next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                                                       next_nodes_labels: list[str]) -> None:
+        # TODO: insert switching points if distance is greater than a threshold
+        initial_node_label = current_nodes_labels[0]
+        next_node_label = next_nodes_labels[0]
+        current_direction = current_corridor.direction
+
+        initial_node = current_subgraph_group[0].nodes_dict[initial_node_label]
+        next_node = next_subgraph_group[0].nodes_dict[next_node_label]
+
+        if current_direction == "horizontal":
+            distance = abs(next_node.position.x - initial_node.position.x)
+        else:
+            distance = abs(next_node.position.y - initial_node.position.y)
+
+        if distance <= 2*self.threshold:
+            # Merge nodes
+            print("Merging nodes:", initial_node_label, next_node_label)
+            self._merge_nodes(current_direction=current_direction,
+                              current_subgraph_group=current_subgraph_group,
+                              current_nodes_labels=current_nodes_labels,
+                              next_subgraph_group=next_subgraph_group,
+                              next_nodes_labels=next_nodes_labels)
+        # elif distance > 2 * self.switching_point_offset:
+        #     # Insert switching point
+        #     switching_point = self._create_switching_point(initial_node, next_node)
+        #     current_subgraph.edges.append(switching_point)
+        else:
+            self._connect_subgraphs(current_subgraph_group=current_subgraph_group,
+                                    current_nodes_labels=current_nodes_labels,
+                                    next_subgraph_group=next_subgraph_group,
+                                    next_nodes_labels=next_nodes_labels)
+
     def _assemble_traversal_graph(self) -> TraversalGraph:
         traversal_graph = TraversalGraph(nodes_dict={}, edges=[])
 
@@ -2179,62 +2415,29 @@ class TraversalGraphGenerator:
             sorted_subgraphs = self._sort_subgraphs(corridor_id=corridor_id,
                                                     subgraphs=sub_graphs,
                                                     direction=current_direction)
+
+            grouped_subgraphs = self._group_subgraphs_with_shared_nodes(corridor_id=corridor_id,
+                                                                        direction=current_direction,
+                                                                        subgraphs=sorted_subgraphs)
             
             # TODO: insert end points at the beginning and end of the corridor
-            
-            for i in range(len(sorted_subgraphs)-1):
-                current_subgraph = sorted_subgraphs[i]
-                next_subgraph = sorted_subgraphs[i+1]
-                current_nodes_labels = []
-                next_nodes_labels = []
 
-                if current_direction == "horizontal":
-                    if isinstance(current_subgraph, DriveThroughSubgraph):
-                        if corridor_id in current_subgraph.entry_corridor_id:
-                            current_nodes_labels = current_subgraph.right_entry_nodes
-                        else:
-                            current_nodes_labels = current_subgraph.right_exit_nodes
-                    elif isinstance(current_subgraph, DoorwaySubgraph):
-                        current_nodes_labels = current_subgraph.right_nodes
-                    elif isinstance(current_subgraph, IntersectionSubgraph):
-                        current_nodes_labels = current_subgraph.right_nodes
+            node_keys = list(grouped_subgraphs.keys())
 
-                    if isinstance(next_subgraph, DriveThroughSubgraph):
-                        if corridor_id in next_subgraph.entry_corridor_id:
-                            next_nodes_labels = next_subgraph.left_entry_nodes
-                        else:
-                            next_nodes_labels = next_subgraph.left_exit_nodes
-                    elif isinstance(next_subgraph, DoorwaySubgraph):
-                        next_nodes_labels = next_subgraph.left_nodes
-                    elif isinstance(next_subgraph, IntersectionSubgraph):
-                        next_nodes_labels = next_subgraph.left_nodes
+            for i in range(len(node_keys)-1):
+                current_subgraph_group = grouped_subgraphs[node_keys[i]]
+                next_subgraph_group = grouped_subgraphs[node_keys[i+1]]
 
-                else:
-                    if isinstance(current_subgraph, DriveThroughSubgraph):
-                        if corridor_id in current_subgraph.entry_corridor_id:
-                            current_nodes_labels = current_subgraph.left_entry_nodes
-                        else:
-                            current_nodes_labels = current_subgraph.left_exit_nodes
-                    elif isinstance(current_subgraph, DoorwaySubgraph):
-                        current_nodes_labels = current_subgraph.left_nodes
-                    elif isinstance(current_subgraph, IntersectionSubgraph):
-                        current_nodes_labels = current_subgraph.lower_nodes
+                current_nodes_labels, next_nodes_labels = self._obtain_representative_nodes_from_subgraphs(current_direction=current_direction,
+                                                                                                       current_subgraph=current_subgraph_group[0],
+                                                                                                       next_subgraph=next_subgraph_group[0],
+                                                                                                       corridor_id=corridor_id)
 
-                    if isinstance(next_subgraph, DriveThroughSubgraph):
-                        if corridor_id in next_subgraph.entry_corridor_id:
-                            next_nodes_labels = next_subgraph.right_entry_nodes
-                        else:
-                            next_nodes_labels = next_subgraph.right_exit_nodes
-                    elif isinstance(next_subgraph, DoorwaySubgraph):
-                        next_nodes_labels = next_subgraph.right_nodes
-                    elif isinstance(next_subgraph, IntersectionSubgraph):
-                        next_nodes_labels = next_subgraph.upper_nodes
-
-                self._connect_subgraphs(current_direction=current_direction,
-                                        current_subgraph=current_subgraph,
-                                        current_nodes_labels=current_nodes_labels,
-                                        next_subgraph=next_subgraph,
-                                        next_nodes_labels=next_nodes_labels)
+                self._create_connective_structure_between_subgraphs(current_corridor=current_corridor,
+                                                                    current_subgraph_group=current_subgraph_group,
+                                                                    current_nodes_labels=current_nodes_labels,
+                                                                    next_subgraph_group=next_subgraph_group,
+                                                                    next_nodes_labels=next_nodes_labels)
 
 
         return traversal_graph
@@ -2266,12 +2469,6 @@ if __name__ == "__main__":
                                                              resolution=tg_generator.resolution,
                                                              subgraphs=tg_generator.corridor_intersection_subgraphs,
                                                              filename="results/environment/intersection_subgraph_0.svg")
-    TraversalGraphPlottingHelper.plot_doorway_subgraphs(occupancy_map=tg_generator.occupancy_map,
-                                                        origin_x=tg_generator.origin_x,
-                                                        origin_y=tg_generator.origin_y,
-                                                        resolution=tg_generator.resolution,
-                                                        subgraphs=tg_generator.old_doorway_subgraphs,
-                                                        filename="results/environment/doorway_subgraph_0.svg")
     
     TraversalGraphPlottingHelper.plot_doorway_subgraphs(occupancy_map=tg_generator.occupancy_map,
                                                         origin_x=tg_generator.origin_x,
