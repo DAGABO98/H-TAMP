@@ -9,6 +9,7 @@ from HTAMP.traversal_dataclasses import IntersectionSubgraph
 from HTAMP.traversal_dataclasses import DoorwaySubgraph
 from HTAMP.traversal_dataclasses import SwitchingPointSubgraph
 from HTAMP.traversal_dataclasses import DriveThroughSubgraph
+from HTAMP.traversal_dataclasses import TraversalGraph
 
 
 class TraversalGraphPlottingHelper:
@@ -320,8 +321,75 @@ class TraversalGraphPlottingHelper:
         ax.set_ylabel("Y (meters)")
         plt.savefig(f"{filename}")
         plt.close()
+    
+    @staticmethod
+    def plot_traversal_graph(occupancy_map: np.ndarray, 
+                             origin_x: float, 
+                             origin_y: float, 
+                             resolution: float,
+                             traversal_graph: TraversalGraph,
+                             filename: str,
+                             alpha: float = 0.5):
+        rows, cols = occupancy_map.shape
+        xmin, xmax = origin_x, origin_x + cols * resolution
+        ymin, ymax = origin_y, origin_y + rows * resolution
 
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
 
+        for edge in traversal_graph.edges:
+            samples_x = edge.edge_connector.connector_dict['X']
+            samples_y = edge.edge_connector.connector_dict['Y']
+            from_node = traversal_graph.nodes_dict[edge.from_node]
+
+            if edge.action == "go_straight":
+                if from_node.orientation_vec == OrientationVector(1.0, 0.0):
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=alpha)
+                elif from_node.orientation_vec == OrientationVector(-1.0, 0.0):
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=alpha)
+                elif from_node.orientation_vec == OrientationVector(0.0, 1.0):
+                    ax.plot(samples_x, samples_y, color='blue', linewidth=0.5, alpha=alpha)
+                elif from_node.orientation_vec == OrientationVector(0.0, -1.0):
+                    ax.plot(samples_x, samples_y, color='red', linewidth=0.5, alpha=alpha)
+            elif edge.action == "turn_left":
+                ax.plot(samples_x, samples_y, color='pink', linewidth=0.5, alpha=alpha)
+            elif edge.action == "turn_right":
+                ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=alpha)
+            elif edge.action == "switch_directions":
+                ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=alpha)
+            elif edge.action == "switch_lanes":
+                if from_node.orientation_vec == OrientationVector(1.0, 0.0):
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=alpha)
+                elif from_node.orientation_vec == OrientationVector(-1.0, 0.0):
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=alpha)
+                elif from_node.orientation_vec == OrientationVector(0.0, 1.0):
+                    ax.plot(samples_x, samples_y, color='blue', linewidth=0.5, alpha=alpha)
+                elif from_node.orientation_vec == OrientationVector(0.0, -1.0):
+                    ax.plot(samples_x, samples_y, color='red', linewidth=0.5, alpha=alpha)
+
+        for node_label, node in traversal_graph.nodes_dict.items():
+            if node.orientation_vec == OrientationVector(1.0, 0.0):
+                ax.scatter(node.position.x, node.position.y, color='green', s=1, alpha=alpha)
+            elif node.orientation_vec == OrientationVector(-1.0, 0.0):
+                ax.scatter(node.position.x, node.position.y, color='purple', s=1, alpha=alpha)
+            elif node.orientation_vec == OrientationVector(0.0, 1.0):
+                ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=alpha)
+            elif node.orientation_vec == OrientationVector(0.0, -1.0):
+                ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=alpha)
+
+        ax.set_title("Traversal Graph Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig(f"{filename}")
+        plt.close()
+
+    @staticmethod
     def plot_extracted_structs(occupancy_map: np.ndarray, 
                                origin_x: float, 
                                origin_y: float, 

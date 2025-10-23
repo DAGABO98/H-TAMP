@@ -952,6 +952,24 @@ class TraversalGraphGenerator:
                             edges.append(edge)
         return edges
     
+    def _create_straight_connections_for_drive_through_nodes(self,
+                                                            entry_nodes: List[str], 
+                                                            exit_nodes: List[str],
+                                                            ref_direction_vec: Tuple[float, float],
+                                                            nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
+        edges = []
+        for entry_node_label in entry_nodes:
+            entry_node = nodes_dict[entry_node_label]
+            if entry_node.orientation_vec == ref_direction_vec:
+                for exit_node_label in exit_nodes:
+                    exit_node = nodes_dict[exit_node_label]
+                    if exit_node.orientation_vec == ref_direction_vec:
+                        edge = self._create_edge_between_nodes(from_node=entry_node,
+                                                                to_node=exit_node, 
+                                                                action="switch_lanes")
+                        edges.append(edge)
+        return edges
+    
     def _create_corridor_straight_connections_for_nodes(self,
                                                         corridor: Corridor,
                                                         left_nodes: List[str], 
@@ -1309,16 +1327,19 @@ class TraversalGraphGenerator:
             original_ref_direction_vec = OrientationVector(1.0, 0.0)
             inverted_ref_direction_vec = OrientationVector(-1.0, 0.0)
 
-        original_drive_through_edges = self._create_straight_connections_for_nodes(ref_nodes=entry_nodes,
-                                                                         opp_nodes=exit_nodes,
+        original_drive_through_edges = self._create_straight_connections_for_drive_through_nodes(entry_nodes=entry_nodes,
+                                                                         exit_nodes=exit_nodes,
                                                                          ref_direction_vec=original_ref_direction_vec,
                                                                          nodes_dict=nodes_dict)
+
         edges.extend(original_drive_through_edges)
 
-        inverted_drive_through_edges = self._create_straight_connections_for_nodes(ref_nodes=exit_nodes,
-                                                                         opp_nodes=entry_nodes,
+        inverted_drive_through_edges = self._create_straight_connections_for_drive_through_nodes(entry_nodes=exit_nodes,
+                                                                         exit_nodes=entry_nodes,
                                                                          ref_direction_vec=inverted_ref_direction_vec,
                                                                          nodes_dict=nodes_dict)
+        
+        
         edges.extend(inverted_drive_through_edges)
 
         for i, entry_node_label in enumerate(entry_nodes):
@@ -1630,7 +1651,7 @@ class TraversalGraphGenerator:
                     subgraph_a_right_node.position.y <= subgraph_b_left_node.position.y )
     
     def _replace_node_in_edges(self,
-                                subgraph: IntersectionSubgraph | DoorwaySubgraph | DriveThroughSubgraph,
+                                subgraph: IntersectionSubgraph | DoorwaySubgraph | DriveThroughSubgraph | SwitchingPointSubgraph,
                                 old_node_label: str,
                                 new_node: TraversalNode):
 
@@ -2105,6 +2126,22 @@ class TraversalGraphGenerator:
                             self._merge_intersections_and_doorway_subgraphs(direction=current_direction,
                                                                             doorway_subgraph=current_doorway_subgraph,
                                                                             intersection_subgraph=compare_intersection_subgraph)
+
+    def _replace_node_in_switching_point_subgraph(self,
+                                          subgraph: SwitchingPointSubgraph,
+                                          old_node_label: str,
+                                          new_node: TraversalNode):
+        
+            self._replace_node_in_edges(subgraph, old_node_label, new_node)
+
+            for i in range(len(subgraph.left_nodes)):
+                if subgraph.left_nodes[i] == old_node_label:
+                    subgraph.left_nodes[i] = new_node.label
+                elif subgraph.right_nodes[i] == old_node_label:
+                    subgraph.right_nodes[i] = new_node.label
+            
+            subgraph.nodes_dict.pop(old_node_label)
+            subgraph.nodes_dict[new_node.label] = new_node
     
     def _get_subgraphs_for_corridor(self,
                                     corridor_id: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]]:
@@ -2348,6 +2385,13 @@ class TraversalGraphGenerator:
                                                          new_node=new_node,
                                                          exit_flag=(old_node_label in subgraph.right_exit_nodes or
                                                                     old_node_label in subgraph.left_exit_nodes))
+            
+        elif isinstance(subgraph, SwitchingPointSubgraph):
+            self._replace_node_in_switching_point_subgraph(subgraph=subgraph,
+                                                           old_node_label=old_node_label,
+                                                           new_node=new_node)
+        else:
+            raise ValueError("Invalid subgraph type for node replacement.")
         
         assert old_node_label not in subgraph.nodes_dict
 
@@ -2445,7 +2489,8 @@ class TraversalGraphGenerator:
                                                        current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
                                                        current_nodes_labels: list[str],
                                                        next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
-                                                       next_nodes_labels: list[str]) -> List[SwitchingPointSubgraph]:
+                                                       next_nodes_labels: list[str],
+                                                       first_merge: bool = True) -> List[SwitchingPointSubgraph]:
         initial_node_label = current_nodes_labels[0]
         next_node_label = next_nodes_labels[0]
         current_direction = current_corridor.direction
@@ -2465,7 +2510,7 @@ class TraversalGraphGenerator:
                               next_subgraph_group=next_subgraph_group,
                               next_nodes_labels=next_nodes_labels)
             return []
-        elif distance > 3 * self.switching_point_offset:
+        elif distance > 3 * self.switching_point_offset and first_merge:
             switching_point_subgraph = self._generate_switching_point_subgraph(center=Coordinate(
                                                                                 (initial_node.position.x + next_node.position.x) / 2.0, 
                                                                                 (initial_node.position.y + next_node.position.y) / 2.0
@@ -2478,19 +2523,26 @@ class TraversalGraphGenerator:
                 switching_point_current_labels = switching_point_subgraph.left_nodes
                 switching_point_next_labels = switching_point_subgraph.right_nodes
 
-            self._connect_subgraphs(current_corridor=current_corridor,
-                                    current_subgraph_group=current_subgraph_group,
-                                    current_nodes_labels=current_nodes_labels,
-                                    next_subgraph_group=[switching_point_subgraph],
-                                    next_nodes_labels=switching_point_next_labels)
+            switching_point_subgraphs = [switching_point_subgraph]
 
-            self._connect_subgraphs(current_corridor=current_corridor,
-                                    current_subgraph_group=[switching_point_subgraph],
-                                    current_nodes_labels=switching_point_current_labels,
-                                    next_subgraph_group=next_subgraph_group,
-                                    next_nodes_labels=next_nodes_labels)
+            first_switching_point_subgraphs = self._create_connective_structure_between_subgraphs(current_corridor=current_corridor,
+                                                                current_subgraph_group=current_subgraph_group,
+                                                                current_nodes_labels=current_nodes_labels,
+                                                                next_subgraph_group=switching_point_subgraphs,
+                                                                next_nodes_labels=switching_point_next_labels,
+                                                                first_merge=False)
 
-            return [switching_point_subgraph]
+            second_switching_point_subgraphs = self._create_connective_structure_between_subgraphs(current_corridor=current_corridor,
+                                                                current_subgraph_group=switching_point_subgraphs,
+                                                                current_nodes_labels=switching_point_current_labels,
+                                                                next_subgraph_group=next_subgraph_group,
+                                                                next_nodes_labels=next_nodes_labels,
+                                                                first_merge=False)
+
+            switching_point_subgraphs.extend(first_switching_point_subgraphs)
+            switching_point_subgraphs.extend(second_switching_point_subgraphs)
+
+            return switching_point_subgraphs
         else:
             self._connect_subgraphs(current_corridor=current_corridor,
                                     current_subgraph_group=current_subgraph_group,
@@ -2835,6 +2887,14 @@ if __name__ == "__main__":
                                                              drive_through_subgraphs=tg_generator.drive_through_subgraphs,
                                                              switching_point_subgraphs=tg_generator.switching_point_subgraphs,
                                                              filename="results/environment/all_subgraphs.svg")
+    
+    TraversalGraphPlottingHelper.plot_traversal_graph(traversal_graph=tg_generator.traversal_graph,
+                                                       occupancy_map=tg_generator.occupancy_map,
+                                                       origin_x=tg_generator.origin_x,
+                                                       origin_y=tg_generator.origin_y,
+                                                       resolution=tg_generator.resolution,
+                                                       filename="results/environment/traversal_graph.svg")
+    
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)
     print(tg_generator.drive_through_subgraph_indices)
