@@ -1,9 +1,11 @@
 import copy
 import heapq
-from typing import Dict, List, Tuple, Union
 import yaml
 import argparse
 import numpy as np
+
+from datetime import datetime
+from typing import Dict, List, Tuple, Union
 
 from HTAMP.traversal_dataclasses import Lane, OrientationVector, Corridor, DriveThrough, Coordinate
 from HTAMP.traversal_dataclasses import Doorway, TraversalNode, TraversalEdge, IntersectionSubgraph
@@ -16,7 +18,7 @@ class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
                  doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.2, num_samples: int = 10, threshold: float = 10.0,
-                 switching_point_offset: float = 15.0):
+                 switching_point_offset: float = 15.0, use_saved_structures: bool = False):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.tangent_scaling_factor = tangent_scaling_factor
@@ -2892,6 +2894,7 @@ class TraversalGraphGenerator:
         return all_pairs_paths
 
 if __name__ == "__main__":
+    pStart = datetime.now()
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="maps/FA3/FA3_lanes.yaml", help="Path to the configuration file")
     parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
@@ -2961,3 +2964,5 @@ if __name__ == "__main__":
     print(f"Total nodes in traversal graph: {len(tg_generator.traversal_graph.nodes_dict)}")
     print(f"Total edges in traversal graph: {len(tg_generator.traversal_graph.edges)}")
     print(f"Total shortest paths computed: {sum(len(paths) for paths in tg_generator.shortest_paths.values())}")
+    pEnd = datetime.now()
+    print(f"Total generation time: {pEnd - pStart}")
