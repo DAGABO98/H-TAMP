@@ -7,7 +7,7 @@ import numpy as np
 from HTAMP.traversal_dataclasses import Lane, OrientationVector, Corridor, DriveThrough, Coordinate
 from HTAMP.traversal_dataclasses import Doorway, TraversalNode, TraversalEdge, IntersectionSubgraph
 from HTAMP.traversal_dataclasses import DoorwaySubgraph, DriveThroughSubgraph, SwitchingPointSubgraph
-from HTAMP.traversal_dataclasses import EndPointSubgraph, TraversalGraph
+from HTAMP.traversal_dataclasses import TraversalGraph
 from HTAMP.geometry_helpers import CurvedConnector
 from HTAMP.plotting_helpers import TraversalGraphPlottingHelper
 
