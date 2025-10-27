@@ -243,6 +243,13 @@ class CurvedConnector:
             "L": self.connector_dict.get("L", max(np.linalg.norm(T0), np.linalg.norm(T1)))
         }
         return out
+    
+    def length(self, tol_len: float = 1e-7) -> float:
+        return GeometryHelper.arc_length_simpson(self.connector_dict["A"], 
+                                                 self.connector_dict["B"], 
+                                                 self.connector_dict["T0"], 
+                                                 self.connector_dict["T1"], 
+                                                 tol=tol_len)
 
     def split_connector_into_n(self, 
                                n_segments: int = 5, 

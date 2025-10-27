@@ -1,4 +1,5 @@
 import copy
+import heapq
 from typing import Dict, List, Tuple, Union
 import yaml
 import argparse
@@ -44,6 +45,8 @@ class TraversalGraphGenerator:
         self._merge_overlapping_drive_through_doorway_subgraphs()
         self._merge_overlapping_intersections_doorway_subgraphs()
         self.traversal_graph = self._assemble_traversal_graph()
+        self.adjacency_list = self._build_adjacency_list()
+        self.shortest_paths = self._compute_all_pairs_shortest_paths()
 
         print(f"Coarse map shape: {self.occupancy_map.shape}, meters per cell: {self.meters_per_cell:.4f}")
 
@@ -2831,6 +2834,63 @@ class TraversalGraphGenerator:
         
         return traversal_graph
 
+    def _build_adjacency_list(self) -> Dict[str, List[Tuple[str, float]]]:
+        adjacency_list = {}
+
+        for edge in self.traversal_graph.edges:
+            edge_length = edge.edge_connector.length()
+            adjacency_list.setdefault(edge.from_node, []).append((edge.to_node, edge_length))
+
+        return adjacency_list
+    
+    def _reconstruct_path(self,
+                          previous_nodes: Dict[str, Union[str, None]],
+                          target_node_label: str) -> List[str]:
+        path = []
+        current_node_label = target_node_label
+        while current_node_label is not None:
+            path.append(current_node_label)
+            current_node_label = previous_nodes[current_node_label]
+        path.reverse()
+        return path
+
+    def _dijkstra_shortest_path(self,
+                                start_node_label: str) -> Dict[str, Tuple[List[str], float]]:
+        
+        priority_queue = [(0, start_node_label)]
+        distances = {node_label: float('inf') for node_label in self.traversal_graph.nodes_dict.keys()}
+        previous_nodes = {node_label: None for node_label in self.traversal_graph.nodes_dict.keys()}
+
+        distances[start_node_label] = 0.0
+
+        while priority_queue:
+            current_distance, current_node_label = heapq.heappop(priority_queue)
+
+            if current_distance > distances[current_node_label]:
+                continue
+
+            for neighbor_label, weight in self.adjacency_list.get(current_node_label, []):
+                distance = current_distance + weight
+
+                if distance < distances[neighbor_label]:
+                    distances[neighbor_label] = distance
+                    previous_nodes[neighbor_label] = current_node_label
+                    heapq.heappush(priority_queue, (distance, neighbor_label))
+
+        paths: Dict[str, Tuple[List[str], float]] = {}
+
+        for node_label in self.traversal_graph.nodes_dict.keys():
+            if distances[node_label] < float('inf'):
+                paths[node_label] = (self._reconstruct_path(previous_nodes, node_label), distances[node_label])
+
+        return paths
+    
+    def _compute_all_pairs_shortest_paths(self) -> Dict[str, Dict[str, Tuple[List[str], float]]]:
+        all_pairs_paths = {}
+        for start_node_label in self.traversal_graph.nodes_dict.keys():
+            all_pairs_paths[start_node_label] = self._dijkstra_shortest_path(start_node_label)
+        return all_pairs_paths
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="maps/FA3/FA3_lanes.yaml", help="Path to the configuration file")
@@ -2898,3 +2958,6 @@ if __name__ == "__main__":
     print(tg_generator.corridor_intersection_subgraph_indices)
     print(tg_generator.doorway_subgraph_indices)
     print(tg_generator.drive_through_subgraph_indices)
+    print(f"Total nodes in traversal graph: {len(tg_generator.traversal_graph.nodes_dict)}")
+    print(f"Total edges in traversal graph: {len(tg_generator.traversal_graph.edges)}")
+    print(f"Total shortest paths computed: {sum(len(paths) for paths in tg_generator.shortest_paths.values())}")
