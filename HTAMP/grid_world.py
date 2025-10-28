@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from typing import List, Set, Tuple, Dict, Any
+from typing import List, Set, Tuple
 from matplotlib.patches import Rectangle, Circle
 
 from HTAMP.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
@@ -19,11 +19,6 @@ class GridWorld:
     height: int
     cell_size: float  # meters per cell
     occupancy_map: np.ndarray  # 2D numpy array with 1=occupied, 0=free
-
-    @classmethod
-    def empty(cls, width: int, height: int, cell_size: float) -> "GridWorld":
-        occupancy_map = np.zeros((height, width), dtype=np.uint8)
-        return cls(width, height, cell_size, occupancy_map)
 
     def is_in_bounds_cell(self, 
                           cell_index: GridIndex) -> bool:
@@ -106,6 +101,8 @@ class GridWorld:
             if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
                 return False
         return True
+
+    # TODO: fix functions below to move over traversal graph edges instead of grid cells
     
     def _get_occupied_cells_for_partial_move(self, 
                                           robot_start_pos: Coordinate, 

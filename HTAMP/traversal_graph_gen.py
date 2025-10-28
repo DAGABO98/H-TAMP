@@ -17,7 +17,7 @@ from HTAMP.plotting_helpers import TraversalGraphPlottingHelper
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
-                 doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.2, num_samples: int = 10, threshold: float = 10.0,
+                 doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.4, num_samples: int = 10, threshold: float = 10.0,
                  switching_point_offset: float = 15.0, use_saved_structures: bool = False):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
