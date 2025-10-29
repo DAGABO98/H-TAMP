@@ -202,6 +202,7 @@ class CurvedConnector:
         self.destination = destination
         self.vec_origin = vec_origin
         self.vec_destination = vec_destination
+        self.num_samples = num_samples
         self.connector_dict = self._generate_connector_dict(tangent_scaling_factor=tangent_scaling_factor, 
                                                             num_samples=num_samples)
 

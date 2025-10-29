@@ -1,36 +1,47 @@
+import argparse
+import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from typing import List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 from matplotlib.patches import Rectangle, Circle
 
+from HTAMP.geometry_helpers import CurvedConnector
 from HTAMP.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
-from HTAMP.loc_dataclasses import MotionReservation, PosChange, RobotOccupancy, TimeInterval
+from HTAMP.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
+from HTAMP.plotting_helpers import TraversalGraphPlottingHelper
+from HTAMP.traversal_dataclasses import TraversalGraph, TraversalNode, TraversalEdge
+from HTAMP.traversal_graph_gen import TraversalGraphGenerator
 
 @dataclass
 class RobotProfile:
     radius: float
-    speed: float
     robot_id: int
+    speed: float  # meters per second
 
-@dataclass
+
 class GridWorld:
-    width: int
-    height: int
-    cell_size: float  # meters per cell
-    occupancy_map: np.ndarray  # 2D numpy array with 1=occupied, 0=free
 
-    def is_in_bounds_cell(self, 
-                          cell_index: GridIndex) -> bool:
-        return 0 <= cell_index.index_x < self.width and 0 <= cell_index.index_y < self.height
+    def __init__(self, 
+                 cell_size: float,
+                 fps: float, 
+                 occupancy_map: np.ndarray, 
+                 traversal_graph: TraversalGraph,
+                 robot_profiles: List[RobotProfile]) -> None:
+        self.cell_size = cell_size  # meters per cell
+        self.fps = fps
+        self.occupancy_map = occupancy_map  # 2D numpy array with 1=occupied, 0=free
+        self.traversal_graph = traversal_graph
+        self.robot_profiles = robot_profiles
+        self.occupancy_reservations = self._create_occupancy_reservations()
 
-    def cell_rect(self, 
+    def _cell_rect(self, 
                   cell_index: GridIndex) -> Cell:
         lower_x = cell_index.index_x * self.cell_size
         lower_y = cell_index.index_y * self.cell_size
         return Cell(lower_x, lower_y, lower_x + self.cell_size, lower_y + self.cell_size)
     
-    def get_cell_index(self, 
+    def _get_cell_index(self, 
                        position: Coordinate) -> GridIndex:
         index_x = int(np.floor(position.x / self.cell_size))
         index_y = int(np.floor(position.y / self.cell_size))
@@ -39,7 +50,7 @@ class GridWorld:
     def _generate_closest_cell_coordinate(self, 
                                         robot_center: Coordinate,
                                         cell_index: GridIndex) -> Coordinate:
-        cell = self.cell_rect(cell_index)
+        cell = self._cell_rect(cell_index)
         selected_x = min(max(robot_center.x, cell.lower_x), cell.upper_x)
         selected_y = min(max(robot_center.y, cell.lower_y), cell.upper_y)
 
@@ -58,23 +69,13 @@ class GridWorld:
     def _get_robot_bounding_indices(self, 
                                     robot_center: Coordinate, 
                                     robot_profile: RobotProfile) -> BoundingIndices:
-        lower_index = self.get_cell_index(Coordinate(robot_center.x - robot_profile.radius, 
+        lower_index = self._get_cell_index(Coordinate(robot_center.x - robot_profile.radius, 
                                                      robot_center.y - robot_profile.radius))
-        upper_index = self.get_cell_index(Coordinate(robot_center.x + robot_profile.radius, 
+        upper_index = self._get_cell_index(Coordinate(robot_center.x + robot_profile.radius, 
                                                      robot_center.y + robot_profile.radius))
 
         return BoundingIndices(lower_index.index_x, lower_index.index_y, 
                                upper_index.index_x, upper_index.index_y)
-
-    def is_robot_in_bounds(self, 
-                          robot_center: Coordinate, 
-                          robot_profile: RobotProfile) -> bool:
-        bounding_indices = self._get_robot_bounding_indices(robot_center, robot_profile)
-
-        return (0 <= bounding_indices.lower_x < self.width and
-                0 <= bounding_indices.lower_y < self.height and
-                0 <= bounding_indices.upper_x < self.width and
-                0 <= bounding_indices.upper_y < self.height)
 
     def get_occupied_cells_for_robot(self, 
                                      robot_center: Coordinate, 
@@ -85,407 +86,197 @@ class GridWorld:
         for index_x in range(bounding_indices.lower_x, bounding_indices.upper_x + 1):
             for index_y in range(bounding_indices.lower_y, bounding_indices.upper_y + 1):
                 cell_index = GridIndex(index_x, index_y)
-                if self.is_in_bounds_cell(cell_index):
-                    if self.robot_intersects_cell(robot_center, robot_profile, cell_index):
-                        occupied_cells.append(cell_index)
+                if self.robot_intersects_cell(robot_center, robot_profile, cell_index):
+                    occupied_cells.append(cell_index)
         return occupied_cells
     
     def is_robot_in_free_space(self, 
                                 robot_center: Coordinate, 
                                 robot_profile: RobotProfile) -> bool:
-        if not self.is_robot_in_bounds(robot_center, robot_profile):
-            return False
-
         occupied_cells = self.get_occupied_cells_for_robot(robot_center, robot_profile)
         for cell_index in occupied_cells:
             if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
                 return False
         return True
-
-    # TODO: fix functions below to move over traversal graph edges instead of grid cells
     
     def _get_occupied_cells_for_partial_move(self, 
                                           robot_start_pos: Coordinate, 
-                                          robot_profile: RobotProfile,
-                                          pos_change: PosChange) -> Set[GridIndex]:
-        robot_end_pos = Coordinate(robot_start_pos.x + pos_change.dev_x, 
-                                   robot_start_pos.y + pos_change.dev_y)
-        return set(self.get_occupied_cells_for_robot(robot_end_pos, robot_profile))
+                                          robot_end_pos: Coordinate,
+                                          robot_profile: RobotProfile) -> Set[GridIndex]:
+        initial_occupied_cells = set(self.get_occupied_cells_for_robot(robot_start_pos, robot_profile))
+        final_occupied_cells = set(self.get_occupied_cells_for_robot(robot_end_pos, robot_profile))
+        occupied_cells = initial_occupied_cells.union(final_occupied_cells)
+        return occupied_cells
     
-    def _get_occupied_cells_at_step(self,
-                                    start_pos: Coordinate,
-                                    robot_profile: RobotProfile,
-                                    sign_num_minor_steps: int,
-                                    sign_num_major_steps: int,
-                                    scale_ratio: float,
-                                    step_num: int,
-                                    major_y: bool) -> Tuple[Set[GridIndex], PosChange]:
-        minor_displacement = sign_num_minor_steps * scale_ratio * step_num * self.cell_size
-        major_displacement = sign_num_major_steps * step_num * self.cell_size
-        if major_y:
-            pos_change = PosChange(dev_x=minor_displacement, dev_y=major_displacement)
-        else:
-            pos_change = PosChange(dev_x=major_displacement, dev_y=minor_displacement)
-
-        occupied_cells: Set[GridIndex] = self._get_occupied_cells_for_partial_move(robot_start_pos=start_pos, 
-                                                                                    robot_profile=robot_profile, 
-                                                                                    pos_change=pos_change)
-        return occupied_cells, pos_change
-    
-    def _generate_robot_occupancy_list(self,
-                                       start_pos: Coordinate, 
-                                       robot_profile: RobotProfile,
-                                       abs_num_major_steps: int,
-                                       abs_num_minor_steps: int,
-                                       sign_num_major_steps: int,
-                                       sign_num_minor_steps: int,
-                                       major_y: bool) -> List[RobotOccupancy]:
+    def _generate_robot_occupancy_for_move(self,
+                                           curved_connector: CurvedConnector,
+                                           robot_profile: RobotProfile) -> List[RobotOccupancy]:
+        connector_length = curved_connector.length()
+        num_frames = int(np.ceil((connector_length / robot_profile.speed) * self.fps))
         robot_occupancies: List[RobotOccupancy] = []
 
-        scale_ratio = float(abs_num_minor_steps) / float(abs_num_major_steps)
+        segments, _ = curved_connector.split_connector_into_n(num_frames)
+        for segment in segments:
+            segment_start = Coordinate(segment['X'][0], segment['Y'][0])
+            segment_end = Coordinate(segment['X'][-1], segment['Y'][-1])
+            occupied_cells = self._get_occupied_cells_for_partial_move(segment_start,
+                                                                       segment_end,
+                                                                       robot_profile)
+            occupancy = RobotOccupancy(occupied_cells=occupied_cells,
+                                       start_location=segment_start,
+                                       end_location=segment_end)
+            robot_occupancies.append(occupancy)
 
-        for i in range(abs_num_major_steps):
-            prev_cells, _ = self._get_occupied_cells_at_step(start_pos=start_pos,
-                                                            robot_profile=robot_profile,
-                                                            sign_num_minor_steps=sign_num_minor_steps,
-                                                            sign_num_major_steps=sign_num_major_steps,
-                                                            scale_ratio=scale_ratio,
-                                                            step_num=i,
-                                                            major_y=major_y)
-            
-            curr_cells, curr_pos_change = self._get_occupied_cells_at_step(start_pos=start_pos,
-                                                        robot_profile=robot_profile,
-                                                        sign_num_minor_steps=sign_num_minor_steps,
-                                                        sign_num_major_steps=sign_num_major_steps,
-                                                        scale_ratio=scale_ratio,
-                                                        step_num=i+1,
-                                                        major_y=major_y)
-
-            occupied_cells = prev_cells.union(curr_cells)
-
-            robot_occupancy = RobotOccupancy(occupied_cells=occupied_cells,
-                                             robot_center=Coordinate(start_pos.x + curr_pos_change.dev_x, 
-                                                                     start_pos.y + curr_pos_change.dev_y))
-            robot_occupancies.append(robot_occupancy)
         return robot_occupancies
     
-    def _generate_robot_timing_list(self,
-                                   robot_profile: RobotProfile,
-                                   current_time: float,
-                                   abs_num_major_steps: int,
-                                   abs_num_minor_steps: int,
-                                   sign_num_major_steps: int,
-                                   sign_num_minor_steps: int) -> List[TimeInterval]:
+    def _generate_robot_timing_for_move(self,
+                                        curved_connector: CurvedConnector,
+                                        robot_profile: RobotProfile) -> List[TimeInterval]:
+        connector_length = curved_connector.length()
+        num_frames = int(np.ceil((connector_length / robot_profile.speed) * self.fps))
+        total_time = connector_length / robot_profile.speed
+        time_per_frame = total_time / num_frames
         time_intervals: List[TimeInterval] = []
 
-        scale_ratio = float(abs_num_minor_steps) / float(abs_num_major_steps)
-
-        for i in range(abs_num_major_steps):
-            prev_minor_displacement = sign_num_minor_steps * scale_ratio * i * self.cell_size
-            prev_major_displacement = sign_num_major_steps * i * self.cell_size
-            prev_total_displacement = np.sqrt(prev_minor_displacement**2 + prev_major_displacement**2)
-            prev_time_to_end = prev_total_displacement / robot_profile.speed if robot_profile.speed > 0 else 0
-
-            minor_displacement = sign_num_minor_steps * scale_ratio * (i+1) * self.cell_size
-            major_displacement = sign_num_major_steps * (i+1) * self.cell_size
-            total_displacement = np.sqrt(minor_displacement**2 + major_displacement**2)
-            time_to_end = total_displacement / robot_profile.speed if robot_profile.speed > 0 else 0
-            
-            time_interval = TimeInterval(start=current_time + prev_time_to_end, 
-                                         end=current_time + time_to_end)
+        for i in range(num_frames):
+            start_time = i * time_per_frame
+            end_time = (i + 1) * time_per_frame
+            time_interval = TimeInterval(start=start_time, end=end_time)
             time_intervals.append(time_interval)
+
+        assert end_time == connector_length / robot_profile.speed
+
         return time_intervals
     
+    def _check_for_occupancy_conflict(self,
+                                    robot_occupancies: List[RobotOccupancy]) -> bool:
+        for occupancy in robot_occupancies:
+            for cell_index in occupancy.occupied_cells:
+                if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
+                    return True
+        return False
+
+    def _create_robot_occupancy_reservations(self, robot_profile: RobotProfile) -> Dict[str, Dict[str, List[MotionReservation]]]:
+        occupancy_reservations: Dict[str, Dict[str, List[MotionReservation]]] = {}
+        for traversal_edge in self.traversal_graph.edges:
+            print(f"Creating occupancy reservations for robot {robot_profile.robot_id} "
+                  f"on edge from {traversal_edge.from_node} to {traversal_edge.to_node}")
+            occupancy_reservations.setdefault(traversal_edge.from_node, {})
+            edges = occupancy_reservations[traversal_edge.from_node]
+            edges.setdefault(traversal_edge.to_node, [])
+            robot_occupancies = self._generate_robot_occupancy_for_move(traversal_edge.edge_connector,
+                                                                       robot_profile)
+            
+            if self._check_for_occupancy_conflict(robot_occupancies):
+                raise ValueError(f"Occupancy conflict detected for robot {robot_profile.robot_id} "
+                                 f"on edge from {traversal_edge.from_node} to {traversal_edge.to_node}")
+            
+            time_intervals = self._generate_robot_timing_for_move(traversal_edge.edge_connector,
+                                                                   robot_profile)
+            assert len(robot_occupancies) == len(time_intervals)
+
+            for i in range(len(robot_occupancies)):
+                reservation = MotionReservation(time_interval=time_intervals[i],
+                                                robot_occupancy=robot_occupancies[i])
+                edges[traversal_edge.to_node].append(reservation)
+
+        return occupancy_reservations
+
+    def _create_occupancy_reservations(self) -> Dict[str, Dict[str, Dict[str, List[MotionReservation]]]]:
+        occupancy_reservations: Dict[str, Dict[str, Dict[str, List[MotionReservation]]]] = {}
+        for robot_profile in self.robot_profiles:
+            robot_id_str = f"robot_{robot_profile.robot_id}"
+            occupancy_reservations[robot_id_str] = self._create_robot_occupancy_reservations(robot_profile)
+
+        return occupancy_reservations
+    
     def get_robot_occupancy_for_move(self,
-                                     robot_start_pos: Coordinate, 
-                                     robot_end_pos: Coordinate,
-                                     robot_profile: RobotProfile) -> List[RobotOccupancy]:
-        num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
-        num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
+                                    edge: TraversalEdge,
+                                    robot_profile: RobotProfile) -> List[RobotOccupancy]:
 
-        if num_y_steps == 0 and num_x_steps == 0:
-            occupied_cells = set(self.get_occupied_cells_for_robot(robot_center=robot_start_pos,
-                                                                   robot_profile=robot_profile))
-            return [RobotOccupancy(occupied_cells=occupied_cells,
-                                   robot_center=robot_start_pos)]
+        robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
+        motion_reservation = robot_motion_reservation[edge.from_node][edge.to_node]
 
-        abs_num_x_steps = abs(num_x_steps)
-        abs_num_y_steps = abs(num_y_steps)
-        sign_num_x_steps = 1 if num_x_steps > 0 else -1
-        sign_num_y_steps = 1 if num_y_steps > 0 else -1
+        robot_occupancies = [res.robot_occupancy for res in motion_reservation]
 
-        if abs_num_y_steps > abs_num_x_steps:
-            major_y = True
-            return self._generate_robot_occupancy_list(start_pos=robot_start_pos, 
-                                                       robot_profile=robot_profile,
-                                                       abs_num_major_steps=abs_num_y_steps,
-                                                       abs_num_minor_steps=abs_num_x_steps,
-                                                       sign_num_major_steps=sign_num_y_steps,
-                                                       sign_num_minor_steps=sign_num_x_steps,
-                                                       major_y=major_y)
-        else:
-            major_y = False
-            return self._generate_robot_occupancy_list(start_pos=robot_start_pos, 
-                                                       robot_profile=robot_profile,
-                                                       abs_num_major_steps=abs_num_x_steps,
-                                                       abs_num_minor_steps=abs_num_y_steps,
-                                                       sign_num_major_steps=sign_num_x_steps,
-                                                       sign_num_minor_steps=sign_num_y_steps,
-                                                       major_y=major_y)
+        return robot_occupancies
     
     def get_robot_timing_for_move(self,
-                                  robot_start_pos: Coordinate, 
-                                  robot_end_pos: Coordinate,
-                                  robot_profile: RobotProfile,
-                                  current_time: float,
-                                  end_time: float) -> List[TimeInterval]:
-        num_y_steps = round((robot_end_pos.y - robot_start_pos.y) / self.cell_size)
-        num_x_steps = round((robot_end_pos.x - robot_start_pos.x) / self.cell_size)
+                                 edge: TraversalEdge,
+                                 robot_profile: RobotProfile) -> List[TimeInterval]:
 
-        if num_y_steps == 0 and num_x_steps == 0:
-            return [TimeInterval(start=current_time, end=end_time)]
+        robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
+        motion_reservation = robot_motion_reservation[edge.from_node][edge.to_node]
 
-        abs_num_x_steps = abs(num_x_steps)
-        abs_num_y_steps = abs(num_y_steps)
-        sign_num_x_steps = 1 if num_x_steps > 0 else -1
-        sign_num_y_steps = 1 if num_y_steps > 0 else -1
+        time_intervals = [res.time_interval for res in motion_reservation]
 
-        if abs_num_y_steps > abs_num_x_steps:
-            return self._generate_robot_timing_list(robot_profile=robot_profile,
-                                                    current_time=current_time,
-                                                    abs_num_major_steps=abs_num_y_steps,
-                                                    abs_num_minor_steps=abs_num_x_steps,
-                                                    sign_num_major_steps=sign_num_y_steps,
-                                                    sign_num_minor_steps=sign_num_x_steps)
-        else:
-            return self._generate_robot_timing_list(robot_profile=robot_profile,
-                                                    current_time=current_time,
-                                                    abs_num_major_steps=abs_num_x_steps,
-                                                    abs_num_minor_steps=abs_num_y_steps,
-                                                    sign_num_major_steps=sign_num_x_steps,
-                                                    sign_num_minor_steps=sign_num_y_steps)
+        return time_intervals
 
-    def get_robot_reservations_for_move(self, 
-                                  robot_start_pos: Coordinate, 
-                                  robot_end_pos: Coordinate,
-                                  robot_profile: RobotProfile,
-                                  current_time: float, 
-                                  end_time: float) -> List[MotionReservation]:
-        
-        robot_occupancies = self.get_robot_occupancy_for_move(robot_start_pos, 
-                                                             robot_end_pos,
-                                                             robot_profile)
-        time_intervals = self.get_robot_timing_for_move(robot_start_pos,
-                                                        robot_end_pos,
-                                                        robot_profile,
-                                                        current_time,
-                                                        end_time)
-        assert len(robot_occupancies) == len(time_intervals)
+    def get_robot_reservations_for_move(self,
+                                        edge: TraversalEdge,
+                                        robot_profile: RobotProfile,
+                                        current_time: float) -> List[MotionReservation]:
+
+        robot_occupancies = self.get_robot_occupancy_for_move(edge, robot_profile)
+        time_intervals = self.get_robot_timing_for_move(edge, robot_profile)
+
         reservations: List[MotionReservation] = []
         for i in range(len(robot_occupancies)):
-            reservation = MotionReservation(time_interval=time_intervals[i],
+            shifted_start = time_intervals[i].start + current_time
+            shifted_end = time_intervals[i].end + current_time
+            new_time_interval = TimeInterval(start=shifted_start, end=shifted_end)
+            reservation = MotionReservation(time_interval=new_time_interval,
                                             robot_occupancy=robot_occupancies[i])
             reservations.append(reservation)
 
         return reservations
     
-    def is_move_collision_free(self,
-                               robot_start_pos: Coordinate, 
-                               robot_end_pos: Coordinate,
-                               robot_profile: RobotProfile) -> bool:
-        robot_occupancies = self.get_robot_occupancy_for_move(robot_start_pos, 
-                                                             robot_end_pos,
-                                                             robot_profile)
-        for occupancy in robot_occupancies:
-            for cell_index in occupancy.occupied_cells:
-                if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
-                    return False
-        return True
-    
-    def _get_potential_move_position(self,
-                                    robot_center: Coordinate, 
-                                    robot_profile: RobotProfile,
-                                    index_x: int, 
-                                    index_y: int) -> Coordinate:
-        cell_index = GridIndex(index_x, index_y)
-        coordinate = self._generate_closest_cell_coordinate(robot_center=robot_center,
-                                                            cell_index=cell_index)
-
-        if not self.is_robot_in_bounds(coordinate, robot_profile) or \
-            not self.is_robot_in_free_space(coordinate, robot_profile) or \
-                not self.is_move_collision_free(robot_center, coordinate, robot_profile):
-            return None
-        else:
-            return coordinate
-
-    def get_valid_moves(self, 
-                        robot_center: Coordinate, 
-                        robot_profile: RobotProfile) -> List[Coordinate]:
-        valid_moves: List[Coordinate] = []
-
-        single_x_displacement = [1.0, 0.0, -1.0]
-        single_y_displacement = [1.0, 0.0, -1.0]
-        double_x_displacement = [2.0, -2.0]
-        double_y_displacement = [2.0, -2.0]
-
-        for single_x in single_x_displacement:
-            for single_y in single_y_displacement:
-                if single_x == 0 and single_y == 0:
-                    continue
-                coordinate = Coordinate(robot_center.x + (single_x * self.cell_size),
-                                        robot_center.y + (single_y * self.cell_size))
-                if self.is_robot_in_bounds(coordinate, robot_profile) and \
-                    self.is_robot_in_free_space(coordinate, robot_profile) and \
-                        self.is_move_collision_free(robot_center, coordinate, robot_profile):
-                    valid_moves.append(coordinate)
-
-        for double_x in double_x_displacement:
-            for single_y in single_y_displacement:
-                if single_y == 0:
-                    continue
-                coordinate = Coordinate(robot_center.x + (double_x * self.cell_size),
-                                        robot_center.y + (single_y * self.cell_size))
-                if self.is_robot_in_bounds(coordinate, robot_profile) and \
-                    self.is_robot_in_free_space(coordinate, robot_profile) and \
-                        self.is_move_collision_free(robot_center, coordinate, robot_profile):   
-                    valid_moves.append(coordinate)
-        
-        for double_y in double_y_displacement:
-            for single_x in single_x_displacement:
-                if single_x == 0:
-                    continue
-                coordinate = Coordinate(robot_center.x + single_x * self.cell_size,
-                                        robot_center.y + double_y * self.cell_size)
-                if self.is_robot_in_bounds(coordinate, robot_profile) and \
-                    self.is_robot_in_free_space(coordinate, robot_profile) and \
-                        self.is_move_collision_free(robot_center, coordinate, robot_profile):
-                    valid_moves.append(coordinate)
-
-        return valid_moves
-    
-    def plot_next_move(self, 
-                       cell_size: float = 0.03534*2, 
-                       robot_profile: RobotProfile = RobotProfile(radius=0.20, speed=0.1, robot_id=1),
-                       start_pos: Coordinate = Coordinate(30*0.03534*2, 10*0.03534*2),
-                       end_pos: Coordinate = Coordinate(32*0.03534*2, 10*0.03534*2), 
-                       next_positions: List[Coordinate] = []):
-        fig, ax = plt.subplots(figsize=(8, 6))
-        for x in np.arange(0, (self.width + 1) * cell_size, cell_size):
-            ax.axvline(x, linewidth=0.3)
-        for y in np.arange(0, (self.height + 1) * cell_size, cell_size):
-            ax.axhline(y, linewidth=0.3)
-
-        for grid_index in self.get_occupied_cells_for_robot(robot_center=start_pos, 
-                                                            robot_profile=robot_profile):
-            cell = self.cell_rect(cell_index=grid_index)
-            ax.add_patch(Rectangle((cell.lower_x, cell.lower_y), cell_size, cell_size, fill=False, linewidth=1.2))
-
-        # Plot original robot position
-        ax.add_patch(Circle((start_pos.x, start_pos.y), robot_profile.radius, fill=False, color='blue', linewidth=2, label='Original Position'))
-
-        # Plot new robot position
-        ax.add_patch(Circle((end_pos.x, end_pos.y), robot_profile.radius, fill=False, color='green', linewidth=2, label='New Position'))
-
-        # Plot the line of movement
-        ax.plot([start_pos.x, end_pos.x], [start_pos.y, end_pos.y], 'r--', linewidth=1, label='Movement')
-
-
-        preview_radius = robot_profile.radius * 0.05
-        for coordinate in next_positions:
-            ax.add_patch(Circle((coordinate.x, coordinate.y), preview_radius, color='red', fill=True))
-
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlim(0, width * cell_size)
-        ax.set_ylim(0, height * cell_size)
-        ax.set_title("Grid World • Circular Robot Covering Multiple Cells • Potential Moves")
-        ax.legend()
-        plt.savefig("results/motion_planning/grid_move_example.png")
-        plt.close()
-
-    def plot_reservations(self, 
-                          reservations: List[MotionReservation], 
-                          cell_size: float,
-                          robot_profile: RobotProfile, 
-                          start_pos: Coordinate, 
-                          end_pos: Coordinate):
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-
-        # Plot grid lines
-        for x in np.arange(0, (self.width + 1) * cell_size, cell_size):
-            ax.axvline(x, linewidth=0.3, color='lightgray')
-        for y in np.arange(0, (self.height + 1) * cell_size, cell_size):
-            ax.axhline(y, linewidth=0.3, color='lightgray')
-        
-        # Plot original robot position
-        ax.add_patch(Circle((start_pos.x, start_pos.y), robot_profile.radius, fill=False, color='blue', linewidth=1, label='Original Position'))
-
-        # Plot new robot position
-        ax.add_patch(Circle((end_pos.x, end_pos.y), robot_profile.radius, fill=False, color='green', linewidth=1, label='New Position'))
-
-        # Plot the line of movement
-        ax.plot([start_pos.x, end_pos.x], [start_pos.y, end_pos.y], 'r--', linewidth=1, label='Movement')
-
-        # Plot reserved cells with different colors for different time intervals
-        color_map = plt.get_cmap('viridis', len(reservations))
-        for i, reservation in enumerate(reservations):
-            print(i)
-            color = color_map(i)
-            for cell_index in reservation.robot_occupancy.occupied_cells:
-                cell = self.cell_rect(cell_index=cell_index)
-                ax.add_patch(Rectangle((cell.lower_x, cell.lower_y), cell_size, cell_size, color=color, alpha=0.2, 
-                                       label=f'{reservation.time_interval.start:.2f}-{reservation.time_interval.end:.2f}'))
-
-            ax.add_patch(Circle((reservation.robot_occupancy.robot_center.x, 
-                                 reservation.robot_occupancy.robot_center.y), 
-                                 robot_profile.radius, fill=False, color=color, linewidth=0.5))
-
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlim(0, self.width * cell_size)
-        ax.set_ylim(0, self.height * cell_size)
-        ax.set_title("Grid World • Cell Reservations Over Time")
-        ax.set_xlabel("X (meters)")
-        ax.set_ylabel("Y (meters)")
-
-        # Create a legend with unique labels
-        handles, labels = ax.get_legend_handles_labels()
-        unique_labels = list(dict.fromkeys(labels))
-        unique_handles = [handles[labels.index(ul)] for ul in unique_labels]
-        ax.legend(unique_handles, unique_labels, title="Time Intervals (s)")
-
-        plt.savefig("results/motion_planning/grid_reservations_example.png")
-        plt.close()
 
 if __name__ == "__main__":
-    width, height = 50, 25
-    cell_size = 2*0.03534
-    world = GridWorld.empty(width, height, cell_size)
+    pStart = datetime.datetime.now()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", type=str, default="maps/FA3/FA3_lanes.yaml", help="Path to the configuration file")
+    parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
+    parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
+    parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
+    parser.add_argument("--fps", type=float, default=1.0, help="Frames per second for the grid world")
+    args = parser.parse_args()
 
-    robot_profile = RobotProfile(radius=0.20, speed=0.1, robot_id=1)
-    start_pos = Coordinate(30*cell_size, 10*cell_size)
+    print("Generating Traversal Graph...")
 
-    occ_cells = world.get_occupied_cells_for_robot(robot_center=start_pos, 
-                                                   robot_profile=robot_profile)
-    next_positions = world.get_valid_moves(robot_center=start_pos, 
-                                           robot_profile=robot_profile)
-    #Select a random valid move
-    import random
-    if next_positions:
-        end_pos = random.choice(next_positions)
-    else:
-        end_pos = start_pos # Stay in place if no valid moves
+    tg_generator = TraversalGraphGenerator(occupancy_map_path=args.occupancy_map_path,
+                                           config_path=args.config_path,
+                                           meters_per_pixel=args.meters_per_pixel,
+                                           factor=args.factor)
+
+    print("Traversal Graph generated.")
+
+    print("Creating Grid World...")
+
+    robot_profile = RobotProfile(radius=0.08, speed=0.2, robot_id=1)
+
+    world = GridWorld(cell_size=tg_generator.meters_per_cell,
+                      fps=args.fps,
+                      occupancy_map=tg_generator.occupancy_map,
+                      traversal_graph=tg_generator.traversal_graph,
+                      robot_profiles=[robot_profile])
     
-    world.plot_next_move(cell_size=cell_size, 
-                         robot_profile=robot_profile, 
-                         start_pos=start_pos, 
-                         end_pos=end_pos,
-                         next_positions=next_positions)
-    reservations = world.get_robot_reservations_for_move(robot_start_pos=start_pos, 
-                                                         robot_end_pos=end_pos, 
-                                                         robot_profile=robot_profile, 
-                                                         current_time=0.0,
-                                                         end_time=5.0)
-    world.plot_reservations(reservations, cell_size, robot_profile, start_pos, end_pos)
+    print("Grid World created.")
+
+    occupancy_reservations = world.get_robot_reservations_for_move(
+        edge=tg_generator.traversal_graph.edges[0],
+        robot_profile=robot_profile,
+        current_time=0.0
+    )
+
+    TraversalGraphPlottingHelper.plot_motion_reservations(occupancy_map=world.occupancy_map,
+                                                          origin_x=tg_generator.origin_x,
+                                                          origin_y=tg_generator.origin_y,
+                                                          resolution=tg_generator.resolution,
+                                                          motion_reservations=occupancy_reservations,
+                                                          filename="results/motion_planning/robot_motion_reservations.png")
+    pEnd = datetime.datetime.now()
+    print(f"Total generation time: {pEnd - pStart}")
 
     
         

@@ -37,11 +37,6 @@ class Cell:
     upper_y: float
 
 @dataclass(frozen=True)
-class PosChange:
-    dev_x: float
-    dev_y: float
-
-@dataclass(frozen=True)
 class BoundingIndices:
     lower_x: int
     lower_y: int
@@ -73,7 +68,8 @@ class TimeInterval:
 @dataclass
 class RobotOccupancy:
     occupied_cells: Set[GridIndex]
-    robot_center: Coordinate
+    start_location: Coordinate
+    end_location: Coordinate
 
 @dataclass
 class MotionReservation:
