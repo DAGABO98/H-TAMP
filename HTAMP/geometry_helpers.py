@@ -1,11 +1,10 @@
 
 
-import argparse
-from typing import List, Optional, Tuple
+from typing import Tuple
 
-from matplotlib import pyplot as plt
 import numpy as np
 from HTAMP.loc_dataclasses import Coordinate
+from HTAMP.plotting_helpers import GeometryPlottingHelper
 
 class GeometryHelper:
 
@@ -176,18 +175,7 @@ class GeometryHelper:
             if abs(s - target_len) <= tol_len: return float(t)
             a, b = (t, b) if s < target_len else (a, t)
         return float(0.5*(a+b))
-    
-    @staticmethod
-    def plot_segments(seg_list: List[dict], 
-                      title: str = "Connector split into N equal-length segments", 
-                      output_path: str = "curved_connector_segments.png"):
-        fig, ax = plt.subplots(figsize=(7,5))
-        styles = ["-", "--", "-.", ":", (0, (3,1,1,1))]  # cycles if N>5
-        for i, s in enumerate(seg_list):
-            ax.plot(s["X"], s["Y"], linewidth=2, linestyle=styles[i % len(styles)], label=f"{i+1}")
-        ax.set_aspect('equal', adjustable='box'); ax.grid(True); ax.legend(); ax.set_title(title)
-        plt.savefig(output_path)
-        plt.close()
+
 
 
 class CurvedConnector:
@@ -289,39 +277,6 @@ class CurvedConnector:
         info = {"t_list": t_targets, "L_total": L_total, "L_target": L_target}
         return segments, info
 
-    def plot_connector(self, 
-                       title: Optional[str] = None, 
-                       output_path : str ="curved_connector.png"):
-        import numpy as np
-        A, B = self.connector_dict["A"], self.connector_dict["B"]
-        X, Y = self.connector_dict["X"], self.connector_dict["Y"]
-
-        # Determine a reasonable span for drawing guide lines
-        span = max(10.0, 1.5 * max(1.0, np.linalg.norm(B - A)))
-
-        fig, ax = plt.subplots(figsize=(7, 5))
-
-        # The curve itself
-        ax.plot(X, Y, linewidth=2)
-
-        # Endpoints
-        ax.scatter([A[0], B[0]], [A[1], B[1]], s=50, zorder=3)
-
-        # Guide lines for tangents
-        L = self.connector_dict.get("L", max(np.linalg.norm(self.connector_dict["T0"]), 
-                                             np.linalg.norm(self.connector_dict["T1"])) + 1e-9)
-        ax.arrow(A[0], A[1], self.connector_dict["T0"][0], self.connector_dict["T0"][1],
-                head_width=0.03*L, head_length=0.06*L, length_includes_head=True)
-        ax.arrow(B[0], B[1], self.connector_dict["T1"][0], self.connector_dict["T1"][1],
-                head_width=0.03*L, head_length=0.06*L, length_includes_head=True)
-
-        ax.set_title(title or f"Connector from ({A[0]:.1f}, {A[1]:.1f}) to ({B[0]:.1f}, {B[1]:.1f})")
-        ax.set_xlabel("x"); ax.set_ylabel("y")
-        ax.set_aspect('equal', adjustable='box')
-        ax.grid(True)
-        plt.savefig(output_path)
-        plt.close()
-
 
 if __name__ == "__main__":
 
@@ -345,8 +300,9 @@ if __name__ == "__main__":
                                                 vec_destination=dir_vec2, 
                                                 tangent_scaling_factor=tangent_scaling_factor,
                                                 num_samples=num_samples)
-    curved_connector_same_dir.plot_connector(title="Curved Connector: Same Direction",
-                                             output_path="results/geometry/curved_connector_same.png")
+    GeometryPlottingHelper.plot_connector(connector_dict=curved_connector_same_dir.connector_dict,
+                                  title="Curved Connector: Same Direction",
+                                  output_path="results/geometry/curved_connector_same.png")
 
     curved_connector_opp_dir = CurvedConnector(origin=origin,
                                                 destination=destination1,
@@ -354,8 +310,9 @@ if __name__ == "__main__":
                                                 vec_destination=dir_vec3,
                                                 tangent_scaling_factor=tangent_scaling_factor,
                                                 num_samples=num_samples)
-    curved_connector_opp_dir.plot_connector(title="Curved Connector: Opposite Direction",
-                                             output_path="results/geometry/curved_connector_opp.png")
+    GeometryPlottingHelper.plot_connector(connector_dict=curved_connector_opp_dir.connector_dict,
+                                   title="Curved Connector: Opposite Direction",
+                                   output_path="results/geometry/curved_connector_opp.png")
     
     curved_connector_perp_dir = CurvedConnector(origin=origin,
                                                 destination=destination2,
@@ -363,8 +320,9 @@ if __name__ == "__main__":
                                                 vec_destination=dir_vec4,
                                                 tangent_scaling_factor=tangent_scaling_factor,
                                                 num_samples=num_samples)
-    curved_connector_perp_dir.plot_connector(title="Curved Connector: Perpendicular Direction",
-                                             output_path="results/geometry/curved_connector_perp.png")
+    GeometryPlottingHelper.plot_connector(connector_dict=curved_connector_perp_dir.connector_dict,
+                                   title="Curved Connector: Perpendicular Direction",
+                                   output_path="results/geometry/curved_connector_perp.png")
 
     segments, info = curved_connector_perp_dir.split_connector_into_n(n_segments=10, tol_len=1e-8, n_samples=400)
     print(f"t_list: {[f'{t:.9f}' for t in info['t_list']]}")
@@ -373,6 +331,6 @@ if __name__ == "__main__":
     # Verify numerically
     lens = [GeometryHelper.arc_length_simpson(s["A"], s["B"], s["T0"], s["T1"], tol=1e-9) for s in segments]
     print("Segment lengths:", [f"{L:.9f}" for L in lens])
-    GeometryHelper.plot_segments(segments, 
-                                 title="Curved Connector Split into 10 Equal-Length Segments", 
-                                 output_path="results/geometry/curved_connector_perp_split10.png")
+    GeometryPlottingHelper.plot_segments(segments,
+                                         title="Curved Connector Split into 10 Equal-Length Segments", 
+                                         output_path="results/geometry/curved_connector_perp_split10.png")
