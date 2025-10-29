@@ -484,9 +484,9 @@ class TraversalGraphPlottingHelper:
     
             for reservation in motion_reservations:
                 occupied_cells = reservation.robot_occupancy.occupied_cells
-                cell_xs = [cell.index_x * resolution + origin_x + resolution / 2 for cell in occupied_cells]
-                cell_ys = [cell.index_y * resolution + origin_y + resolution / 2 for cell in occupied_cells]
-                ax.scatter(cell_xs, cell_ys, s=1, alpha=0.5)
+                cell_xs = [cell.index_x * resolution for cell in occupied_cells]
+                cell_ys = [cell.index_y * resolution for cell in occupied_cells]
+                ax.scatter(cell_xs, cell_ys, s=0.01, alpha=0.5)
     
             ax.set_title("Motion Reservations Overlay")
             ax.set_xlabel("X (meters)")

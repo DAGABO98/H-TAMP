@@ -1,3 +1,4 @@
+import pickle
 import argparse
 import datetime
 import numpy as np
@@ -27,13 +28,29 @@ class GridWorld:
                  fps: float, 
                  occupancy_map: np.ndarray, 
                  traversal_graph: TraversalGraph,
-                 robot_profiles: List[RobotProfile]) -> None:
+                 robot_profiles: List[RobotProfile],
+                 use_saved_data: bool,
+                 occupancy_reservations_file: str) -> None:
         self.cell_size = cell_size  # meters per cell
         self.fps = fps
         self.occupancy_map = occupancy_map  # 2D numpy array with 1=occupied, 0=free
         self.traversal_graph = traversal_graph
         self.robot_profiles = robot_profiles
-        self.occupancy_reservations = self._create_occupancy_reservations()
+        self.occupancy_reservations_file = occupancy_reservations_file
+        if use_saved_data:
+            self.occupancy_reservations = self._load_occupancy_reservations()
+        else:
+            self.occupancy_reservations = self._create_occupancy_reservations()
+            self._save_occupancy_reservations()
+    
+    def _load_occupancy_reservations(self) -> Dict[str, Dict[str, Dict[str, List[MotionReservation]]]]:
+        with open(self.occupancy_reservations_file, 'rb') as f:
+            occupancy_reservations = pickle.load(f)
+        return occupancy_reservations
+    
+    def _save_occupancy_reservations(self) -> None:
+        with open(self.occupancy_reservations_file, 'wb') as f:
+            pickle.dump(self.occupancy_reservations, f)
 
     def _cell_rect(self, 
                   cell_index: GridIndex) -> Cell:
@@ -240,6 +257,8 @@ if __name__ == "__main__":
     parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
     parser.add_argument("--fps", type=float, default=1.0, help="Frames per second for the grid world")
+    parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
+    parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
     args = parser.parse_args()
 
     print("Generating Traversal Graph...")
@@ -259,22 +278,26 @@ if __name__ == "__main__":
                       fps=args.fps,
                       occupancy_map=tg_generator.occupancy_map,
                       traversal_graph=tg_generator.traversal_graph,
-                      robot_profiles=[robot_profile])
-    
+                      robot_profiles=[robot_profile],
+                      use_saved_data=args.use_saved_data,
+                      occupancy_reservations_file=args.occupancy_reservations_file)
+
     print("Grid World created.")
 
     occupancy_reservations = world.get_robot_reservations_for_move(
-        edge=tg_generator.traversal_graph.edges[0],
+        edge=tg_generator.traversal_graph.edges[2],
         robot_profile=robot_profile,
         current_time=0.0
     )
+
+    print(len(occupancy_reservations))
 
     TraversalGraphPlottingHelper.plot_motion_reservations(occupancy_map=world.occupancy_map,
                                                           origin_x=tg_generator.origin_x,
                                                           origin_y=tg_generator.origin_y,
                                                           resolution=tg_generator.resolution,
                                                           motion_reservations=occupancy_reservations,
-                                                          filename="results/motion_planning/robot_motion_reservations.png")
+                                                          filename="results/motion_planning/robot_motion_reservations.svg")
     pEnd = datetime.datetime.now()
     print(f"Total generation time: {pEnd - pStart}")
 
