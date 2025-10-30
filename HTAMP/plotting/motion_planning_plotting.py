@@ -43,7 +43,7 @@ class MotionPlanningPlotter:
                     continue
                 samples_x = edge.edge_connector.connector_dict['X']
                 samples_y = edge.edge_connector.connector_dict['Y']
-                ax.plot(samples_x, samples_y, color=colors(i), linewidth=1)
+                ax.plot(samples_x, samples_y, color=colors(i), linewidth=0.5)
                 circle = Circle((start_node.position.x, start_node.position.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
                 ax.add_patch(circle)
             # Draw the last position

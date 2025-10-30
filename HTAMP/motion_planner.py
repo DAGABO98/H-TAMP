@@ -3,10 +3,8 @@ from datetime import datetime
 import heapq
 import random
 import traceback
-import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple, Dict
-from matplotlib.patches import Circle
 
 from HTAMP.loc_dataclasses import Coordinate
 from HTAMP.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
@@ -437,7 +435,7 @@ def main():
     parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
     parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
-    parser.add_argument("--fps", type=float, default=1.0, help="Frames per second for the grid world")
+    parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
     parser.add_argument("--num_robots", type=int, default=1, help="Number of robots to plan for")
@@ -464,10 +462,10 @@ def main():
 
     # randomly select start and goal nodes for each robot
     selected_start_nodes = random.sample(potential_nodes, args.num_robots)
-    selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
+    selected_goal_nodes = list(reversed(selected_start_nodes))
 
     for i in range(args.num_robots):
-        robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i)
+        robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
         robot_profiles.append(robot_profile)
 
     print("Creating Grid World...")
