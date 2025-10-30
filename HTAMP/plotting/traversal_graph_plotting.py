@@ -388,7 +388,7 @@ class TraversalGraphPlottingHelper:
             aspect="equal"
         )
 
-        for edge in traversal_graph.edges:
+        for edge in traversal_graph.edge_dict.values():
             samples_x = edge.edge_connector.connector_dict['X']
             samples_y = edge.edge_connector.connector_dict['Y']
             from_node = traversal_graph.nodes_dict[edge.from_node]

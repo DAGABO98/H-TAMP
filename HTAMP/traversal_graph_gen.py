@@ -2786,11 +2786,12 @@ class TraversalGraphGenerator:
                                      traversal_graph: TraversalGraph,
                                      node_connections: Dict[str, List[str]]) -> None:
         for edge in subgraph.edges:
-            if edge not in traversal_graph.edges:
+            if (edge.from_node, edge.to_node) not in traversal_graph.edge_dict:
                 self._check_edge_validity(edge=edge, 
                                           nodes_dict=traversal_graph.nodes_dict,
                                           node_connections=node_connections)
-                traversal_graph.edges.append(edge)
+                traversal_graph.add_edge(edge)
+
 
     def _populate_edges(self, traversal_graph: TraversalGraph) -> None:
         node_connections = {}
@@ -2820,7 +2821,7 @@ class TraversalGraphGenerator:
             assert set(connections) == set(current_node.connections), f"Node connections mismatch for node {node_label}."
 
     def _build_and_check_traversal_graph(self) -> TraversalGraph:
-        traversal_graph = TraversalGraph(nodes_dict={}, edges=[])
+        traversal_graph = TraversalGraph(nodes_dict={}, edge_dict={})
 
         self._populate_nodes_dict(traversal_graph=traversal_graph)
         self._populate_edges(traversal_graph=traversal_graph)
@@ -2839,7 +2840,7 @@ class TraversalGraphGenerator:
     def _build_adjacency_list(self) -> Dict[str, List[Tuple[str, float]]]:
         adjacency_list = {}
 
-        for edge in self.traversal_graph.edges:
+        for edge in self.traversal_graph.edge_dict.values():
             edge_length = edge.edge_connector.length()
             adjacency_list.setdefault(edge.from_node, []).append((edge.to_node, edge_length))
 
@@ -2962,7 +2963,7 @@ if __name__ == "__main__":
     print(tg_generator.doorway_subgraph_indices)
     print(tg_generator.drive_through_subgraph_indices)
     print(f"Total nodes in traversal graph: {len(tg_generator.traversal_graph.nodes_dict)}")
-    print(f"Total edges in traversal graph: {len(tg_generator.traversal_graph.edges)}")
+    print(f"Total edges in traversal graph: {len(tg_generator.traversal_graph.edge_dict.values())}")
     print(f"Total shortest paths computed: {sum(len(paths) for paths in tg_generator.shortest_paths.values())}")
     pEnd = datetime.now()
     print(f"Total generation time: {pEnd - pStart}")

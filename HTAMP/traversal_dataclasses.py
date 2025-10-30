@@ -96,4 +96,7 @@ class SwitchingPointSubgraph:
 @dataclass
 class TraversalGraph:
     nodes_dict: Dict[str, TraversalNode]
-    edges: list[TraversalEdge]
+    edge_dict: Dict[tuple[str, str], TraversalEdge]
+
+    def add_edge(self, edge: TraversalEdge):
+        self.edge_dict[(edge.from_node, edge.to_node)] = edge
