@@ -303,11 +303,11 @@ class SIPPwRT:
             return None
         
         open_set: List[PQItem] = []
-        seen_set: Dict[Tuple[TraversalNode, TimeInterval], float] = {}
+        seen_set: Dict[Tuple[str, TimeInterval], float] = {}
         for sipp_node in sipp_node_list:
             f = sipp_node.arrival + (self.weight_factor * self.heuristic(sipp_node.traversal_node, goal_traversal_node, robot_profile))
             heapq.heappush(open_set, PQItem(f=f, g=sipp_node.arrival, node=sipp_node))
-            seen_set[(sipp_node.traversal_node, sipp_node.interval)] = sipp_node.arrival
+            seen_set[(sipp_node.traversal_node.label, sipp_node.interval)] = sipp_node.arrival
 
         while open_set:
             current_item = heapq.heappop(open_set)
@@ -339,7 +339,7 @@ class SIPPwRT:
                                           interval=safe_interval.interval,
                                           arrival=arrival_time,
                                           parent=current_sipp_node)
-                    child_key = (child_node.traversal_node, child_node.interval)
+                    child_key = (child_node.traversal_node.label, child_node.interval)
                     g_prev = seen_set.get(child_key)
                     if g_prev is None or arrival_time < g_prev:
                         seen_set[child_key] = arrival_time
@@ -464,7 +464,7 @@ def main():
     selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
 
     for i in range(args.num_robots):
-        robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i)
+        robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i+1)
         robot_profiles.append(robot_profile)
 
     print("Creating Grid World...")
@@ -484,6 +484,8 @@ def main():
 
     paths = []
 
+    pStart = datetime.now()
+
     for i in range(args.num_robots):
         path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
                                             goal_traversal_node=selected_goal_nodes[i],
@@ -496,6 +498,9 @@ def main():
                 print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
             planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
             paths.append(path)
+
+    pEnd = datetime.now()
+    print(f"Total planning time: {pEnd - pStart}")
 
     MotionPlanningPlotter.plot_paths(occupancy_map=tg_generator.occupancy_map,
                                     origin_x=tg_generator.origin_x,
@@ -513,4 +518,4 @@ if __name__ == "__main__":
         print("Fail End Process: ", errorMainContext)
         traceback.print_exc()
     pEnd = datetime.now()
-    print(f"Total planning time: {pEnd - pStart}")
+    print(f"Total Execution Time: {pEnd - pStart}")

@@ -44,11 +44,11 @@ class MotionPlanningPlotter:
                 samples_x = edge.edge_connector.connector_dict['X']
                 samples_y = edge.edge_connector.connector_dict['Y']
                 ax.plot(samples_x, samples_y, color=colors(i), linewidth=1)
-                circle = Circle((start_node.x, start_node.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
+                circle = Circle((start_node.position.x, start_node.position.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
                 ax.add_patch(circle)
             # Draw the last position
             end_node, end_interval = path[-1]
-            circle = Circle((end_node.x, end_node.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
+            circle = Circle((end_node.position.x, end_node.position.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
             ax.add_patch(circle)
 
         plt.savefig("results/motion_planning/planned_paths.svg")
