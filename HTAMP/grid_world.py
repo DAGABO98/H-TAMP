@@ -28,6 +28,7 @@ class GridWorld:
                  fps: float, 
                  occupancy_map: np.ndarray, 
                  traversal_graph: TraversalGraph,
+                 shortest_paths: Dict[str, Dict[str, Tuple[List[str], float]]],
                  robot_profiles: List[RobotProfile],
                  use_saved_data: bool,
                  occupancy_reservations_file: str) -> None:
@@ -35,6 +36,7 @@ class GridWorld:
         self.fps = fps
         self.occupancy_map = occupancy_map  # 2D numpy array with 1=occupied, 0=free
         self.traversal_graph = traversal_graph
+        self.shortest_paths = shortest_paths
         self.robot_profiles = robot_profiles
         self.occupancy_reservations_file = occupancy_reservations_file
         if use_saved_data:
@@ -247,6 +249,11 @@ class GridWorld:
             reservations.append(reservation)
 
         return reservations
+    
+    def get_shortest_path(self,
+                          start: TraversalNode,
+                          goal: TraversalNode) -> Tuple[List[str], float]:
+        return self.shortest_paths[start.label][goal.label]
     
 
 if __name__ == "__main__":

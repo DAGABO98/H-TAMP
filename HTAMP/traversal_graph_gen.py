@@ -1658,7 +1658,7 @@ class TraversalGraphGenerator:
     def _replace_node_in_edges(self,
                                 subgraph: IntersectionSubgraph | DoorwaySubgraph | DriveThroughSubgraph | SwitchingPointSubgraph,
                                 old_node_label: str,
-                                new_node: TraversalNode):
+                                new_node: TraversalNode) -> None:
 
         for i, traversal_edge in enumerate(subgraph.edges):
             if traversal_edge.from_node == old_node_label:
@@ -1679,7 +1679,7 @@ class TraversalGraphGenerator:
     def _replace_node_in_doorway_subgraph(self,
                                           subgraph: DoorwaySubgraph,
                                           old_node_label: str,
-                                          new_node: TraversalNode):
+                                          new_node: TraversalNode) -> None:
         
         self._replace_node_in_edges(subgraph, old_node_label, new_node)
 
@@ -1696,7 +1696,7 @@ class TraversalGraphGenerator:
     def _merge_doorway_subgraphs(self,
                                  direction: str,
                                  subgraph_a: DoorwaySubgraph,
-                                 subgraph_b: DoorwaySubgraph):
+                                 subgraph_b: DoorwaySubgraph) -> None:
         
         for i in range(len(subgraph_b.left_nodes)):
             subgraph_a_left_node_label = subgraph_a.left_nodes[i]
@@ -1751,7 +1751,7 @@ class TraversalGraphGenerator:
                                                     new_node=new_right_node)
             
 
-    def _merge_overlapping_doorway_subgraphs(self):
+    def _merge_overlapping_doorway_subgraphs(self) -> None:
 
         # TODO: only works when only two structures are overlapping. Generalize this to more structures later by 
         # grouping overlapped subgraphs and merging them all together
@@ -1830,7 +1830,7 @@ class TraversalGraphGenerator:
                                                    direction: str,
                                                    doorway_subgraph: DoorwaySubgraph,
                                                    drive_through_subgraph: DriveThroughSubgraph,
-                                                   exit_flag: bool):
+                                                   exit_flag: bool) -> None:
         if exit_flag:
             for i in range(len(drive_through_subgraph.left_exit_nodes)):
                 doorway_left_node_label = doorway_subgraph.left_nodes[i]
@@ -1938,7 +1938,7 @@ class TraversalGraphGenerator:
                                                          new_node=new_right_node,
                                                          exit_flag=exit_flag)
 
-    def _merge_overlapping_drive_through_doorway_subgraphs(self):
+    def _merge_overlapping_drive_through_doorway_subgraphs(self) -> None:
 
         for corridor_id in self.doorway_subgraph_indices.keys():
             doorway_subgraph_indices = self.doorway_subgraph_indices[corridor_id]
@@ -2002,7 +2002,7 @@ class TraversalGraphGenerator:
                                                direction: str,
                                                subgraph: IntersectionSubgraph,
                                                old_node_label: str,
-                                               new_node: TraversalNode):
+                                               new_node: TraversalNode) -> None:
         
         self._replace_node_in_edges(subgraph, old_node_label, new_node)
 
@@ -2027,7 +2027,7 @@ class TraversalGraphGenerator:
     def _merge_intersections_and_doorway_subgraphs(self,
                                                    direction: str,
                                                    doorway_subgraph: DoorwaySubgraph,
-                                                   intersection_subgraph: IntersectionSubgraph):
+                                                   intersection_subgraph: IntersectionSubgraph) -> None:
         if direction == "horizontal":
             for i in range(len(intersection_subgraph.left_nodes)):
                 doorway_left_node_label = doorway_subgraph.left_nodes[i]
@@ -2109,7 +2109,7 @@ class TraversalGraphGenerator:
                                                             old_node_label=intersection_lower_node_label,
                                                             new_node=new_left_node)
     
-    def _merge_overlapping_intersections_doorway_subgraphs(self):
+    def _merge_overlapping_intersections_doorway_subgraphs(self) -> None:
 
         for corridor_id in self.doorway_subgraph_indices.keys():
             doorway_subgraph_indices = self.doorway_subgraph_indices[corridor_id]
@@ -2135,7 +2135,7 @@ class TraversalGraphGenerator:
     def _replace_node_in_switching_point_subgraph(self,
                                           subgraph: SwitchingPointSubgraph,
                                           old_node_label: str,
-                                          new_node: TraversalNode):
+                                          new_node: TraversalNode) -> None:
         
             self._replace_node_in_edges(subgraph, old_node_label, new_node)
 

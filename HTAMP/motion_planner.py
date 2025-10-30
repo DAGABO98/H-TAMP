@@ -9,6 +9,7 @@ from matplotlib.patches import Rectangle, Circle
 
 from HTAMP.loc_dataclasses import Coordinate
 from HTAMP.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
+from HTAMP.traversal_dataclasses import TraversalNode
 
 @dataclass
 class TimeReservation:
@@ -123,11 +124,13 @@ class SIPPwRT:
         self.weight_factor = weight_factor
 
     def heuristic(self, 
-                  pos: Coordinate, 
-                  goal: Coordinate,
+                  start_node: TraversalNode, 
+                  goal_node: TraversalNode,
                   robot_profile: RobotProfile) -> float:
+        _, distance = self.grid.get_shortest_path(start=start_node, goal=goal_node)
 
-        return np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y])) / robot_profile.speed
+        time_to_goal = distance / robot_profile.speed if robot_profile.speed > 0 else float('inf')
+        return time_to_goal
 
     def _intersect_intervals(self, 
                              interval_list1: List[TimeReservation],
