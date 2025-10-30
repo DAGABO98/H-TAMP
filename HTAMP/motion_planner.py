@@ -162,8 +162,10 @@ class SIPPwRT:
                                              robot_profile: RobotProfile,
                                              horizon: float = float('inf')) -> List[TimeReservation]:
         safe_intervals: List[TimeReservation] = []
-        occupied_cells: Set[GridIndex] = self.grid._get_occupied_cells_for_static_position(robot_position=current_traversal_node.position,
-                                                                                           robot_profile=robot_profile)
+        occupied_cells: Set[GridIndex] = self.grid.get_robot_reservations_for_move(from_node=current_traversal_node,
+                                                                                   to_node=current_traversal_node,
+                                                                                   robot_profile=robot_profile,
+                                                                                   current_time=0.0)[0].robot_occupancy.occupied_cells
 
         for cell in occupied_cells:
             cell_safe_intervals = self.reservation_table.get_safe_intervals(cell=cell, 
@@ -376,8 +378,10 @@ class MotionPlanner:
                                           time_interval: TimeInterval,
                                           robot_profile: RobotProfile) -> None:
         if from_node.label == to_node.label:
-            occupied_cells = self.grid._get_occupied_cells_for_static_position(robot_position=from_node.position,
-                                                                               robot_profile=robot_profile)
+            occupied_cells = self.grid.get_robot_reservations_for_move(from_node=from_node,
+                                                                       to_node=to_node,
+                                                                       robot_profile=robot_profile,
+                                                                       current_time=time_interval.start)[0].robot_occupancy.occupied_cells
             for cell in occupied_cells:
                 time_reservation = TimeReservation(interval=time_interval,
                                                    robot_id=robot_profile.robot_id)
@@ -456,7 +460,6 @@ def main():
             room_node = tg_generator.traversal_graph.nodes_dict[room_node_label]
             potential_nodes.append(room_node)
             
-
     robot_profiles = []
 
     # randomly select start and goal nodes for each robot
@@ -464,7 +467,7 @@ def main():
     selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
 
     for i in range(args.num_robots):
-        robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i+1)
+        robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i)
         robot_profiles.append(robot_profile)
 
     print("Creating Grid World...")

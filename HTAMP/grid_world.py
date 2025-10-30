@@ -203,6 +203,20 @@ class GridWorld:
                                                 robot_occupancy=robot_occupancies[i])
                 edges[traversal_edge.to_node].append(reservation)
         
+        for node in self.traversal_graph.nodes_dict.values():
+            if node.label not in occupancy_reservations:
+                continue
+            else:
+                edges = occupancy_reservations[node.label]
+                edges.setdefault(node.label, [])
+                occupied_cells = self._get_occupied_cells_for_static_position(node.position,
+                                                                            robot_profile)
+                time_interval = TimeInterval(start=0.0, end=0.0)
+                reservation = MotionReservation(time_interval=time_interval,
+                                                robot_occupancy=RobotOccupancy(occupied_cells=occupied_cells,
+                                                                                start_location=node.position,
+                                                                                end_location=node.position))
+                edges[node.label].append(reservation)
 
         return occupancy_reservations
 
@@ -261,7 +275,10 @@ class GridWorld:
     def get_shortest_path(self,
                           start: TraversalNode,
                           goal: TraversalNode) -> Tuple[List[str], float]:
-        return self.shortest_paths[start.label][goal.label]
+        if start.label not in self.shortest_paths or goal.label not in self.shortest_paths[start.label]:
+            return ([], float('inf'))
+        else:
+            return self.shortest_paths[start.label][goal.label]
     
 
 if __name__ == "__main__":
@@ -271,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
     parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
-    parser.add_argument("--fps", type=float, default=1.0, help="Frames per second for the grid world")
+    parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
     args = parser.parse_args()
@@ -287,7 +304,7 @@ if __name__ == "__main__":
 
     print("Creating Grid World...")
 
-    robot_profile = RobotProfile(radius=0.08, speed=0.2, robot_id=1)
+    robot_profile = RobotProfile(radius=0.1, speed=0.2, robot_id=0)
 
     world = GridWorld(cell_size=tg_generator.meters_per_cell,
                       fps=args.fps,
