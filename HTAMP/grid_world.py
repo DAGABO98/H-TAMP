@@ -288,6 +288,7 @@ if __name__ == "__main__":
                       fps=args.fps,
                       occupancy_map=tg_generator.occupancy_map,
                       traversal_graph=tg_generator.traversal_graph,
+                      shortest_paths=tg_generator.shortest_paths,
                       robot_profiles=[robot_profile],
                       use_saved_data=args.use_saved_data,
                       occupancy_reservations_file=args.occupancy_reservations_file)
