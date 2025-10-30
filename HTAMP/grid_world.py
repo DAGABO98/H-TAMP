@@ -10,8 +10,8 @@ from matplotlib.patches import Rectangle, Circle
 from HTAMP.geometry_helpers import CurvedConnector
 from HTAMP.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
 from HTAMP.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
-from HTAMP.plotting_helpers import TraversalGraphPlottingHelper
-from HTAMP.traversal_dataclasses import TraversalGraph, TraversalNode, TraversalEdge
+from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
+from HTAMP.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.traversal_graph_gen import TraversalGraphGenerator
 
 @dataclass
@@ -210,34 +210,37 @@ class GridWorld:
         return occupancy_reservations
     
     def get_robot_occupancy_for_move(self,
-                                    edge: TraversalEdge,
+                                    from_node: TraversalNode,
+                                    to_node: TraversalNode,
                                     robot_profile: RobotProfile) -> List[RobotOccupancy]:
 
         robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
-        motion_reservation = robot_motion_reservation[edge.from_node][edge.to_node]
+        motion_reservation = robot_motion_reservation[from_node.label][to_node.label]
 
         robot_occupancies = [res.robot_occupancy for res in motion_reservation]
 
         return robot_occupancies
     
     def get_robot_timing_for_move(self,
-                                 edge: TraversalEdge,
+                                 from_node: TraversalNode,
+                                 to_node: TraversalNode,
                                  robot_profile: RobotProfile) -> List[TimeInterval]:
 
         robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
-        motion_reservation = robot_motion_reservation[edge.from_node][edge.to_node]
+        motion_reservation = robot_motion_reservation[from_node.label][to_node.label]
 
         time_intervals = [res.time_interval for res in motion_reservation]
 
         return time_intervals
 
     def get_robot_reservations_for_move(self,
-                                        edge: TraversalEdge,
+                                        from_node: TraversalNode,
+                                        to_node: TraversalNode,
                                         robot_profile: RobotProfile,
                                         current_time: float) -> List[MotionReservation]:
 
-        robot_occupancies = self.get_robot_occupancy_for_move(edge, robot_profile)
-        time_intervals = self.get_robot_timing_for_move(edge, robot_profile)
+        robot_occupancies = self.get_robot_occupancy_for_move(from_node, to_node, robot_profile)
+        time_intervals = self.get_robot_timing_for_move(from_node, to_node, robot_profile)
 
         reservations: List[MotionReservation] = []
         for i in range(len(robot_occupancies)):
@@ -292,7 +295,8 @@ if __name__ == "__main__":
     print("Grid World created.")
 
     occupancy_reservations = world.get_robot_reservations_for_move(
-        edge=tg_generator.traversal_graph.edges[2],
+        from_node=tg_generator.traversal_graph.nodes_dict[tg_generator.traversal_graph.edges[2].from_node],
+        to_node=tg_generator.traversal_graph.nodes_dict[tg_generator.traversal_graph.edges[2].to_node],
         robot_profile=robot_profile,
         current_time=0.0
     )
