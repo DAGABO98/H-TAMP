@@ -232,8 +232,10 @@ class GridWorld:
                                     from_node: TraversalNode,
                                     to_node: TraversalNode,
                                     robot_profile: RobotProfile) -> List[RobotOccupancy]:
-
-        robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
+        if f"robot_{robot_profile.robot_id}" not in self.occupancy_reservations:
+            robot_motion_reservation = self.occupancy_reservations[f"robot_{0}"]
+        else:
+            robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
         motion_reservation = robot_motion_reservation[from_node.label][to_node.label]
 
         robot_occupancies = [res.robot_occupancy for res in motion_reservation]
@@ -244,8 +246,10 @@ class GridWorld:
                                  from_node: TraversalNode,
                                  to_node: TraversalNode,
                                  robot_profile: RobotProfile) -> List[TimeInterval]:
-
-        robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
+        if f"robot_{robot_profile.robot_id}" not in self.occupancy_reservations:
+            robot_motion_reservation = self.occupancy_reservations[f"robot_{0}"]
+        else:
+            robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
         motion_reservation = robot_motion_reservation[from_node.label][to_node.label]
 
         time_intervals = [res.time_interval for res in motion_reservation]
