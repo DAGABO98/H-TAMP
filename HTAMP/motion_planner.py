@@ -1,15 +1,18 @@
+import argparse
 from datetime import datetime
 import heapq
+import random
 import traceback
-import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Tuple, Dict, Any
-from matplotlib.patches import Rectangle, Circle
+from typing import List, Optional, Set, Tuple, Dict
+from matplotlib.patches import Circle
 
 from HTAMP.loc_dataclasses import Coordinate
 from HTAMP.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
+from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.traversal_dataclasses import TraversalNode
+from HTAMP.traversal_graph_gen import TraversalGraphGenerator
 
 @dataclass
 class TimeReservation:
@@ -103,15 +106,15 @@ class ReservationTable:
 
 @dataclass(order=True)
 class PQItem:
-    f: int
-    g: int
+    f: float
+    g: float
     node: "SIPPNode" = field(compare=False)
 
 @dataclass
 class SIPPNode:
-    pos: Coordinate
+    traversal_node: TraversalNode
     interval: TimeInterval
-    arrival: int
+    arrival: float
     parent: Optional["SIPPNode"] = None
 
 class SIPPwRT:
@@ -124,10 +127,10 @@ class SIPPwRT:
         self.weight_factor = weight_factor
 
     def heuristic(self, 
-                  start_node: TraversalNode, 
-                  goal_node: TraversalNode,
+                  start_traversal_node: TraversalNode, 
+                  goal_traversal_node: TraversalNode,
                   robot_profile: RobotProfile) -> float:
-        _, distance = self.grid.get_shortest_path(start=start_node, goal=goal_node)
+        _, distance = self.grid.get_shortest_path(start=start_traversal_node, goal=goal_traversal_node)
 
         time_to_goal = distance / robot_profile.speed if robot_profile.speed > 0 else float('inf')
         return time_to_goal
@@ -153,22 +156,42 @@ class SIPPwRT:
                 else:
                     j += 1
         return result
+    
+    def _get_safe_intervals_for_current_node(self,
+                                             current_traversal_node: TraversalNode,
+                                             robot_profile: RobotProfile,
+                                             horizon: float = float('inf')) -> List[TimeReservation]:
+        safe_intervals: List[TimeReservation] = []
+        occupied_cells: Set[GridIndex] = self.grid._get_occupied_cells_for_static_position(robot_position=current_traversal_node.position,
+                                                                                           robot_profile=robot_profile)
+
+        for cell in occupied_cells:
+            cell_safe_intervals = self.reservation_table.get_safe_intervals(cell=cell, 
+                                                                            horizon=horizon, 
+                                                                            robot_id=robot_profile.robot_id)
+            if not safe_intervals:
+                safe_intervals = cell_safe_intervals
+            else:
+                safe_intervals = self._intersect_intervals(safe_intervals, 
+                                                           cell_safe_intervals)
+
+        return safe_intervals
 
     def _get_safe_intervals_for_move(self, 
-                                     start_pos: Coordinate, 
-                                     end_pos: Coordinate,
+                                     from_traversal_node: TraversalNode,
+                                     to_traversal_node: TraversalNode,
                                      robot_profile: RobotProfile,
                                      horizon: float = float('inf')) -> List[TimeReservation]:
         safe_intervals: List[TimeReservation] = []
-        robot_occupancy_list = self.grid.get_robot_occupancy_for_move(robot_start_pos=start_pos,
-                                                                 robot_end_pos=end_pos,
-                                                                 robot_profile=robot_profile)
+        robot_occupancy_list = self.grid.get_robot_occupancy_for_move(from_node=from_traversal_node,
+                                                                      to_node=to_traversal_node,
+                                                                      robot_profile=robot_profile)
         occupied_cells: Set[GridIndex] = set()
         for robot_occupancy in robot_occupancy_list:
             occupied_cells.update(robot_occupancy.occupied_cells)
 
         for cell in occupied_cells:
-            cell_safe_intervals = self.reservation_table.get_safe_intervals(cell, 
+            cell_safe_intervals = self.reservation_table.get_safe_intervals(cell=cell, 
                                                                             horizon=horizon, 
                                                                             robot_id=robot_profile.robot_id)
             if not safe_intervals:
@@ -180,17 +203,15 @@ class SIPPwRT:
         return safe_intervals
     
     def check_conflict_for_move(self,
-                                start_pos: Coordinate, 
-                                end_pos: Coordinate,
+                                from_traversal_node: TraversalNode,
+                                to_traversal_node: TraversalNode,
                                 robot_profile: RobotProfile, 
                                 current_time: float) -> bool:
-        # Check if moving from start_pos to end_pos at current_time causes a conflict
-        end_time = current_time + self._get_travel_time(start_pos, end_pos, robot_profile)
-        robot_reservations = self.grid.get_robot_reservations_for_move(robot_start_pos=start_pos,
-                                                                       robot_end_pos=end_pos,
+
+        robot_reservations = self.grid.get_robot_reservations_for_move(from_node=from_traversal_node,
+                                                                       to_node=to_traversal_node,
                                                                        robot_profile=robot_profile,
-                                                                       current_time=current_time,
-                                                                       end_time=end_time)
+                                                                       current_time=current_time)
         
         for robot_reservation in robot_reservations:
             for cell in robot_reservation.robot_occupancy.occupied_cells:
@@ -200,32 +221,34 @@ class SIPPwRT:
                     return True
         return False
 
-
-    def _get_travel_time(self, 
-                         start_pos: Coordinate, 
-                         end_pos: Coordinate, 
+    def _get_travel_time(self,
+                         from_traversal_node: TraversalNode,
+                         to_traversal_node: TraversalNode,
                          robot_profile: RobotProfile) -> float:
-        dev_x = end_pos.x - start_pos.x
-        dev_y = end_pos.y - start_pos.y
-        total_displacement = np.sqrt(dev_x**2 + dev_y**2)
-        travel_time = total_displacement / robot_profile.speed if robot_profile.speed > 0 else 0
+        current_edge = self.grid.traversal_graph.edge_dict.get((from_traversal_node.label, to_traversal_node.label))
+        if current_edge is None:
+            raise ValueError(f"No edge found between {from_traversal_node.label} and {to_traversal_node.label}")
+        distance = current_edge.edge_connector.length()
+        travel_time = distance / robot_profile.speed if robot_profile.speed > 0 else float('inf')
         return travel_time
 
     def _get_earliest_departure(self,
                                 curr_node: SIPPNode,
-                                start_pos: Coordinate,
-                                end_pos: Coordinate,
+                                from_traversal_node: TraversalNode,
+                                to_traversal_node: TraversalNode,
                                 robot_profile: RobotProfile,
                                 end_pos_interval: TimeInterval) -> Optional[float]:
         # Find the earliest departure time for the current node
         current_time = max(curr_node.arrival, curr_node.interval.start)
-        travel_time = self._get_travel_time(start_pos, end_pos, robot_profile)
+        travel_time = self._get_travel_time(from_traversal_node=from_traversal_node, 
+                                             to_traversal_node=to_traversal_node, 
+                                             robot_profile=robot_profile)
 
         window_start = end_pos_interval.start - travel_time
         current_time = max(current_time, window_start)
 
-        if self.check_conflict_for_move(start_pos=start_pos, 
-                                        end_pos=end_pos, 
+        if self.check_conflict_for_move(from_traversal_node=from_traversal_node, 
+                                        to_traversal_node=to_traversal_node,
                                         robot_profile=robot_profile,
                                         current_time=current_time):
             return None
@@ -233,101 +256,94 @@ class SIPPwRT:
             return current_time
         return None
 
-    def _check_goal(self, 
-                    pos: Coordinate, 
-                    goal: Coordinate, 
-                    robot_profile: RobotProfile) -> bool:
-        return np.linalg.norm(np.array([pos.x - goal.x, pos.y - goal.y])) <= robot_profile.radius
-
     def _reconstruct_path(self, 
-                          node: SIPPNode, 
-                          robot_profile: RobotProfile) -> List[Tuple[Coordinate, TimeInterval]]:
-        node_list : List[SIPPNode] = []
-        while node:
-            node_list.append(node)
-            node = node.parent
-        
-        node_list.reverse()
-        timed_path: List[Tuple[Coordinate, TimeInterval]] = []
-        for i in range(len(node_list) - 1):
-            n = node_list[i]
-            next_n = node_list[i + 1]
-            travel_time = self._get_travel_time(n.pos, next_n.pos, robot_profile)
+                          sipp_node: SIPPNode, 
+                          robot_profile: RobotProfile) -> List[Tuple[TraversalNode, TimeInterval]]:
+        sipp_node_list : List[SIPPNode] = []
+        while sipp_node:
+            sipp_node_list.append(sipp_node)
+            sipp_node = sipp_node.parent
+
+        sipp_node_list.reverse()
+        timed_path: List[Tuple[TraversalNode, TimeInterval]] = []
+        for i in range(len(sipp_node_list) - 1):
+            n = sipp_node_list[i]
+            next_n = sipp_node_list[i + 1]
+            travel_time = self._get_travel_time(n.traversal_node, next_n.traversal_node, robot_profile)
             departure_time = next_n.arrival - travel_time
-            timed_path.append((n.pos, TimeInterval(n.arrival, departure_time)))
-        
+            timed_path.append((n.traversal_node, TimeInterval(n.arrival, departure_time)))
+
         # Add the last node with an open-ended time interval
-        last_node = node_list[-1]
-        timed_path.append((last_node.pos, TimeInterval(last_node.arrival, float('inf'))))
+        last_sipp_node = sipp_node_list[-1]
+        timed_path.append((last_sipp_node.traversal_node, TimeInterval(last_sipp_node.arrival, float('inf'))))
 
         return timed_path
 
     def plan_path(self, 
-                  start_pos: Coordinate, 
-                  goal_pos: Coordinate, 
+                  start_traversal_node: TraversalNode, 
+                  goal_traversal_node: TraversalNode, 
                   robot_profile: RobotProfile,
                   current_time: float = 0.0,
-                  horizon: float = float('inf')) -> Optional[List[Tuple[Coordinate, TimeInterval]]]:
+                  horizon: float = float('inf')) -> Optional[List[Tuple[TraversalNode, TimeInterval]]]:
         # Plan the path from start to goal while avoiding obstacles
-        start_safe_intervals = self._get_safe_intervals_for_move(start_pos,
-                                                                 start_pos,
-                                                                 robot_profile,
-                                                                 horizon)
+        start_safe_intervals = self._get_safe_intervals_for_current_node(start_traversal_node,
+                                                                       robot_profile,
+                                                                       horizon)
+
         assert start_safe_intervals, "No safe intervals at start position"
 
-        node_list: List[SIPPNode] = []
+        sipp_node_list: List[SIPPNode] = []
         for time_reservation in start_safe_intervals:
             if time_reservation.interval.end < current_time:
                 continue
-            arrival_time = max(time_reservation.interval.start, current_time)
-            node_list.append(SIPPNode(pos=start_pos, interval=time_reservation.interval, arrival=arrival_time))
-        
-        if not node_list:
+            arrival_time = current_time
+            sipp_node_list.append(SIPPNode(traversal_node=start_traversal_node, interval=time_reservation.interval, arrival=arrival_time))
+
+        if not sipp_node_list:
             return None
         
         open_set: List[PQItem] = []
-        seen_set: Dict[Tuple[Coordinate, TimeInterval], float] = {}
-        for node in node_list:
-            f = node.arrival + (self.weight_factor * self.heuristic(node.pos, goal_pos, robot_profile))
-            heapq.heappush(open_set, PQItem(f=f, g=node.arrival, node=node))
-            seen_set[(node.pos, node.interval)] = node.arrival
+        seen_set: Dict[Tuple[TraversalNode, TimeInterval], float] = {}
+        for sipp_node in sipp_node_list:
+            f = sipp_node.arrival + (self.weight_factor * self.heuristic(sipp_node.traversal_node, goal_traversal_node, robot_profile))
+            heapq.heappush(open_set, PQItem(f=f, g=sipp_node.arrival, node=sipp_node))
+            seen_set[(sipp_node.traversal_node, sipp_node.interval)] = sipp_node.arrival
 
         while open_set:
             current_item = heapq.heappop(open_set)
-            current_node = current_item.node
+            current_sipp_node = current_item.node
 
-            if self._check_goal(pos=current_node.pos, goal=goal_pos, robot_profile=robot_profile):
-                return self._reconstruct_path(node=current_node, 
+            if current_sipp_node.traversal_node.label == goal_traversal_node.label:
+                return self._reconstruct_path(sipp_node=current_sipp_node, 
                                               robot_profile=robot_profile)
 
-            for potential_next_move in self.grid.get_valid_moves(robot_center=current_node.pos,
-                                                                 robot_profile=robot_profile):
-                if round(potential_next_move.x, 2) == 0.42 and round(potential_next_move.y, 2) == 2.05:
-                    print("Debug")
-                for safe_interval in self._get_safe_intervals_for_move(start_pos=current_node.pos,
-                                                                      end_pos=potential_next_move,
+            for next_traversal_node_label in current_sipp_node.traversal_node.connections:
+                potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
+
+                for safe_interval in self._get_safe_intervals_for_move(from_traversal_node=current_sipp_node.traversal_node,
+                                                                      to_traversal_node=potential_next_move,
                                                                       robot_profile=robot_profile,
                                                                       horizon=horizon):
-                    
-                    earliest_departure = self._get_earliest_departure(curr_node=current_node,
-                                                                      start_pos=current_node.pos,
-                                                                      end_pos=potential_next_move,
+
+                    earliest_departure = self._get_earliest_departure(curr_node=current_sipp_node,
+                                                                      from_traversal_node=current_sipp_node.traversal_node,
+                                                                      to_traversal_node=potential_next_move,
                                                                       robot_profile=robot_profile,
                                                                       end_pos_interval=safe_interval.interval)
                     if earliest_departure is None: 
                         continue
 
-                    travel_time = self._get_travel_time(current_node.pos, potential_next_move, robot_profile)
+                    travel_time = self._get_travel_time(current_sipp_node.traversal_node, potential_next_move, robot_profile)
                     arrival_time = earliest_departure + travel_time
-                    child_node = SIPPNode(pos=potential_next_move,
+                    child_node = SIPPNode(traversal_node=potential_next_move,
                                           interval=safe_interval.interval,
                                           arrival=arrival_time,
-                                          parent=current_node)
-                    child_key = (child_node.pos, child_node.interval)
+                                          parent=current_sipp_node)
+                    child_key = (child_node.traversal_node, child_node.interval)
                     g_prev = seen_set.get(child_key)
                     if g_prev is None or arrival_time < g_prev:
                         seen_set[child_key] = arrival_time
-                        f = arrival_time + (self.weight_factor * self.heuristic(child_node.pos, goal_pos, robot_profile))
+                        f = arrival_time + (self.weight_factor * self.heuristic(child_node.traversal_node, goal_traversal_node, robot_profile))
                         heapq.heappush(open_set, PQItem(f=f, g=arrival_time, node=child_node))
 
         return None
@@ -341,13 +357,13 @@ class MotionPlanner:
                                weight_factor=weight_factor)
 
     def obtain_path_for_agent(self,
-                        start_pos: Coordinate,
-                        goal_pos: Coordinate,
-                        robot_profile: RobotProfile,
-                        current_time: float = 0.0,
-                        horizon: float = float('inf')) -> Optional[List[Tuple[Coordinate, TimeInterval]]]:
-        path = self.planner.plan_path(start_pos=start_pos,
-                                        goal_pos=goal_pos,
+                              start_traversal_node: TraversalNode,
+                              goal_traversal_node: TraversalNode,
+                              robot_profile: RobotProfile,
+                              current_time: float = 0.0,
+                              horizon: float = float('inf')) -> Optional[List[Tuple[TraversalNode, TimeInterval]]]:
+        path = self.planner.plan_path(start_traversal_node=start_traversal_node,
+                                        goal_traversal_node=goal_traversal_node,
                                         robot_profile=robot_profile,
                                         current_time=current_time,
                                         horizon=horizon)
@@ -355,45 +371,52 @@ class MotionPlanner:
         return path
 
     def _reserve_cells_for_time_interval(self,
-                                          start: Coordinate,
-                                          end: Coordinate,
+                                          from_node: TraversalNode,
+                                          to_node: TraversalNode,
                                           time_interval: TimeInterval,
                                           robot_profile: RobotProfile) -> None:
-        robot_reservations = self.grid.get_robot_reservations_for_move(robot_start_pos=start,
-                                                                        robot_end_pos=end,
-                                                                        robot_profile=robot_profile,
-                                                                        current_time=time_interval.start,
-                                                                        end_time=time_interval.end)
-        for robot_reservation in robot_reservations:
-            for cell in robot_reservation.robot_occupancy.occupied_cells:
-                time_reservation = TimeReservation(interval=robot_reservation.time_interval,
-                                                    robot_id=robot_profile.robot_id)
+        if from_node.label == to_node.label:
+            occupied_cells = self.grid._get_occupied_cells_for_static_position(robot_position=from_node.position,
+                                                                               robot_profile=robot_profile)
+            for cell in occupied_cells:
+                time_reservation = TimeReservation(interval=time_interval,
+                                                   robot_id=robot_profile.robot_id)
                 self.reservation_table.add_reservation(cell, time_reservation)
+        else:
+            robot_reservations = self.grid.get_robot_reservations_for_move(from_node=from_node,
+                                                                            to_node=to_node,
+                                                                            robot_profile=robot_profile,
+                                                                            current_time=time_interval.start)
+            for robot_reservation in robot_reservations:
+                for cell in robot_reservation.robot_occupancy.occupied_cells:
+                    time_reservation = TimeReservation(interval=robot_reservation.time_interval,
+                                                        robot_id=robot_profile.robot_id)
+                    self.reservation_table.add_reservation(cell, time_reservation)
 
     def _reserve_path(self,
-                      path: List[Tuple[Coordinate, TimeInterval]],
+                      path: List[Tuple[TraversalNode, TimeInterval]],
                       robot_profile: RobotProfile) -> None:
 
         # Add reservations to the reservation table
         for i in range(len(path) - 1):
-            start, start_time_interval = path[i]
-            end, end_time_interval = path[i + 1]
+            start_node, start_time_interval = path[i]
+            end_node, end_time_interval = path[i + 1]
             if start_time_interval.end > start_time_interval.start:
-                self._reserve_cells_for_time_interval(start=start,
-                                                      end=start,
+                self._reserve_cells_for_time_interval(from_node=start_node,
+                                                      to_node=start_node,
                                                       time_interval=TimeInterval(start=start_time_interval.start,
                                                                                   end=start_time_interval.end),
                                                       robot_profile=robot_profile)
             
-            self._reserve_cells_for_time_interval(start=start,
-                                                  end=end,
+            self._reserve_cells_for_time_interval(from_node=start_node,
+                                                  to_node=end_node,
                                                   time_interval=TimeInterval(start=start_time_interval.end,
                                                                               end=end_time_interval.start),
                                                   robot_profile=robot_profile)
         # Reserve the last position indefinitely
-        last_pos, last_time_interval = path[-1]
-        self._reserve_cells_for_time_interval(start=last_pos,
-                                              end=last_pos,
+        last_node, last_time_interval = path[-1]
+        self._reserve_cells_for_time_interval(from_node=last_node,
+                                              to_node=last_node,
                                               time_interval=TimeInterval(start=last_time_interval.start,
                                                                           end=float('inf')),
                                               robot_profile=robot_profile)
@@ -403,63 +426,84 @@ class MotionPlanner:
                                robot_profile: RobotProfile) -> None:
         self._reserve_path(path=path,
                            robot_profile=robot_profile)
-    
-    def plot_paths(self, 
-                   paths: List[List[Tuple[Coordinate, TimeInterval]]], 
-                   robot_profiles: List[RobotProfile]) -> None:
-        # Plot the grid and the paths without using grid object's plot method
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.set_xlim(0, self.grid.width * self.grid.cell_size)
-        ax.set_ylim(0, self.grid.height * self.grid.cell_size)
-        ax.set_aspect('equal')
-
-        # Plot each path
-        colors = plt.get_cmap('hsv', len(paths) + 1)
-        for i, path in enumerate(paths):
-            for j in range(len(path) - 1):
-                start, start_interval = path[j]
-                end, end_interval = path[j + 1]
-                ax.plot([start.x, end.x], [start.y, end.y], color=colors(i), linewidth=2)
-                circle = Circle((start.x, start.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
-                ax.add_patch(circle)
-            # Draw the last position
-            end, end_interval = path[-1]
-            circle = Circle((end.x, end.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
-            ax.add_patch(circle)
-
-        plt.savefig("results/motion_planning/planned_paths.png")
-        plt.close()
 
 def main():
-    width, height = 100, 50
-    cell_size = 2*0.03534
-    num_robots = 3
-    weight_factor = 1.0
-    world = GridWorld.empty(width, height, cell_size)
-    planner = MotionPlanner(grid=world, weight_factor=weight_factor)
-    paths = []
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", type=str, default="maps/FA3/FA3_lanes.yaml", help="Path to the configuration file")
+    parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
+    parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
+    parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
+    parser.add_argument("--fps", type=float, default=1.0, help="Frames per second for the grid world")
+    parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
+    parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
+    parser.add_argument("--num_robots", type=int, default=1, help="Number of robots to plan for")
+    args = parser.parse_args()
+
+    print("Generating Traversal Graph...")
+
+    tg_generator = TraversalGraphGenerator(occupancy_map_path=args.occupancy_map_path,
+                                           config_path=args.config_path,
+                                           meters_per_pixel=args.meters_per_pixel,
+                                           factor=args.factor)
+
+    print("Traversal Graph generated.")
+
+    potential_nodes = []
+
+    for doorway in tg_generator.doorway_subgraphs:
+        room_nodes = doorway.room_nodes
+        for room_node_label in room_nodes:
+            room_node = tg_generator.traversal_graph.nodes_dict[room_node_label]
+            potential_nodes.append(room_node)
+            
+
     robot_profiles = []
 
-    goals = [10, 20, 30]
+    # randomly select start and goal nodes for each robot
+    selected_start_nodes = random.sample(potential_nodes, args.num_robots)
+    selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
 
-    for i in range(num_robots):
+    for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.20, speed=0.20, robot_id=i)
-        start_pos = Coordinate(5*cell_size, (10 + i*10)*cell_size)
-        goal_pos = Coordinate(45*cell_size, goals[i]*cell_size)
-        path = planner.obtain_path_for_agent(start_pos=start_pos,
-                                            goal_pos=goal_pos,
-                                            robot_profile=robot_profile,
+        robot_profiles.append(robot_profile)
+
+    print("Creating Grid World...")
+
+    world = GridWorld(cell_size=tg_generator.meters_per_cell,
+                      fps=args.fps,
+                      occupancy_map=tg_generator.occupancy_map,
+                      traversal_graph=tg_generator.traversal_graph,
+                      shortest_paths=tg_generator.shortest_paths,
+                      robot_profiles=robot_profiles,
+                      use_saved_data=args.use_saved_data,
+                      occupancy_reservations_file=args.occupancy_reservations_file)
+
+    print("Grid World created.")
+
+    planner = MotionPlanner(grid=world, weight_factor=1.0)
+
+    paths = []
+
+    for i in range(args.num_robots):
+        path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
+                                            goal_traversal_node=selected_goal_nodes[i],
+                                            robot_profile=robot_profiles[i],
                                             current_time=0.0,
                                             horizon=500.0)
         if path:
             print(f"Planned Path for Robot {i}:")
-            for pos, time_interval in path:
-                print(f"Position: ({pos.x:.2f}, {pos.y:.2f}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
+            for traversal_node, time_interval in path:
+                print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
             planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
             paths.append(path)
-            robot_profiles.append(robot_profile)
 
-    planner.plot_paths(paths=paths, robot_profiles=robot_profiles)
+    MotionPlanningPlotter.plot_paths(occupancy_map=tg_generator.occupancy_map,
+                                    origin_x=tg_generator.origin_x,
+                                    origin_y=tg_generator.origin_y,
+                                    resolution=tg_generator.meters_per_cell,
+                                    paths=paths,
+                                    traversal_graph=tg_generator.traversal_graph,
+                                    robot_profiles=robot_profiles)
 
 if __name__ == "__main__":
     pStart = datetime.now()

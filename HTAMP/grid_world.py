@@ -2,10 +2,9 @@ import pickle
 import argparse
 import datetime
 import numpy as np
-import matplotlib.pyplot as plt
+
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
-from matplotlib.patches import Rectangle, Circle
 
 from HTAMP.geometry_helpers import CurvedConnector
 from HTAMP.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
@@ -19,7 +18,6 @@ class RobotProfile:
     radius: float
     robot_id: int
     speed: float  # meters per second
-
 
 class GridWorld:
 
@@ -118,6 +116,12 @@ class GridWorld:
                 return False
         return True
     
+    def _get_occupied_cells_for_static_position(self, 
+                                               robot_position: Coordinate,
+                                               robot_profile: RobotProfile) -> Set[GridIndex]:
+        occupied_cells = set(self.get_occupied_cells_for_robot(robot_position, robot_profile))
+        return occupied_cells
+    
     def _get_occupied_cells_for_partial_move(self, 
                                           robot_start_pos: Coordinate, 
                                           robot_end_pos: Coordinate,
@@ -177,7 +181,7 @@ class GridWorld:
 
     def _create_robot_occupancy_reservations(self, robot_profile: RobotProfile) -> Dict[str, Dict[str, List[MotionReservation]]]:
         occupancy_reservations: Dict[str, Dict[str, List[MotionReservation]]] = {}
-        for traversal_edge in self.traversal_graph.edges:
+        for traversal_edge in self.traversal_graph.edge_dict.values():
             print(f"Creating occupancy reservations for robot {robot_profile.robot_id} "
                   f"on edge from {traversal_edge.from_node} to {traversal_edge.to_node}")
             occupancy_reservations.setdefault(traversal_edge.from_node, {})
@@ -198,6 +202,7 @@ class GridWorld:
                 reservation = MotionReservation(time_interval=time_intervals[i],
                                                 robot_occupancy=robot_occupancies[i])
                 edges[traversal_edge.to_node].append(reservation)
+        
 
         return occupancy_reservations
 
@@ -295,9 +300,11 @@ if __name__ == "__main__":
 
     print("Grid World created.")
 
+    traversal_edges = list(world.traversal_graph.edge_dict.values())
+
     occupancy_reservations = world.get_robot_reservations_for_move(
-        from_node=tg_generator.traversal_graph.nodes_dict[tg_generator.traversal_graph.edges[2].from_node],
-        to_node=tg_generator.traversal_graph.nodes_dict[tg_generator.traversal_graph.edges[2].to_node],
+        from_node=tg_generator.traversal_graph.nodes_dict[traversal_edges[2].from_node],
+        to_node=tg_generator.traversal_graph.nodes_dict[traversal_edges[2].to_node],
         robot_profile=robot_profile,
         current_time=0.0
     )

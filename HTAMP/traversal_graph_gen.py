@@ -1036,7 +1036,7 @@ class TraversalGraphGenerator:
 
         return edges
 
-    def _generate_doorway_traversal_subgraphs(self) -> Tuple[List[IntersectionSubgraph], dict[str, List[int]]]:
+    def _generate_doorway_traversal_subgraphs(self) -> Tuple[List[DoorwaySubgraph], dict[str, List[int]]]:
         subgraphs = []
         subgraph_indices = {}
         current_index = 0
