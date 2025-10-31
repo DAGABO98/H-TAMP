@@ -3,21 +3,15 @@ import argparse
 import datetime
 import numpy as np
 
-from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
 
 from HTAMP.environment.geometry_helpers import CurvedConnector
 from HTAMP.environment.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
 from HTAMP.environment.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
+from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
-
-@dataclass
-class RobotProfile:
-    radius: float
-    robot_id: int
-    speed: float  # meters per second
 
 class GridWorld:
 
