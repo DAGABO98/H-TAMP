@@ -3,7 +3,7 @@
 from typing import Tuple
 
 import numpy as np
-from HTAMP.loc_dataclasses import Coordinate
+from HTAMP.environment.loc_dataclasses import Coordinate
 from HTAMP.plotting.geometry_plotting import GeometryPlottingHelper
 
 class GeometryHelper:

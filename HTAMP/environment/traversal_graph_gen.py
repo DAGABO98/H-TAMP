@@ -7,11 +7,11 @@ import numpy as np
 from datetime import datetime
 from typing import Dict, List, Tuple, Union
 
-from HTAMP.traversal_dataclasses import Lane, OrientationVector, Corridor, DriveThrough, Coordinate
-from HTAMP.traversal_dataclasses import Doorway, TraversalNode, TraversalEdge, IntersectionSubgraph
-from HTAMP.traversal_dataclasses import DoorwaySubgraph, DriveThroughSubgraph, SwitchingPointSubgraph
-from HTAMP.traversal_dataclasses import TraversalGraph
-from HTAMP.geometry_helpers import CurvedConnector
+from HTAMP.environment.traversal_dataclasses import Lane, OrientationVector, Corridor, DriveThrough, Coordinate
+from HTAMP.environment.traversal_dataclasses import Doorway, TraversalNode, TraversalEdge, IntersectionSubgraph
+from HTAMP.environment.traversal_dataclasses import DoorwaySubgraph, DriveThroughSubgraph, SwitchingPointSubgraph
+from HTAMP.environment.traversal_dataclasses import TraversalGraph
+from HTAMP.environment.geometry_helpers import CurvedConnector
 from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
 
 class TraversalGraphGenerator:

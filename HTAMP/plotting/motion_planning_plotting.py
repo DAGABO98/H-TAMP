@@ -4,9 +4,9 @@ from typing import List, Tuple
 from matplotlib import pyplot as plt
 from matplotlib.patches import Circle
 
-from HTAMP.loc_dataclasses import Coordinate
-from HTAMP.grid_world import TimeInterval, RobotProfile
-from HTAMP.traversal_dataclasses import TraversalGraph, TraversalNode
+from HTAMP.environment.loc_dataclasses import Coordinate
+from HTAMP.environment.grid_world import TimeInterval, RobotProfile
+from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 
 class MotionPlanningPlotter:
 

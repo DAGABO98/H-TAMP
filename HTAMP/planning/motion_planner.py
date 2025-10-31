@@ -6,11 +6,11 @@ import traceback
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple, Dict
 
-from HTAMP.loc_dataclasses import Coordinate
-from HTAMP.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
+from HTAMP.environment.loc_dataclasses import Coordinate
+from HTAMP.environment.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
-from HTAMP.traversal_dataclasses import TraversalNode
-from HTAMP.traversal_graph_gen import TraversalGraphGenerator
+from HTAMP.environment.traversal_dataclasses import TraversalNode
+from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 
 @dataclass
 class TimeReservation:
@@ -461,8 +461,9 @@ def main():
     robot_profiles = []
 
     # randomly select start and goal nodes for each robot
+    random.seed(11)
     selected_start_nodes = random.sample(potential_nodes, args.num_robots)
-    selected_goal_nodes = list(reversed(selected_start_nodes))
+    selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
 
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
@@ -492,7 +493,7 @@ def main():
                                             goal_traversal_node=selected_goal_nodes[i],
                                             robot_profile=robot_profiles[i],
                                             current_time=0.0,
-                                            horizon=500.0)
+                                            horizon=10000.0)
         if path:
             print(f"Planned Path for Robot {i}:")
             for traversal_node, time_interval in path:

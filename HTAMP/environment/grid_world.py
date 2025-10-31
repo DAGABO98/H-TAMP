@@ -6,12 +6,12 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
 
-from HTAMP.geometry_helpers import CurvedConnector
-from HTAMP.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
-from HTAMP.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
+from HTAMP.environment.geometry_helpers import CurvedConnector
+from HTAMP.environment.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
+from HTAMP.environment.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
 from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
-from HTAMP.traversal_dataclasses import TraversalGraph, TraversalNode
-from HTAMP.traversal_graph_gen import TraversalGraphGenerator
+from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
+from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 
 @dataclass
 class RobotProfile:

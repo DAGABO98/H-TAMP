@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
-from HTAMP.loc_dataclasses import Coordinate, OrientationVector
-from HTAMP.geometry_helpers import CurvedConnector
+from HTAMP.environment.loc_dataclasses import Coordinate, OrientationVector
+from HTAMP.environment.geometry_helpers import CurvedConnector
 
 @dataclass
 class Lane:

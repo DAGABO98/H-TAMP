@@ -3,14 +3,14 @@ from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
 import numpy as np
 
-from HTAMP.loc_dataclasses import MotionReservation, OrientationVector
+from HTAMP.environment.loc_dataclasses import MotionReservation, OrientationVector
 
-from HTAMP.traversal_dataclasses import Corridor, Doorway, DriveThrough
-from HTAMP.traversal_dataclasses import IntersectionSubgraph
-from HTAMP.traversal_dataclasses import DoorwaySubgraph
-from HTAMP.traversal_dataclasses import SwitchingPointSubgraph
-from HTAMP.traversal_dataclasses import DriveThroughSubgraph
-from HTAMP.traversal_dataclasses import TraversalGraph
+from HTAMP.environment.traversal_dataclasses import Corridor, Doorway, DriveThrough
+from HTAMP.environment.traversal_dataclasses import IntersectionSubgraph
+from HTAMP.environment.traversal_dataclasses import DoorwaySubgraph
+from HTAMP.environment.traversal_dataclasses import SwitchingPointSubgraph
+from HTAMP.environment.traversal_dataclasses import DriveThroughSubgraph
+from HTAMP.environment.traversal_dataclasses import TraversalGraph
 
 class TraversalGraphPlottingHelper:
 
