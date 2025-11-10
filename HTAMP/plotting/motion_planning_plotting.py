@@ -202,7 +202,7 @@ class MotionPlanningPlotter:
             extra_args=["-pix_fmt", "yuv420p", "-preset", "veryfast"]
         )
 
-        with writer.saving(fig, "sim.mp4", dpi=150):
+        with writer.saving(fig, "results/motion_planning/sim.mp4", dpi=150):
             for step in range(num_sim_frames):
                 print(f"Rendering frame {step+1}/{num_sim_frames}")
                 MotionPlanningPlotter._plot_state(ax=ax, 
