@@ -193,6 +193,7 @@ class CurvedConnector:
         self.num_samples = num_samples
         self.connector_dict = self._generate_connector_dict(tangent_scaling_factor=tangent_scaling_factor, 
                                                             num_samples=num_samples)
+        self.total_length = self._length()
 
     def _generate_connector_dict(self, 
                                  tangent_scaling_factor: float, 
@@ -233,12 +234,15 @@ class CurvedConnector:
         }
         return out
     
-    def length(self, tol_len: float = 1e-7) -> float:
+    def _length(self, tol_len: float = 1e-7) -> float:
         return GeometryHelper.arc_length_simpson(self.connector_dict["A"], 
                                                  self.connector_dict["B"], 
                                                  self.connector_dict["T0"], 
                                                  self.connector_dict["T1"], 
                                                  tol=tol_len)
+    
+    def length(self) -> float:
+        return self.total_length
 
     def split_connector_into_n(self, 
                                n_segments: int = 5, 
