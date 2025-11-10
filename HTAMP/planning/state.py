@@ -6,7 +6,7 @@ import traceback
 
 import numpy as np
 from HTAMP.environment.grid_world import GridWorld
-from HTAMP.environment.loc_dataclasses import TimeInterval
+from HTAMP.environment.loc_dataclasses import Coordinate, TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
@@ -164,7 +164,8 @@ class PlanningState:
                                                      self.cumulative_path_lengths[robot_id], 
                                                      traversed_distance)
             self.point_indices_on_edge[robot_id] = pos_index
-            self.robots_positions[robot_id] = position
+            robot_position = Coordinate(x=position[0], y=position[1])
+            self.robots_positions[robot_id] = robot_position
             self.previous_traversed_distances[robot_id] = traversed_distance
 
         else:
@@ -210,7 +211,7 @@ def main():
     robot_profiles = []
 
     # randomly select start and goal nodes for each robot
-    random.seed(11)
+    random.seed(42)
     selected_start_nodes = random.sample(potential_nodes, args.num_robots)
     selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
 
@@ -261,26 +262,42 @@ def main():
         else:
             print(f"No path found for Robot {i}")
     
+    MotionPlanningPlotter.plot_paths(occupancy_map=tg_generator.occupancy_map,
+                                origin_x=tg_generator.origin_x,
+                                origin_y=tg_generator.origin_y,
+                                resolution=tg_generator.meters_per_cell,
+                                paths=paths,
+                                traversal_graph=tg_generator.traversal_graph,
+                                robot_profiles=robot_profiles)
+    
+    robot_positions_seq: list[dict[int, Coordinate]] = []
+    robots_current_node_index_seq: list[dict[int, int]] =[]
+    point_indices_on_edge_seq: list[dict[int, int]] =[]
+    robot_paths_seq: list[dict[int, list[tuple[TraversalNode, TimeInterval]]]] = []
+    
     for i in range(1000):
-        MotionPlanningPlotter.plot_state(occupancy_map=tg_generator.occupancy_map,
-                                        origin_x=tg_generator.origin_x,
-                                        origin_y=tg_generator.origin_y,
-                                        resolution=tg_generator.meters_per_cell,
-                                        state=state,
-                                        step=i,
-                                        robot_profiles=robot_profiles)
+        print(f"Step {i}:")
         state.step(traversal_graph=tg_generator.traversal_graph)
+        robot_positions_seq.append(copy.deepcopy(state.robots_positions))
+        robots_current_node_index_seq.append(copy.deepcopy(state.robots_current_node_index))
+        point_indices_on_edge_seq.append(copy.deepcopy(state.point_indices_on_edge))
+        robot_paths_seq.append(copy.deepcopy(state.robot_paths))
+    
+    MotionPlanningPlotter.generate_state_animation(occupancy_map=tg_generator.occupancy_map,
+                                            origin_x=tg_generator.origin_x,
+                                            origin_y=tg_generator.origin_y,
+                                            resolution=tg_generator.meters_per_cell,
+                                            robot_positions_seq=robot_positions_seq,
+                                            robots_current_node_index_seq=robots_current_node_index_seq,
+                                            point_indices_on_edge_seq=point_indices_on_edge_seq,
+                                            robot_paths_seq=robot_paths_seq,
+                                            traversal_graph=tg_generator.traversal_graph,
+                                            robot_profiles=robot_profiles,
+                                            fps_sim=args.fps,
+                                            num_sim_frames=1000)
 
     pEnd = datetime.now()
     print(f"Total planning time: {pEnd - pStart}")
-
-    MotionPlanningPlotter.plot_paths(occupancy_map=tg_generator.occupancy_map,
-                                    origin_x=tg_generator.origin_x,
-                                    origin_y=tg_generator.origin_y,
-                                    resolution=tg_generator.meters_per_cell,
-                                    paths=paths,
-                                    traversal_graph=tg_generator.traversal_graph,
-                                    robot_profiles=robot_profiles)
 
 
 if __name__ == "__main__":
