@@ -1,9 +1,18 @@
+import argparse
 import copy
+from datetime import datetime
+import random
+import traceback
 
 import numpy as np
+from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.loc_dataclasses import TimeInterval
+from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
+from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
+from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import SimulatorConfig
+from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class PlanningHelpers:
     @staticmethod
@@ -19,7 +28,7 @@ class PlanningHelpers:
         i = np.searchsorted(cumulative_path_length, s, side='right') - 1
         i = np.clip(i, 0, len(cumulative_path_length) - 2)
         t = (s - cumulative_path_length[i]) / (cumulative_path_length[i+1] - cumulative_path_length[i] + 1e-12)
-        return path_points[i] * (1 - t) + path_points[i+1] * t
+        return path_points[i] * (1 - t) + path_points[i+1] * t, i+1
 
 
 class PlanningState:
@@ -33,6 +42,7 @@ class PlanningState:
         self.edge_lengths: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
         self.cumulative_path_lengths: dict[int, np.ndarray] = {robot_id: np.array([]) for robot_id in simulator_config.initial_robot_positions.keys()}
         self.previous_traversed_distances: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
+        self.point_indices_on_edge: dict[int, int] = {robot_id: 0 for robot_id in simulator_config.initial_robot_positions.keys()}
 
         self.current_wait_times: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
 
@@ -73,6 +83,7 @@ class PlanningState:
             self.edge_lengths[robot_id] = edge_length
             self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
             self.robots_current_node_index[robot_id] = 0
+            self.point_indices_on_edge[robot_id] = 0
         else:
             self.robots_current_nodes[robot_id] = None
             self.robots_next_nodes[robot_id] = None
@@ -81,6 +92,7 @@ class PlanningState:
             self.edge_lengths[robot_id] = 0.0
             self.current_wait_times[robot_id] = 0.0
             self.robots_current_node_index[robot_id] = 0
+            self.point_indices_on_edge[robot_id] = 0
     
     def _move_to_next_node(self, robot_id: int, traversal_graph: TraversalGraph) -> None:
         current_index = self.robots_current_node_index[robot_id] + 1
@@ -97,6 +109,7 @@ class PlanningState:
                 self.previous_traversed_distances[robot_id] = 0.0
                 self.current_wait_times[robot_id] = 0.0
                 self.robots_current_node_index[robot_id] = current_index
+                self.point_indices_on_edge[robot_id] = 0
             else:
                 end_node, _ = path[next_index]
                 self.robots_next_nodes[robot_id] = end_node
@@ -111,6 +124,7 @@ class PlanningState:
                 self.previous_traversed_distances[robot_id] = 0.0
                 self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
                 self.robots_current_node_index[robot_id] = current_index
+                self.point_indices_on_edge[robot_id] = 0
         else:
             self.robots_current_nodes[robot_id] = None
             self.robots_next_nodes[robot_id] = None
@@ -118,6 +132,9 @@ class PlanningState:
             self.cumulative_path_lengths[robot_id] = np.array([])
             self.edge_lengths[robot_id] = 0.0
             self.previous_traversed_distances[robot_id] = 0.0
+            self.current_wait_times[robot_id] = 0.0
+            self.robots_current_node_index[robot_id] = 0
+            self.point_indices_on_edge[robot_id] = 0
     
     def _calculate_traversed_distance(self, robot_id: int, time_step: float) -> float:
         traversed_distance = self.previous_traversed_distances[robot_id] \
@@ -143,9 +160,10 @@ class PlanningState:
         edge_length = self.edge_lengths[robot_id]
 
         if traversed_distance < edge_length:
-            position = PlanningHelpers.position_at_point(self.edge_samples[robot_id], 
+            position, pos_index = PlanningHelpers.position_at_point(self.edge_samples[robot_id], 
                                                      self.cumulative_path_lengths[robot_id], 
                                                      traversed_distance)
+            self.point_indices_on_edge[robot_id] = pos_index
             self.robots_positions[robot_id] = position
             self.previous_traversed_distances[robot_id] = traversed_distance
 
@@ -156,6 +174,121 @@ class PlanningState:
             self._update_robot_location(robot_id, traversal_graph, remaining_time)
         
 
-    def step(self, traversal_graphs: dict[int, TraversalGraph]) -> None:
+    def step(self, traversal_graph: TraversalGraph) -> None:
         for robot_id in self.robots_positions:
-            self._update_robot_location(robot_id, traversal_graphs[robot_id], self.simulator_config.time_step)
+            self._update_robot_location(robot_id, traversal_graph, self.simulator_config.time_step)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", type=str, default="maps/FA3/FA3_lanes.yaml", help="Path to the configuration file")
+    parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
+    parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
+    parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
+    parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")
+    parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
+    parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
+    parser.add_argument("--num_robots", type=int, default=1, help="Number of robots to plan for")
+    args = parser.parse_args()
+
+    print("Generating Traversal Graph...")
+
+    tg_generator = TraversalGraphGenerator(occupancy_map_path=args.occupancy_map_path,
+                                           config_path=args.config_path,
+                                           meters_per_pixel=args.meters_per_pixel,
+                                           factor=args.factor)
+
+    print("Traversal Graph generated.")
+
+    potential_nodes: list[TraversalNode] = []
+
+    for doorway in tg_generator.doorway_subgraphs:
+        room_nodes = doorway.room_nodes
+        for room_node_label in room_nodes:
+            room_node = tg_generator.traversal_graph.nodes_dict[room_node_label]
+            potential_nodes.append(room_node)
+            
+    robot_profiles = []
+
+    # randomly select start and goal nodes for each robot
+    random.seed(11)
+    selected_start_nodes = random.sample(potential_nodes, args.num_robots)
+    selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
+
+    for i in range(args.num_robots):
+        robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
+        robot_profiles.append(robot_profile)
+
+    print("Creating Grid World...")
+
+    world = GridWorld(cell_size=tg_generator.meters_per_cell,
+                      fps=args.fps,
+                      occupancy_map=tg_generator.occupancy_map,
+                      traversal_graph=tg_generator.traversal_graph,
+                      shortest_paths=tg_generator.shortest_paths,
+                      robot_profiles=robot_profiles,
+                      use_saved_data=args.use_saved_data,
+                      occupancy_reservations_file=args.occupancy_reservations_file)
+
+    print("Grid World created.")
+
+    planner = MotionPlanner(grid=world, weight_factor=1.0)
+
+    paths = []
+
+    simulator_config = SimulatorConfig(fps=args.fps,
+                                       robot_profiles=robot_profiles,
+                                       rejection_penalty=100.0,
+                                       date_range=None,
+                                       initial_robot_positions={i: selected_start_nodes[i].position for i in range(args.num_robots)})
+    
+    state = PlanningState(simulator_config=simulator_config)
+
+    pStart = datetime.now()
+
+    for i in range(args.num_robots):
+        path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
+                                            goal_traversal_node=selected_goal_nodes[i],
+                                            robot_profile=robot_profiles[i],
+                                            current_time=0.0,
+                                            horizon=10000.0)
+        if path:
+            print(f"Planned Path for Robot {i}:")
+            for traversal_node, time_interval in path:
+                print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
+            planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
+            paths.append(path)
+            state.assign_robot_path(robot_id=i, path=path, traversal_graph=tg_generator.traversal_graph)
+        else:
+            print(f"No path found for Robot {i}")
+    
+    for i in range(1000):
+        MotionPlanningPlotter.plot_state(occupancy_map=tg_generator.occupancy_map,
+                                        origin_x=tg_generator.origin_x,
+                                        origin_y=tg_generator.origin_y,
+                                        resolution=tg_generator.meters_per_cell,
+                                        state=state,
+                                        step=i,
+                                        robot_profiles=robot_profiles)
+        state.step(traversal_graph=tg_generator.traversal_graph)
+
+    pEnd = datetime.now()
+    print(f"Total planning time: {pEnd - pStart}")
+
+    MotionPlanningPlotter.plot_paths(occupancy_map=tg_generator.occupancy_map,
+                                    origin_x=tg_generator.origin_x,
+                                    origin_y=tg_generator.origin_y,
+                                    resolution=tg_generator.meters_per_cell,
+                                    paths=paths,
+                                    traversal_graph=tg_generator.traversal_graph,
+                                    robot_profiles=robot_profiles)
+
+
+if __name__ == "__main__":
+    pStart = datetime.now()
+    try:
+        main()
+    except Exception as errorMainContext:
+        print("Fail End Process: ", errorMainContext)
+        traceback.print_exc()
+    pEnd = datetime.now()
+    print(f"Total Execution Time: {pEnd - pStart}")

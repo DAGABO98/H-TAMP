@@ -1,5 +1,6 @@
 
 
+from HTAMP.environment.loc_dataclasses import Coordinate
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 
@@ -30,7 +31,7 @@ class SimulatorConfig:
                  robot_profiles: list[RobotProfile], 
                  rejection_penalty: float, 
                  date_range: DateOperationalRange,
-                 initial_robot_positions: dict[int, str]):
+                 initial_robot_positions: dict[int, Coordinate]):
         self.robot_profiles = robot_profiles
         self.rejection_penalty = rejection_penalty
         self.date_range = date_range
