@@ -26,6 +26,7 @@ class Request:
 
 class SimulatorConfig:
     def __init__(self, 
+                 fps: int,
                  robot_profiles: list[RobotProfile], 
                  rejection_penalty: float, 
                  date_range: DateOperationalRange,
@@ -34,3 +35,5 @@ class SimulatorConfig:
         self.rejection_penalty = rejection_penalty
         self.date_range = date_range
         self.initial_robot_positions = initial_robot_positions
+        self.fps = fps
+        self.time_step = 1.0 / fps
