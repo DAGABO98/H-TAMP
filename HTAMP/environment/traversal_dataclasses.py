@@ -36,6 +36,13 @@ class Doorway:
     corridor_id: str
 
 @dataclass
+class ParkingSpace:
+    id: str
+    corridor_id: str
+    orientation: str
+    entry_point: Coordinate
+
+@dataclass
 class TraversalNode:
     label: str
     position: Coordinate
@@ -66,6 +73,20 @@ class DoorwaySubgraph:
     right_nodes: list[str]
     nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
+
+@dataclass
+class ParkingSpaceSubgraph:
+    up_parking_nodes_entry: list[str]
+    down_parking_nodes_entry: list[str]
+    down_parking_nodes_exit: list[str]
+    up_parking_nodes_exit: list[str]
+    left_exit_nodes: list[str]
+    left_entry_nodes: list[str]
+    right_exit_nodes: list[str]
+    right_entry_nodes: list[str]
+    nodes_dict: Dict[str, TraversalNode]
+    edges: list[TraversalEdge]
+    orientation: str
 
 @dataclass
 class EndPointSubgraph:
