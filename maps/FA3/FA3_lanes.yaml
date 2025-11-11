@@ -43,6 +43,14 @@ drive_through_spaces:
     exit_start_point: [1556, 795]
     exit_end_point: [1604, 795]
 
+parking_spaces: 
+  - id: P1
+    corridor_id: V1
+    entry_point: [966, 876]
+  - id: P2
+    corridor_id: V1
+    entry_point: [966, 946]
+
 doorways:
   - id: D1
     corridor_id: H1
