@@ -5,7 +5,7 @@ import numpy as np
 
 from HTAMP.environment.loc_dataclasses import MotionReservation, OrientationVector
 
-from HTAMP.environment.traversal_dataclasses import Corridor, Doorway, DriveThrough
+from HTAMP.environment.traversal_dataclasses import Corridor, Doorway, DriveThrough, ParkingSpaceSubgraph
 from HTAMP.environment.traversal_dataclasses import IntersectionSubgraph
 from HTAMP.environment.traversal_dataclasses import DoorwaySubgraph
 from HTAMP.environment.traversal_dataclasses import SwitchingPointSubgraph
@@ -205,6 +205,58 @@ class TraversalGraphPlottingHelper:
         plt.close()
 
     @staticmethod
+    def plot_parking_space_subgraphs(occupancy_map: np.ndarray, 
+                                     origin_x: float, 
+                                     origin_y: float, 
+                                     resolution: float,
+                                     subgraphs: List[ParkingSpaceSubgraph], 
+                                     filename: str):
+        rows, cols = occupancy_map.shape
+        xmin, xmax = origin_x, origin_x + cols * resolution
+        ymin, ymax = origin_y, origin_y + rows * resolution
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+        for subgraph in subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
+                elif edge.action == "turn_left":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
+                elif edge.action == "turn_right":
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
+                elif edge.action == "switch_directions":
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
+
+            for node_label in subgraph.left_entry_nodes + subgraph.right_entry_nodes + \
+                subgraph.left_exit_nodes + subgraph.right_exit_nodes + \
+                              subgraph.down_parking_nodes_entry + subgraph.down_parking_nodes_exit + \
+                              subgraph.up_parking_nodes_entry + subgraph.up_parking_nodes_exit + subgraph.up_corridor_nodes + subgraph.down_corridor_nodes:
+                node = subgraph.nodes_dict[node_label]
+                if node.orientation_vec == OrientationVector(1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
+
+        ax.set_title("Drive-Through Subgraph Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig(f"{filename}")
+        plt.close()
+
+    @staticmethod
     def plot_subgraphs_in_one_plot(occupancy_map: np.ndarray, 
                                    origin_x: float, 
                                    origin_y: float, 
@@ -213,6 +265,7 @@ class TraversalGraphPlottingHelper:
                                    doorway_subgraphs: List[DoorwaySubgraph],
                                    drive_through_subgraphs: List[DriveThroughSubgraph],
                                    switching_point_subgraphs: List[SwitchingPointSubgraph],
+                                   parking_space_subgraphs: List[ParkingSpaceSubgraph],
                                    filename: str):
         rows, cols = occupancy_map.shape
         xmin, xmax = origin_x, origin_x + cols * resolution
@@ -306,6 +359,33 @@ class TraversalGraphPlottingHelper:
                     ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
 
             for node_label in subgraph.left_nodes + subgraph.right_nodes:
+                node = subgraph.nodes_dict[node_label]
+                if node.orientation_vec == OrientationVector(1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(-1.0, 0.0):
+                    ax.scatter(node.position.x, node.position.y, color='cyan', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(0.0, 1.0):
+                    ax.scatter(node.position.x, node.position.y, color='magenta', s=1, alpha=0.7)
+                elif node.orientation_vec == OrientationVector(0.0, -1.0):
+                    ax.scatter(node.position.x, node.position.y, color='red', s=1, alpha=0.7)
+        
+        for subgraph in parking_space_subgraphs:
+            for edge in subgraph.edges:
+                samples_x = edge.edge_connector.connector_dict['X']
+                samples_y = edge.edge_connector.connector_dict['Y']
+                if edge.action == "go_straight":
+                    ax.plot(samples_x, samples_y, color='green', linewidth=0.5, alpha=0.7)
+                elif edge.action == "turn_left":
+                    ax.plot(samples_x, samples_y, color='orange', linewidth=0.5, alpha=0.7)
+                elif edge.action == "turn_right":
+                    ax.plot(samples_x, samples_y, color='purple', linewidth=0.5, alpha=0.7)
+                elif edge.action == "switch_directions":
+                    ax.plot(samples_x, samples_y, color='brown', linewidth=0.5, alpha=0.7)
+
+            for node_label in subgraph.left_entry_nodes + subgraph.right_entry_nodes + \
+                subgraph.left_exit_nodes + subgraph.right_exit_nodes + \
+                              subgraph.down_parking_nodes_entry + subgraph.down_parking_nodes_exit + \
+                              subgraph.up_parking_nodes_entry + subgraph.up_parking_nodes_exit + subgraph.up_corridor_nodes + subgraph.down_corridor_nodes:
                 node = subgraph.nodes_dict[node_label]
                 if node.orientation_vec == OrientationVector(1.0, 0.0):
                     ax.scatter(node.position.x, node.position.y, color='blue', s=1, alpha=0.7)

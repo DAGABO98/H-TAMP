@@ -84,6 +84,8 @@ class ParkingSpaceSubgraph:
     left_entry_nodes: list[str]
     right_exit_nodes: list[str]
     right_entry_nodes: list[str]
+    up_corridor_nodes: list[str]
+    down_corridor_nodes: list[str]
     nodes_dict: Dict[str, TraversalNode]
     edges: list[TraversalEdge]
     orientation: str

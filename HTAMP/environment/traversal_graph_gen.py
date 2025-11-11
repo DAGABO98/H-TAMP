@@ -18,7 +18,7 @@ class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
                  doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.4, num_samples: int = 10, threshold: float = 10.0,
-                 switching_point_offset: float = 15.0, parking_space_offset: float = 18.0, num_parking_spaces: int = 6):
+                 switching_point_offset: float = 15.0, parking_space_offset: float = 14.0, num_parking_spaces: int = 5):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.tangent_scaling_factor = tangent_scaling_factor
@@ -45,7 +45,7 @@ class TraversalGraphGenerator:
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
         self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
         self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
-        self.parking_spaces_subgraphs, self.parking_spaces_subgraph_indices = self._generate_parking_space_traversal_subgraphs()
+        self.parking_spaces_subgraphs, self.parking_spaces_subgraph_indices = self._generate_parking_space_subgraphs()
         self.switching_point_subgraphs = []
         self._merge_overlapping_doorway_subgraphs()
         self._merge_overlapping_drive_through_doorway_subgraphs()
@@ -1798,6 +1798,101 @@ class TraversalGraphGenerator:
             down_parking_nodes_exit.append(down_exit_node.label)
         
         return up_parking_nodes_entry, down_parking_nodes_entry, down_parking_nodes_exit, up_parking_nodes_exit
+    
+    def _extract_parking_corridor_nodes(self,
+                                       parking_space: ParkingSpace,
+                                       nodes_dict: Dict[str, TraversalNode]) -> List[str]:
+        up_corridor_nodes = []
+        down_corridor_nodes = []
+        corridor_id = parking_space.corridor_id
+        corridor_dict = {corridor.corridor_id: corridor for corridor in self.corridors}
+        corridor = corridor_dict[corridor_id]
+        if parking_space.orientation == "right" or parking_space.orientation == "left":
+            up_y_coordinate = parking_space.entry_point.y - ((3/2)*self.parking_space_offset)
+            down_y_coordinate = parking_space.entry_point.y + ((3/2)*self.parking_space_offset)
+            for i, corridor_lane in enumerate(corridor.lanes):
+                corridor_node_location_up = Coordinate(x=corridor_lane.start_point.x,
+                                                       y=up_y_coordinate)
+                corridor_node_location_down = Coordinate(x=corridor_lane.start_point.x,
+                                                         y=down_y_coordinate)
+                if i == 0:
+                    orientation_vec = OrientationVector(0.0, 1.0)  # Facing  left
+                elif i == len(corridor.lanes) - 1:
+                    orientation_vec = OrientationVector(0.0, -1.0)  # Facing right
+                else:
+                    orientation_vec = None
+                if orientation_vec is None:
+                    possible_orientations = [OrientationVector(0.0, 1.0), OrientationVector(0.0, -1.0)]
+                    for possible_orientation in possible_orientations:
+                        up_corridor_node = TraversalNode(label=f"{corridor_node_location_up.x:.2f}_{corridor_node_location_up.y:.2f}_{possible_orientation}",
+                                                        position=corridor_node_location_up,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                        down_corridor_node = TraversalNode(label=f"{corridor_node_location_down.x:.2f}_{corridor_node_location_down.y:.2f}_{possible_orientation}",
+                                                        position=corridor_node_location_down,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                        nodes_dict[up_corridor_node.label] = up_corridor_node
+                        nodes_dict[down_corridor_node.label] = down_corridor_node
+                        up_corridor_nodes.append(up_corridor_node.label)
+                        down_corridor_nodes.append(down_corridor_node.label)
+                else:
+                    up_corridor_node = TraversalNode(label=f"{corridor_node_location_up.x:.2f}_{corridor_node_location_up.y:.2f}_{orientation_vec}",
+                                                    position=corridor_node_location_up,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                    down_corridor_node = TraversalNode(label=f"{corridor_node_location_down.x:.2f}_{corridor_node_location_down.y:.2f}_{orientation_vec}",
+                                                    position=corridor_node_location_down,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                    nodes_dict[up_corridor_node.label] = up_corridor_node
+                    nodes_dict[down_corridor_node.label] = down_corridor_node
+                    up_corridor_nodes.append(up_corridor_node.label)
+                    down_corridor_nodes.append(down_corridor_node.label)
+        else:
+            up_x_coordinate = parking_space.entry_point.x - ((3/2)*self.parking_space_offset)
+            down_x_coordinate = parking_space.entry_point.x + ((3/2)*self.parking_space_offset)
+            for i, corridor_lane in enumerate(corridor.lanes):
+                corridor_node_location_up = Coordinate(x=up_x_coordinate,
+                                                       y=corridor_lane.start_point.y)
+                corridor_node_location_down = Coordinate(x=down_x_coordinate,
+                                                         y=corridor_lane.start_point.y)
+                if i == 0:
+                    orientation_vec = OrientationVector(-1.0, 0.0)
+                elif i == len(corridor.lanes) - 1:
+                    orientation_vec = OrientationVector(1.0, 0.0)
+                else:
+                    orientation_vec = None
+                if orientation_vec is None:
+                    possible_orientations = [OrientationVector(-1.0, 0.0), OrientationVector(1.0, 0.0)]
+                    for possible_orientation in possible_orientations:
+                        up_corridor_node = TraversalNode(label=f"{corridor_node_location_up.x:.2f}_{corridor_node_location_up.y:.2f}_{possible_orientation}",
+                                                        position=corridor_node_location_up,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                        down_corridor_node = TraversalNode(label=f"{corridor_node_location_down.x:.2f}_{corridor_node_location_down.y:.2f}_{possible_orientation}",
+                                                        position=corridor_node_location_down,
+                                                        orientation_vec=possible_orientation,
+                                                        connections=[])
+                        nodes_dict[up_corridor_node.label] = up_corridor_node
+                        nodes_dict[down_corridor_node.label] = down_corridor_node
+                        up_corridor_nodes.append(up_corridor_node.label)
+                        down_corridor_nodes.append(down_corridor_node.label)
+                else:
+                    up_corridor_node = TraversalNode(label=f"{corridor_node_location_up.x:.2f}_{corridor_node_location_up.y:.2f}_{orientation_vec}",
+                                                    position=corridor_node_location_up,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                    down_corridor_node = TraversalNode(label=f"{corridor_node_location_down.x:.2f}_{corridor_node_location_down.y:.2f}_{orientation_vec}",
+                                                    position=corridor_node_location_down,
+                                                    orientation_vec=orientation_vec,
+                                                    connections=[])
+                    nodes_dict[up_corridor_node.label] = up_corridor_node
+                    nodes_dict[down_corridor_node.label] = down_corridor_node
+                    up_corridor_nodes.append(up_corridor_node.label)
+                    down_corridor_nodes.append(down_corridor_node.label)
+
+        return up_corridor_nodes, down_corridor_nodes
         
     def _extract_nodes_for_parking_space(self, 
                                      parking_space: ParkingSpace) -> Tuple[List[str], 
@@ -1821,9 +1916,13 @@ class TraversalGraphGenerator:
 
         up_parking_nodes_entry, down_parking_nodes_entry, down_parking_nodes_exit, up_parking_nodes_exit = parking_spaces
 
+        up_corridor_nodes, down_corridor_nodes = self._extract_parking_corridor_nodes(parking_space=parking_space,
+                                                                                      nodes_dict=nodes_dict)
+
 
         return up_parking_nodes_entry, down_parking_nodes_entry, down_parking_nodes_exit, \
-            up_parking_nodes_exit, left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes, nodes_dict
+            up_parking_nodes_exit, left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes, \
+                up_corridor_nodes, down_corridor_nodes, nodes_dict
     
     def _connect_lateral_nodes_to_parking_space_nodes(self,
                                                       lateral_nodes: List[str],
@@ -1893,6 +1992,84 @@ class TraversalGraphGenerator:
             edges.append(edge)
         return edges
     
+    def _create_parking_corridor_connections_for_nodes(self,
+                                                       parking_space: ParkingSpace,
+                                                       up_corridor_nodes: List[str],
+                                                       down_corridor_nodes: List[str],
+                                                       left_entry_nodes: List[str],
+                                                       left_exit_nodes: List[str],
+                                                       right_entry_nodes: List[str],
+                                                       right_exit_nodes: List[str],
+                                                       nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
+        edges = []
+        if parking_space.orientation == "right":
+            entry_nodes = left_entry_nodes
+            exit_nodes = left_exit_nodes
+            right_orientation_vec = OrientationVector(0.0, -1.0)
+            left_orientation_vec = OrientationVector(0.0, 1.0)
+            left_corridor_nodes = down_corridor_nodes
+            right_corridor_nodes = up_corridor_nodes
+        elif parking_space.orientation == "left":
+            entry_nodes = right_entry_nodes
+            exit_nodes = right_exit_nodes
+            right_orientation_vec = OrientationVector(0.0, 1.0)
+            left_orientation_vec = OrientationVector(0.0, -1.0)
+            left_corridor_nodes = up_corridor_nodes
+            right_corridor_nodes = down_corridor_nodes
+        elif parking_space.orientation == "up":
+            entry_nodes = left_entry_nodes
+            exit_nodes = left_exit_nodes
+            right_orientation_vec = OrientationVector(-1.0, 0.0)
+            left_orientation_vec = OrientationVector(1.0, 0.0)
+            left_corridor_nodes = down_corridor_nodes
+            right_corridor_nodes = up_corridor_nodes
+        elif parking_space.orientation == "down":
+            entry_nodes = right_entry_nodes
+            exit_nodes = right_exit_nodes
+            right_orientation_vec = OrientationVector(1.0, 0.0)
+            left_orientation_vec = OrientationVector(-1.0, 0.0)
+            left_corridor_nodes = up_corridor_nodes
+            right_corridor_nodes = down_corridor_nodes
+        else:
+            raise ValueError(f"Invalid parking space orientation: {parking_space.orientation}")
+        
+        for i in range(len(exit_nodes)):
+            exit_node = exit_nodes[i]
+            entry_node = entry_nodes[i]
+            exit_node_obj = nodes_dict[exit_node]
+            entry_node_obj = nodes_dict[entry_node]
+            for left_corridor_node_label in left_corridor_nodes:
+                left_corridor_node = nodes_dict[left_corridor_node_label]
+                if left_corridor_node.orientation_vec == left_orientation_vec:
+                    edge = self._create_edge_between_nodes(from_node=exit_node_obj,
+                                                    to_node=left_corridor_node, 
+                                                    action="turn_left")
+                    edges.append(edge)
+                elif left_corridor_node.orientation_vec == right_orientation_vec:
+                    edge = self._create_edge_between_nodes(from_node=left_corridor_node,
+                                                    to_node=entry_node_obj, 
+                                                    action="turn_right")
+                    edges.append(edge)
+                else:
+                    raise ValueError(f"Invalid corridor node orientation: {left_corridor_node.orientation_vec}")
+            
+            for right_corridor_node_label in right_corridor_nodes:
+                right_corridor_node = nodes_dict[right_corridor_node_label]
+                if right_corridor_node.orientation_vec == right_orientation_vec:
+                    edge = self._create_edge_between_nodes(from_node=exit_node_obj,
+                                                    to_node=right_corridor_node, 
+                                                    action="turn_right")
+                    edges.append(edge)
+                elif right_corridor_node.orientation_vec == left_orientation_vec:
+                    edge = self._create_edge_between_nodes(from_node=right_corridor_node,
+                                                    to_node=entry_node_obj, 
+                                                    action="turn_left")
+                    edges.append(edge)
+                else:
+                    raise ValueError(f"Invalid corridor node orientation: {right_corridor_node.orientation_vec}")
+            
+        return edges
+    
     def _create_parking_space_connections_for_nodes(self,
                                                     parking_space: ParkingSpace,
                                                     up_parking_nodes_entry: List[str],
@@ -1903,6 +2080,8 @@ class TraversalGraphGenerator:
                                                     left_exit_nodes: List[str],
                                                     right_entry_nodes: List[str],
                                                     right_exit_nodes: List[str],
+                                                    up_corridor_nodes: List[str],
+                                                    down_corridor_nodes: List[str],
                                                     nodes_dict: Dict[str, TraversalNode]) -> None:
         edges = []
         up_parking_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=up_parking_nodes_entry,
@@ -1914,6 +2093,24 @@ class TraversalGraphGenerator:
                                                                             destination_lateral_nodes=down_parking_nodes_exit,
                                                                             nodes_dict=nodes_dict)
         edges.extend(down_parking_opposite_edges)
+
+        corridor = self._get_corridor_by_id(parking_space.corridor_id)
+
+        corridor_edges = self._create_corridor_straight_connections_for_nodes(corridor=corridor,
+                                                                              left_nodes=down_corridor_nodes,
+                                                                              right_nodes=up_corridor_nodes,
+                                                                              nodes_dict=nodes_dict)
+        edges.extend(corridor_edges)
+
+        corridor_connection_edges = self._create_parking_corridor_connections_for_nodes(parking_space=parking_space,
+                                                                                      up_corridor_nodes=up_corridor_nodes,
+                                                                                      down_corridor_nodes=down_corridor_nodes,
+                                                                                      left_entry_nodes=left_entry_nodes,
+                                                                                      left_exit_nodes=left_exit_nodes,
+                                                                                      right_entry_nodes=right_entry_nodes,
+                                                                                      right_exit_nodes=right_exit_nodes,
+                                                                                      nodes_dict=nodes_dict)
+        edges.extend(corridor_connection_edges)
 
         if parking_space.orientation == "right" or parking_space.orientation == "up":
             opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=right_entry_nodes,
@@ -1997,13 +2194,13 @@ class TraversalGraphGenerator:
         return edges
 
     def _generate_parking_space_subgraph(self, parking_space: ParkingSpace) -> ParkingSpaceSubgraph:
-        edges = []
-
+        
         parking_space_nodes = self._extract_nodes_for_parking_space(parking_space=parking_space)
 
         up_parking_nodes_entry, down_parking_nodes_entry, \
             down_parking_nodes_exit, up_parking_nodes_exit, left_entry_nodes, \
-                left_exit_nodes, right_entry_nodes, right_exit_nodes, nodes_dict = parking_space_nodes
+                left_exit_nodes, right_entry_nodes, right_exit_nodes, up_corridor_nodes, \
+                    down_corridor_nodes, nodes_dict = parking_space_nodes
         
         parking_space_connection_edges = self._create_parking_space_connections_for_nodes(parking_space=parking_space,
                                                                                         up_parking_nodes_entry=up_parking_nodes_entry,
@@ -2014,6 +2211,8 @@ class TraversalGraphGenerator:
                                                                                         left_exit_nodes=left_exit_nodes,
                                                                                         right_entry_nodes=right_entry_nodes,
                                                                                         right_exit_nodes=right_exit_nodes,
+                                                                                        up_corridor_nodes=up_corridor_nodes,
+                                                                                        down_corridor_nodes=down_corridor_nodes,
                                                                                         nodes_dict=nodes_dict)
         
         parking_space_subgraph = ParkingSpaceSubgraph(up_parking_nodes_entry=up_parking_nodes_entry,
@@ -2024,6 +2223,8 @@ class TraversalGraphGenerator:
                                                       left_entry_nodes=left_entry_nodes,
                                                       right_exit_nodes=right_exit_nodes,
                                                       right_entry_nodes=right_entry_nodes,
+                                                      up_corridor_nodes=up_corridor_nodes,
+                                                      down_corridor_nodes=down_corridor_nodes,
                                                       nodes_dict=nodes_dict,
                                                       edges=parking_space_connection_edges,
                                                       orientation=parking_space.orientation)
@@ -3150,26 +3351,26 @@ class TraversalGraphGenerator:
                     f"Invalid switch direction edge {edge}."
                 assert origin_node.position.x == destination_node.position.x, \
                     f"Invalid switch direction edge x locations from {edge.from_node} to {edge.to_node}."
-                assert origin_node.position.y > destination_node.position.y, \
+                assert origin_node.position.y >= destination_node.position.y, \
                     f"Invalid switch direction edge y locations from {edge.from_node} to {edge.to_node}."
             elif origin_node.orientation_vec == OrientationVector(-1.0, 0.0):  # Facing left
                 assert destination_node.orientation_vec == OrientationVector(1.0, 0.0), \
                     f"Invalid switch direction edge {edge}."
                 assert origin_node.position.x == destination_node.position.x, \
                     f"Invalid switch direction edge x locations from {edge.from_node} to {edge.to_node}."
-                assert origin_node.position.y < destination_node.position.y, \
+                assert origin_node.position.y <= destination_node.position.y, \
                     f"Invalid switch direction edge y locations from {edge.from_node} to {edge.to_node}."
             elif origin_node.orientation_vec == OrientationVector(0.0, 1.0):  # Facing down
                 assert destination_node.orientation_vec == OrientationVector(0.0, -1.0), \
                     f"Invalid switch direction edge {edge}."
-                assert origin_node.position.x < destination_node.position.x, \
+                assert origin_node.position.x <= destination_node.position.x, \
                     f"Invalid switch direction edge x locations from {edge.from_node} to {edge.to_node}."
                 assert origin_node.position.y == destination_node.position.y, \
                     f"Invalid switch direction edge y locations from {edge.from_node} to {edge.to_node}."
             elif origin_node.orientation_vec == OrientationVector(0.0, -1.0):  # Facing up
                 assert destination_node.orientation_vec == OrientationVector(0.0, 1.0), \
                     f"Invalid switch direction edge {edge}."
-                assert origin_node.position.x > destination_node.position.x, \
+                assert origin_node.position.x >= destination_node.position.x, \
                     f"Invalid switch direction edge x locations from {edge.from_node} to {edge.to_node}."
                 assert origin_node.position.y == destination_node.position.y, \
                     f"Invalid switch direction edge y locations from {edge.from_node} to {edge.to_node}."
@@ -3258,7 +3459,7 @@ class TraversalGraphGenerator:
     def _assemble_traversal_graph(self) -> TraversalGraph:
 
         self._connect_corridor_subgraphs()
-        self._connect_parking_space_subgraphs()
+        # self._connect_parking_space_subgraphs()
 
         traversal_graph = self._build_and_check_traversal_graph()
         
@@ -3363,12 +3564,21 @@ if __name__ == "__main__":
                                                                resolution=tg_generator.resolution,
                                                                subgraphs=tg_generator.switching_point_subgraphs,
                                                                filename="results/environment/switching_point_subgraph_0.svg")
+    
     TraversalGraphPlottingHelper.plot_drive_through_subgraphs(occupancy_map=tg_generator.occupancy_map,
                                                                origin_x=tg_generator.origin_x,
                                                                origin_y=tg_generator.origin_y,
                                                                resolution=tg_generator.resolution,
                                                                subgraphs=tg_generator.drive_through_subgraphs,
                                                                filename="results/environment/drive_through_subgraph_0.svg")
+    
+    TraversalGraphPlottingHelper.plot_parking_space_subgraphs(occupancy_map=tg_generator.occupancy_map,
+                                                               origin_x=tg_generator.origin_x,
+                                                               origin_y=tg_generator.origin_y,
+                                                               resolution=tg_generator.resolution,
+                                                               subgraphs=tg_generator.parking_spaces_subgraphs,
+                                                               filename="results/environment/parking_space_subgraph_0.svg")
+    
     TraversalGraphPlottingHelper.plot_subgraphs_in_one_plot(occupancy_map=tg_generator.occupancy_map,
                                                              origin_x=tg_generator.origin_x,
                                                              origin_y=tg_generator.origin_y,
@@ -3377,6 +3587,7 @@ if __name__ == "__main__":
                                                              doorway_subgraphs=tg_generator.doorway_subgraphs,
                                                              drive_through_subgraphs=tg_generator.drive_through_subgraphs,
                                                              switching_point_subgraphs=tg_generator.switching_point_subgraphs,
+                                                             parking_space_subgraphs=tg_generator.parking_spaces_subgraphs,
                                                              filename="results/environment/all_subgraphs.svg")
     
     TraversalGraphPlottingHelper.plot_traversal_graph(traversal_graph=tg_generator.traversal_graph,
