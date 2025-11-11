@@ -450,20 +450,27 @@ def main():
 
     print("Traversal Graph generated.")
 
-    potential_nodes = []
+    potential_target_nodes = []
 
     for doorway in tg_generator.doorway_subgraphs:
         room_nodes = doorway.room_nodes
         for room_node_label in room_nodes:
             room_node = tg_generator.traversal_graph.nodes_dict[room_node_label]
-            potential_nodes.append(room_node)
+            potential_target_nodes.append(room_node)
+    
+    potential_start_nodes = []
+    for parking_space in tg_generator.parking_spaces_subgraphs:
+        entry_nodes = parking_space.up_parking_nodes_exit + parking_space.down_parking_nodes_exit
+        for entry_node_label in entry_nodes:
+            entry_node = tg_generator.traversal_graph.nodes_dict[entry_node_label]
+            potential_start_nodes.append(entry_node)
             
     robot_profiles = []
 
     # randomly select start and goal nodes for each robot
     random.seed(11)
-    selected_start_nodes = random.sample(potential_nodes, args.num_robots)
-    selected_goal_nodes = random.sample(potential_nodes, args.num_robots)
+    selected_start_nodes = random.sample(potential_start_nodes, args.num_robots)
+    selected_goal_nodes = random.sample(potential_target_nodes, args.num_robots)
 
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)

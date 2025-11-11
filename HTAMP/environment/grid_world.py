@@ -132,16 +132,27 @@ class GridWorld:
         num_frames = int(np.ceil((connector_length / robot_profile.speed) * self.fps))
         robot_occupancies: List[RobotOccupancy] = []
 
-        segments, _ = curved_connector.split_connector_into_n(num_frames)
-        for segment in segments:
-            segment_start = Coordinate(segment['X'][0], segment['Y'][0])
-            segment_end = Coordinate(segment['X'][-1], segment['Y'][-1])
-            occupied_cells = self._get_occupied_cells_for_partial_move(segment_start,
-                                                                       segment_end,
-                                                                       robot_profile)
+        if num_frames > 1:
+            segments, _ = curved_connector.split_connector_into_n(num_frames)
+            for segment in segments:
+                segment_start = Coordinate(segment['X'][0], segment['Y'][0])
+                segment_end = Coordinate(segment['X'][-1], segment['Y'][-1])
+                occupied_cells = self._get_occupied_cells_for_partial_move(segment_start,
+                                                                        segment_end,
+                                                                        robot_profile)
+                occupancy = RobotOccupancy(occupied_cells=occupied_cells,
+                                        start_location=segment_start,
+                                        end_location=segment_end)
+                robot_occupancies.append(occupancy)
+        else:
+            start_point = curved_connector.origin
+            end_point = curved_connector.destination
+            occupied_cells = self._get_occupied_cells_for_partial_move(start_point,
+                                                                      end_point,
+                                                                      robot_profile)
             occupancy = RobotOccupancy(occupied_cells=occupied_cells,
-                                       start_location=segment_start,
-                                       end_location=segment_end)
+                                    start_location=start_point,
+                                    end_location=end_point)
             robot_occupancies.append(occupancy)
 
         return robot_occupancies
@@ -154,6 +165,12 @@ class GridWorld:
         total_time = connector_length / robot_profile.speed
         time_per_frame = total_time / num_frames
         time_intervals: List[TimeInterval] = []
+
+        if num_frames < 1:
+            start_time = 0.0
+            end_time = 0.0
+            time_interval = TimeInterval(start=start_time, end=end_time)
+            time_intervals.append(time_interval)
 
         for i in range(num_frames):
             start_time = i * time_per_frame

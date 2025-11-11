@@ -2231,7 +2231,8 @@ class TraversalGraphGenerator:
                                                       orientation=parking_space.orientation)
         return parking_space_subgraph
     
-    def _generate_parking_space_subgraphs(self) -> None:
+    def _generate_parking_space_subgraphs(self) -> Tuple[List[ParkingSpaceSubgraph],
+                                             Dict[str, List[int]]]:
         subgraphs = []
         subgraph_indices = {}
         current_index = 0
