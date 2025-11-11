@@ -50,6 +50,7 @@ class TraversalGraphGenerator:
         self._merge_overlapping_doorway_subgraphs()
         self._merge_overlapping_drive_through_doorway_subgraphs()
         self._merge_overlapping_intersections_doorway_subgraphs()
+        self._merge_overlapping_doorway_parking_subgraphs()
         self.traversal_graph = self._assemble_traversal_graph()
         self.adjacency_list = self._build_adjacency_list()
         self.shortest_paths = self._compute_all_pairs_shortest_paths()
@@ -2239,7 +2240,6 @@ class TraversalGraphGenerator:
             parking_space_subgraph = self._generate_parking_space_subgraph(parking_space=parking_space)
             subgraphs.append(parking_space_subgraph)
             subgraph_indices.setdefault(parking_space.corridor_id, []).append(current_index)
-            subgraph_indices.setdefault(parking_space.corridor_id, []).append(current_index)
             current_index += 1
         
         return subgraphs, subgraph_indices
@@ -2266,7 +2266,11 @@ class TraversalGraphGenerator:
                     subgraph_a_right_node.position.y <= subgraph_b_left_node.position.y )
     
     def _replace_node_in_edges(self,
-                                subgraph: IntersectionSubgraph | DoorwaySubgraph | DriveThroughSubgraph | SwitchingPointSubgraph,
+                                subgraph: Union[IntersectionSubgraph, 
+                                                DoorwaySubgraph, 
+                                                DriveThroughSubgraph, 
+                                                SwitchingPointSubgraph, 
+                                                ParkingSpaceSubgraph],
                                 old_node_label: str,
                                 new_node: TraversalNode) -> None:
 
@@ -2384,6 +2388,7 @@ class TraversalGraphGenerator:
                             self._merge_doorway_subgraphs(direction=current_direction,
                                                           subgraph_a=current_subgraph,
                                                           subgraph_b=compare_subgraph)
+                            
     def _are_drive_through_and_doorway_subgraphs_overlapping(self,
                                                            direction: str,
                                                            doorway_subgraph: DoorwaySubgraph,
@@ -2690,14 +2695,14 @@ class TraversalGraphGenerator:
                 intersection_lower_node_label = intersection_subgraph.lower_nodes[i]
                 intersection_lower_node = intersection_subgraph.nodes_dict[intersection_lower_node_label]
 
-                new_right_y = max(doorway_right_node.position.y, intersection_upper_node.position.y)
+                new_right_y = min(doorway_right_node.position.y, intersection_upper_node.position.y)
                 x_position = doorway_right_node.position.x
                 new_right_node = TraversalNode(label=f"{x_position:.2f}_{new_right_y:.2f}_{doorway_left_node.orientation_vec}",
                                              position=Coordinate(x=x_position, y=new_right_y),
                                              orientation_vec=doorway_right_node.orientation_vec,
                                              connections=[])
 
-                new_left_y = min(doorway_left_node.position.y, intersection_lower_node.position.y)
+                new_left_y = max(doorway_left_node.position.y, intersection_lower_node.position.y)
                 new_left_node = TraversalNode(label=f"{x_position:.2f}_{new_left_y:.2f}_{doorway_left_node.orientation_vec}",
                                               position=Coordinate(x=x_position, y=new_left_y),
                                               orientation_vec=doorway_left_node.orientation_vec,
@@ -2747,23 +2752,168 @@ class TraversalGraphGenerator:
                                           old_node_label: str,
                                           new_node: TraversalNode) -> None:
         
-            self._replace_node_in_edges(subgraph, old_node_label, new_node)
+        self._replace_node_in_edges(subgraph, old_node_label, new_node)
 
-            for i in range(len(subgraph.left_nodes)):
-                if subgraph.left_nodes[i] == old_node_label:
-                    subgraph.left_nodes[i] = new_node.label
-                elif subgraph.right_nodes[i] == old_node_label:
-                    subgraph.right_nodes[i] = new_node.label
+        for i in range(len(subgraph.left_nodes)):
+            if subgraph.left_nodes[i] == old_node_label:
+                subgraph.left_nodes[i] = new_node.label
+            elif subgraph.right_nodes[i] == old_node_label:
+                subgraph.right_nodes[i] = new_node.label
+        
+        subgraph.nodes_dict.pop(old_node_label)
+        subgraph.nodes_dict[new_node.label] = new_node
+    
+    def _replace_node_in_parking_space_subgraph(self,
+                                          subgraph: ParkingSpaceSubgraph,
+                                          old_node_label: str,
+                                          new_node: TraversalNode) -> None:
+        
+        self._replace_node_in_edges(subgraph, old_node_label, new_node)
+
+        for i in range(len(subgraph.up_corridor_nodes)):
+            if subgraph.up_corridor_nodes[i] == old_node_label:
+                subgraph.up_corridor_nodes[i] = new_node.label
+            elif subgraph.down_corridor_nodes[i] == old_node_label:
+                subgraph.down_corridor_nodes[i] = new_node.label
+        
+        subgraph.nodes_dict.pop(old_node_label)
+        subgraph.nodes_dict[new_node.label] = new_node
+
+    def _are_doorway_parking_space_overlapping(self,
+                                           direction: str,
+                                           parking_subgraph: ParkingSpaceSubgraph,
+                                           doorway_subgraph: DoorwaySubgraph) -> bool:
+        doorway_left_node_label = doorway_subgraph.left_nodes[0]
+        doorway_left_node = doorway_subgraph.nodes_dict[doorway_left_node_label]
+        doorway_right_node_label = doorway_subgraph.right_nodes[0]
+        doorway_right_node = doorway_subgraph.nodes_dict[doorway_right_node_label]
+        
+        if direction == "horizontal":
+            parking_left_node_label = parking_subgraph.up_corridor_nodes[0]
+            parking_left_node = parking_subgraph.nodes_dict[parking_left_node_label]
+            parking_right_node_label = parking_subgraph.down_corridor_nodes[0]
+            parking_right_node = parking_subgraph.nodes_dict[parking_right_node_label]
+            return (parking_left_node.position.x <= doorway_right_node.position.x and
+                    parking_right_node.position.x >= doorway_left_node.position.x )
+        else:
+            parking_right_node_label = parking_subgraph.up_corridor_nodes[0]
+            parking_right_node = parking_subgraph.nodes_dict[parking_right_node_label]
+            parking_left_node_label = parking_subgraph.down_corridor_nodes[0]
+            parking_left_node = parking_subgraph.nodes_dict[parking_left_node_label]
+            return (parking_left_node.position.y >= doorway_right_node.position.y and
+                    parking_right_node.position.y <= doorway_left_node.position.y )
+        
+
+    def _merge_parking_space_and_doorway_subgraphs(self,
+                                                   direction: str,
+                                                   parking_subgraph: ParkingSpaceSubgraph,
+                                                   doorway_subgraph: DoorwaySubgraph) -> None:
+        if direction == "horizontal":
+            for i in range(len(doorway_subgraph.left_nodes)):
+                doorway_left_node_label = doorway_subgraph.left_nodes[i]
+                doorway_left_node = doorway_subgraph.nodes_dict[doorway_left_node_label]
+                parking_left_node_label = parking_subgraph.up_corridor_nodes[i]
+                parking_left_node = parking_subgraph.nodes_dict[parking_left_node_label]
+
+                doorway_right_node_label = doorway_subgraph.right_nodes[i]
+                doorway_right_node = doorway_subgraph.nodes_dict[doorway_right_node_label]
+                parking_right_node_label = parking_subgraph.down_corridor_nodes[i]
+                parking_right_node = parking_subgraph.nodes_dict[parking_right_node_label]
+
+                new_left_x = min(doorway_left_node.position.x, parking_left_node.position.x)
+                y_position = doorway_left_node.position.y
+                new_left_node = TraversalNode(label=f"{new_left_x:.2f}_{y_position:.2f}_{doorway_left_node.orientation_vec}",
+                                             position=Coordinate(x=new_left_x, y=y_position),
+                                             orientation_vec=doorway_left_node.orientation_vec,
+                                             connections=[])
+
+                new_right_x = max(doorway_right_node.position.x, parking_right_node.position.x)
+                new_right_node = TraversalNode(label=f"{new_right_x:.2f}_{y_position:.2f}_{doorway_right_node.orientation_vec}",
+                                              position=Coordinate(x=new_right_x, y=y_position),
+                                              orientation_vec=doorway_right_node.orientation_vec,
+                                              connections=[])
+
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_left_node_label,
+                                                       new_node=new_left_node)
+                self._replace_node_in_parking_space_subgraph(subgraph=parking_subgraph,
+                                                            old_node_label=parking_left_node_label,
+                                                            new_node=new_left_node)
+
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_right_node_label,
+                                                       new_node=new_right_node)
+                self._replace_node_in_parking_space_subgraph(subgraph=parking_subgraph,
+                                                            old_node_label=parking_right_node_label,
+                                                            new_node=new_right_node)
+        else:
+            for i in range(len(doorway_subgraph.left_nodes)):
+                doorway_left_node_label = doorway_subgraph.left_nodes[i]
+                doorway_left_node = doorway_subgraph.nodes_dict[doorway_left_node_label]
+                parking_upper_node_label = parking_subgraph.up_corridor_nodes[i]
+                parking_upper_node = parking_subgraph.nodes_dict[parking_upper_node_label]
+
+                doorway_right_node_label = doorway_subgraph.right_nodes[i]
+                doorway_right_node = doorway_subgraph.nodes_dict[doorway_right_node_label]
+                parking_lower_node_label = parking_subgraph.down_corridor_nodes[i]
+                parking_lower_node = parking_subgraph.nodes_dict[parking_lower_node_label]
+
+                new_right_y = min(doorway_right_node.position.y, parking_upper_node.position.y)
+                x_position = doorway_right_node.position.x
+                new_right_node = TraversalNode(label=f"{x_position:.2f}_{new_right_y:.2f}_{doorway_left_node.orientation_vec}",
+                                             position=Coordinate(x=x_position, y=new_right_y),
+                                             orientation_vec=doorway_right_node.orientation_vec,
+                                             connections=[])
+
+                new_left_y = max(doorway_left_node.position.y, parking_lower_node.position.y)
+                new_left_node = TraversalNode(label=f"{x_position:.2f}_{new_left_y:.2f}_{doorway_left_node.orientation_vec}",
+                                              position=Coordinate(x=x_position, y=new_left_y),
+                                              orientation_vec=doorway_left_node.orientation_vec,
+                                              connections=[])
+
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_left_node_label,
+                                                       new_node=new_left_node)
+                self._replace_node_in_parking_space_subgraph(subgraph=parking_subgraph,
+                                                            old_node_label=parking_upper_node_label,
+                                                            new_node=new_right_node)
+
+                self._replace_node_in_doorway_subgraph(subgraph=doorway_subgraph,
+                                                       old_node_label=doorway_right_node_label,
+                                                       new_node=new_right_node)
+                self._replace_node_in_parking_space_subgraph(subgraph=parking_subgraph,
+                                                            old_node_label=parking_lower_node_label,
+                                                            new_node=new_left_node)
             
-            subgraph.nodes_dict.pop(old_node_label)
-            subgraph.nodes_dict[new_node.label] = new_node
+
+    def _merge_overlapping_doorway_parking_subgraphs(self) -> None:
+
+        for corridor_id in self.parking_spaces_subgraph_indices.keys():
+            parking_subgraph_indices = self.parking_spaces_subgraph_indices[corridor_id]
+            current_corridor = self._get_corridor_by_id(corridor_id)
+            current_direction = current_corridor.direction
+
+            if len(parking_subgraph_indices) > 1:
+                for i, subgraph_index in enumerate(parking_subgraph_indices):
+                    current_subgraph = self.parking_spaces_subgraphs[subgraph_index]
+                    doorway_indices = self.doorway_subgraph_indices.get(corridor_id, [])
+                    for doorway_index in doorway_indices:
+                        compare_subgraph = self.doorway_subgraphs[doorway_index]
+
+                        if self._are_doorway_parking_space_overlapping(direction=current_direction,
+                                                                      parking_subgraph=current_subgraph,
+                                                                      doorway_subgraph=compare_subgraph):
+                            self._merge_parking_space_and_doorway_subgraphs(direction=current_direction,
+                                                          parking_subgraph=current_subgraph,
+                                                          doorway_subgraph=compare_subgraph)
     
     def _get_subgraphs_for_corridor(self,
-                                    corridor_id: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]]:
+                                    corridor_id: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]]:
         sub_graphs = []
         doorway_subgraph_indices = self.doorway_subgraph_indices[corridor_id]
         intersection_subgraph_indices = self.corridor_intersection_subgraph_indices.get(corridor_id, [])
         drive_through_subgraph_indices = self.drive_through_subgraph_indices.get(corridor_id, [])
+        parking_spaces_subgraph_indices = self.parking_spaces_subgraph_indices.get(corridor_id, [])
 
         if len(doorway_subgraph_indices) > 0:
             for doorway_subgraph_index in doorway_subgraph_indices:
@@ -2779,13 +2929,18 @@ class TraversalGraphGenerator:
             for drive_through_subgraph_index in drive_through_subgraph_indices:
                 current_drive_through_subgraph = self.drive_through_subgraphs[drive_through_subgraph_index]
                 sub_graphs.append(current_drive_through_subgraph)
+
+        if len(parking_spaces_subgraph_indices) > 0:
+            for parking_spaces_subgraph_index in parking_spaces_subgraph_indices:
+                current_parking_space_subgraph = self.parking_spaces_subgraphs[parking_spaces_subgraph_index]
+                sub_graphs.append(current_parking_space_subgraph)
         
         return sub_graphs
     
     def _subgraph_sort_key(self,
                            corridor_id: str,
                            direction: str,
-                           subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]) -> float:
+                           subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]) -> float:
         if direction == "horizontal":
             if isinstance(subgraph, DriveThroughSubgraph):
                 if corridor_id in subgraph.entry_corridor_id:
@@ -2808,6 +2963,11 @@ class TraversalGraphGenerator:
                     return subgraph.nodes_dict[subgraph.right_nodes[0]].position.x
                 elif subgraph.left_nodes:
                     return subgraph.nodes_dict[subgraph.left_nodes[0]].position.x
+            elif isinstance(subgraph, ParkingSpaceSubgraph):
+                if subgraph.down_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.down_corridor_nodes[0]].position.x
+                elif subgraph.up_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.up_corridor_nodes[0]].position.x
             else:
                 raise ValueError("Invalid subgraph type for sorting.")
         else:
@@ -2832,25 +2992,27 @@ class TraversalGraphGenerator:
                     return subgraph.nodes_dict[subgraph.lower_nodes[0]].position.y
                 elif subgraph.upper_nodes:
                     return subgraph.nodes_dict[subgraph.upper_nodes[0]].position.y
+            elif isinstance(subgraph, ParkingSpaceSubgraph):
+                if subgraph.down_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.down_corridor_nodes[0]].position.y
+                elif subgraph.up_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.up_corridor_nodes[0]].position.y
             else:
                 raise ValueError("Invalid subgraph type for sorting.")
 
     def _sort_subgraphs(self,
                         corridor_id: str,
-                        subgraphs: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
-                        direction: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]]:
-        if direction == "horizontal":
-            sorted_subgraphs = sorted(subgraphs,
-                                      key=lambda sg: self._subgraph_sort_key(corridor_id, direction, sg))
-        else:
-            sorted_subgraphs = sorted(subgraphs,
-                                      key=lambda sg: self._subgraph_sort_key(corridor_id, direction, sg))
+                        subgraphs: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]],
+                        direction: str) -> List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]]:
+        
+        sorted_subgraphs = sorted(subgraphs, key=lambda sg: self._subgraph_sort_key(corridor_id, direction, sg))
+
         return sorted_subgraphs
     
     def _subgraph_repr_key(self,
                            corridor_id: str,
                            direction: str,
-                           subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]) -> float:
+                           subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]) -> float:
         if direction == "horizontal":
             if isinstance(subgraph, DriveThroughSubgraph):
                 if corridor_id in subgraph.entry_corridor_id:
@@ -2873,6 +3035,11 @@ class TraversalGraphGenerator:
                     return subgraph.nodes_dict[subgraph.right_nodes[0]].label
                 elif subgraph.left_nodes:
                     return subgraph.nodes_dict[subgraph.left_nodes[0]].label
+            elif isinstance(subgraph, ParkingSpaceSubgraph):
+                if subgraph.down_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.down_corridor_nodes[0]].label
+                elif subgraph.up_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.up_corridor_nodes[0]].label
             else:
                 raise ValueError("Invalid subgraph type for sorting.")
         else:
@@ -2897,6 +3064,11 @@ class TraversalGraphGenerator:
                     return subgraph.nodes_dict[subgraph.lower_nodes[0]].label
                 elif subgraph.upper_nodes:
                     return subgraph.nodes_dict[subgraph.upper_nodes[0]].label
+            elif isinstance(subgraph, ParkingSpaceSubgraph):
+                if subgraph.down_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.down_corridor_nodes[0]].label
+                elif subgraph.up_corridor_nodes:
+                    return subgraph.nodes_dict[subgraph.up_corridor_nodes[0]].label
             else:
                 raise ValueError("Invalid subgraph type for sorting.")
     
@@ -2905,12 +3077,15 @@ class TraversalGraphGenerator:
                                            direction: str,
                                            subgraphs: List[Union[IntersectionSubgraph, 
                                                                   DoorwaySubgraph, 
-                                                                  DriveThroughSubgraph]]) -> Dict[str, List[Union[IntersectionSubgraph, 
+                                                                  DriveThroughSubgraph,
+                                                                  ParkingSpaceSubgraph]]) -> Dict[str, List[Union[IntersectionSubgraph, 
                                                                                                                   DoorwaySubgraph, 
-                                                                                                                  DriveThroughSubgraph]]]:
+                                                                                                                  DriveThroughSubgraph,
+                                                                                                                  ParkingSpaceSubgraph]]]:
         node_to_subgraphs: Dict[str, List[Union[IntersectionSubgraph, 
                                                DoorwaySubgraph, 
-                                               DriveThroughSubgraph]]] = {}
+                                               DriveThroughSubgraph,
+                                               ParkingSpaceSubgraph]]] = {}
         
         for subgraph in subgraphs:
             subgraph_key = self._subgraph_repr_key(corridor_id=corridor_id, 
@@ -2926,10 +3101,12 @@ class TraversalGraphGenerator:
                                                     current_direction: str,
                                                     current_subgraph: Union[IntersectionSubgraph, 
                                                                             DoorwaySubgraph, 
-                                                                            DriveThroughSubgraph],
+                                                                            DriveThroughSubgraph,
+                                                                            ParkingSpaceSubgraph],
                                                     next_subgraph: Union[IntersectionSubgraph, 
                                                                          DoorwaySubgraph, 
-                                                                         DriveThroughSubgraph],
+                                                                         DriveThroughSubgraph,
+                                                                         ParkingSpaceSubgraph],
                                                     corridor_id: str) -> Tuple[List[str], List[str]]:
         
         current_nodes_labels = []
@@ -2945,6 +3122,8 @@ class TraversalGraphGenerator:
                 current_nodes_labels = current_subgraph.right_nodes
             elif isinstance(current_subgraph, IntersectionSubgraph):
                 current_nodes_labels = current_subgraph.right_nodes
+            elif isinstance(current_subgraph, ParkingSpaceSubgraph):
+                current_nodes_labels = current_subgraph.down_corridor_nodes
 
             if isinstance(next_subgraph, DriveThroughSubgraph):
                 if corridor_id in next_subgraph.entry_corridor_id:
@@ -2955,6 +3134,8 @@ class TraversalGraphGenerator:
                 next_nodes_labels = next_subgraph.left_nodes
             elif isinstance(next_subgraph, IntersectionSubgraph):
                 next_nodes_labels = next_subgraph.left_nodes
+            elif isinstance(next_subgraph, ParkingSpaceSubgraph):
+                next_nodes_labels = next_subgraph.up_corridor_nodes
 
         else:
             if isinstance(current_subgraph, DriveThroughSubgraph):
@@ -2966,6 +3147,8 @@ class TraversalGraphGenerator:
                 current_nodes_labels = current_subgraph.left_nodes
             elif isinstance(current_subgraph, IntersectionSubgraph):
                 current_nodes_labels = current_subgraph.lower_nodes
+            elif isinstance(current_subgraph, ParkingSpaceSubgraph):
+                current_nodes_labels = current_subgraph.down_corridor_nodes
 
             if isinstance(next_subgraph, DriveThroughSubgraph):
                 if corridor_id in next_subgraph.entry_corridor_id:
@@ -2976,12 +3159,18 @@ class TraversalGraphGenerator:
                 next_nodes_labels = next_subgraph.right_nodes
             elif isinstance(next_subgraph, IntersectionSubgraph):
                 next_nodes_labels = next_subgraph.upper_nodes
+            elif isinstance(next_subgraph, ParkingSpaceSubgraph):
+                next_nodes_labels = next_subgraph.up_corridor_nodes
 
         return current_nodes_labels, next_nodes_labels
     
     def _replace_node_in_subgraph(self,
                                   current_direction: str,
-                                  subgraph: Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph],
+                                  subgraph: Union[IntersectionSubgraph, 
+                                                  DoorwaySubgraph, 
+                                                  DriveThroughSubgraph, 
+                                                  SwitchingPointSubgraph, 
+                                                  ParkingSpaceSubgraph],
                                   old_node_label: str,
                                   new_node: TraversalNode) -> None:
         
@@ -3005,6 +3194,10 @@ class TraversalGraphGenerator:
             self._replace_node_in_switching_point_subgraph(subgraph=subgraph,
                                                            old_node_label=old_node_label,
                                                            new_node=new_node)
+        elif isinstance(subgraph, ParkingSpaceSubgraph):
+            self._replace_node_in_parking_space_subgraph(subgraph=subgraph,
+                                                         old_node_label=old_node_label,
+                                                         new_node=new_node)
         else:
             raise ValueError("Invalid subgraph type for node replacement.")
         
@@ -3013,9 +3206,9 @@ class TraversalGraphGenerator:
 
     def _merge_nodes(self,
                      current_direction: str,
-                     current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                     current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]],
                      current_nodes_labels: list[str],
-                     next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                     next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph, ParkingSpaceSubgraph]],
                      next_nodes_labels: list[str]) -> None:
         
         for i in range(len(current_nodes_labels)):
@@ -3038,7 +3231,7 @@ class TraversalGraphGenerator:
                                                 position=Coordinate(x=current_node.position.x, y=merged_y),
                                                 orientation_vec=current_node.orientation_vec,
                                                 connections=[])
-                    
+                
                 for j in range(len(current_subgraph_group)):
                     current_subgraph = current_subgraph_group[j]
                     self._replace_node_in_subgraph(current_direction=current_direction,
@@ -3080,10 +3273,10 @@ class TraversalGraphGenerator:
     def _connect_subgraphs(self,
                            current_corridor: Corridor,
                            current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, 
-                                                   DriveThroughSubgraph, SwitchingPointSubgraph]],
+                                                   DriveThroughSubgraph, SwitchingPointSubgraph, ParkingSpaceSubgraph]],
                            current_nodes_labels: list[str],
                            next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, 
-                                                DriveThroughSubgraph, SwitchingPointSubgraph]],
+                                                DriveThroughSubgraph, SwitchingPointSubgraph, ParkingSpaceSubgraph]],
                            next_nodes_labels: list[str]) -> None:
         
         nodes_dict = next_subgraph_group[0].nodes_dict | current_subgraph_group[0].nodes_dict
@@ -3101,9 +3294,17 @@ class TraversalGraphGenerator:
     
     def _create_connective_structure_between_subgraphs(self,
                                                        current_corridor: Corridor,
-                                                       current_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                                                       current_subgraph_group: List[Union[IntersectionSubgraph, 
+                                                                                          DoorwaySubgraph, 
+                                                                                          DriveThroughSubgraph, 
+                                                                                          SwitchingPointSubgraph,
+                                                                                          ParkingSpaceSubgraph]],
                                                        current_nodes_labels: list[str],
-                                                       next_subgraph_group: List[Union[IntersectionSubgraph, DoorwaySubgraph, DriveThroughSubgraph]],
+                                                       next_subgraph_group: List[Union[IntersectionSubgraph, 
+                                                                                       DoorwaySubgraph, 
+                                                                                       DriveThroughSubgraph, 
+                                                                                       SwitchingPointSubgraph,
+                                                                                       ParkingSpaceSubgraph]],
                                                        next_nodes_labels: list[str],
                                                        first_merge: bool = True) -> List[SwitchingPointSubgraph]:
         initial_node_label = current_nodes_labels[0]
@@ -3459,7 +3660,6 @@ class TraversalGraphGenerator:
     def _assemble_traversal_graph(self) -> TraversalGraph:
 
         self._connect_corridor_subgraphs()
-        # self._connect_parking_space_subgraphs()
 
         traversal_graph = self._build_and_check_traversal_graph()
         
