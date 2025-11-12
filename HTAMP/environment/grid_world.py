@@ -192,7 +192,9 @@ class GridWorld:
 
     def _create_robot_occupancy_reservations(self, robot_profile: RobotProfile) -> Dict[str, Dict[str, List[MotionReservation]]]:
         occupancy_reservations: Dict[str, Dict[str, List[MotionReservation]]] = {}
-        for traversal_edge in self.traversal_graph.edge_dict.values():
+        length_edges = len(self.traversal_graph.edge_dict)
+        for i, traversal_edge in enumerate(self.traversal_graph.edge_dict.values()):
+            print(f"Processing edge {i+1}/{length_edges} for robot {robot_profile.robot_id}")
             print(f"Creating occupancy reservations for robot {robot_profile.robot_id} "
                   f"on edge from {traversal_edge.from_node} to {traversal_edge.to_node}")
             occupancy_reservations.setdefault(traversal_edge.from_node, {})
