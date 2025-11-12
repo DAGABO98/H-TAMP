@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 
 from datetime import datetime
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from HTAMP.environment.traversal_dataclasses import Lane, OrientationVector, Corridor, DriveThrough, Coordinate, ParkingSpace, ParkingSpaceSubgraph
 from HTAMP.environment.traversal_dataclasses import Doorway, TraversalNode, TraversalEdge, IntersectionSubgraph
@@ -376,13 +376,16 @@ class TraversalGraphGenerator:
     def _create_edge_between_nodes(self, 
                                    from_node: TraversalNode, 
                                    to_node: TraversalNode, 
-                                   action: str) -> TraversalEdge:
+                                   action: str,
+                                   tangent_scaling_factor: Optional[float] = None) -> TraversalEdge:
+        if tangent_scaling_factor is None:
+            tangent_scaling_factor = self.tangent_scaling_factor
         from_node.connections.append(to_node.label)
         edge_connector = CurvedConnector(origin=from_node.position, 
                                         destination=to_node.position, 
                                         vec_origin=(from_node.orientation_vec.x, from_node.orientation_vec.y),
                                         vec_destination=(to_node.orientation_vec.x, to_node.orientation_vec.y),
-                                        tangent_scaling_factor=self.tangent_scaling_factor,
+                                        tangent_scaling_factor=tangent_scaling_factor,
                                         num_samples=self.num_samples)
         edge = TraversalEdge(from_node=from_node.label, 
                             to_node=to_node.label, 
@@ -1937,7 +1940,8 @@ class TraversalGraphGenerator:
                 parking_space_node = nodes_dict[parking_space_node_label]
                 edge = self._create_edge_between_nodes(from_node=lateral_node,
                                                     to_node=parking_space_node, 
-                                                    action=action)
+                                                    action=action,
+                                                    tangent_scaling_factor=1.0)
                 nodes_dict[lateral_node_label].connections.append(parking_space_node.label)
                 edges.append(edge)
         return edges
@@ -1954,7 +1958,8 @@ class TraversalGraphGenerator:
                 lateral_node = nodes_dict[lateral_node_label]
                 edge = self._create_edge_between_nodes(from_node=parking_space_node,
                                                     to_node=lateral_node, 
-                                                    action=action)
+                                                    action=action,
+                                                    tangent_scaling_factor=1.0)
                 nodes_dict[parking_space_node_label].connections.append(lateral_node.label)
                 edges.append(edge)
         return edges
