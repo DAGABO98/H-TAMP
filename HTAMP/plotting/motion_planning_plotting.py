@@ -27,7 +27,7 @@ class MotionPlanningPlotter:
         xmin, xmax = origin_x, origin_x + cols * resolution
         ymin, ymax = origin_y, origin_y + rows * resolution
 
-        fig, ax = plt.subplots(figsize=(8, 8))
+        fig, ax = plt.subplots(figsize=(16, 16), dpi=150)
         im = ax.imshow(
             occupancy_map,
             cmap="gray_r",
@@ -47,7 +47,7 @@ class MotionPlanningPlotter:
                     continue
                 samples_x = edge.edge_connector.connector_dict['X']
                 samples_y = edge.edge_connector.connector_dict['Y']
-                ax.plot(samples_x, samples_y, color=colors(i), linewidth=0.5)
+                ax.plot(samples_x, samples_y, color=colors(i), linewidth=2.0, alpha=0.7)
                 circle = Circle((start_node.position.x, start_node.position.y), robot_profiles[i].radius, color=colors(i), alpha=0.3)
                 ax.add_patch(circle)
             # Draw the last position
@@ -73,7 +73,7 @@ class MotionPlanningPlotter:
         rows, cols = occupancy_map.shape 
         xmin, xmax = origin_x, origin_x + cols * resolution 
         ymin, ymax = origin_y, origin_y + rows * resolution 
-        fig, ax = plt.subplots(figsize=(8, 8)) 
+        fig, ax = plt.subplots(figsize=(16, 16), dpi=150) 
         im = ax.imshow(occupancy_map, 
                        cmap="gray_r", 
                        origin="upper", # flip so (0,0) is top-left 
@@ -97,11 +97,11 @@ class MotionPlanningPlotter:
                 if j == 0: 
                     full_samples_x = samples_x[point_index_on_edge:] 
                     full_samples_y = samples_y[point_index_on_edge:] 
-                    ax.plot(full_samples_x, full_samples_y, color=colors(robot_id), linewidth=0.5) 
-                    circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id), alpha=0.3) 
+                    ax.plot(full_samples_x, full_samples_y, color=colors(robot_id), linewidth=2.0, alpha=0.7) 
+                    circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id)) 
                     ax.add_patch(circle) 
                 else:
-                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=0.5) 
+                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=2.0, alpha=0.7) 
         plt.savefig(f"results/motion_planning/state/state_step_{step_number}.svg") 
         plt.close()
     
@@ -114,7 +114,7 @@ class MotionPlanningPlotter:
         rows, cols = Occupancy_map.shape
         xmin, xmax = origin_x, origin_x + cols * resolution
         ymin, ymax = origin_y, origin_y + rows * resolution
-        fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
+        fig, ax = plt.subplots(figsize=(16, 16), dpi=150)
         # seed with a blank image; we will update it each frame
         im = ax.imshow(Occupancy_map, 
                        cmap="gray_r", 
@@ -169,14 +169,14 @@ class MotionPlanningPlotter:
                 if j == 0:
                     # from current point along the current edge
                     line, = ax.plot(sx[point_index_on_edge:], sy[point_index_on_edge:],
-                                    color=colors(idx), linewidth=0.5, animated=True)
+                                    color=colors(idx), linewidth=2.0, alpha=0.7, animated=True)
                     circ = Circle((robot_position.x, robot_position.y),
                                 robot_profiles[robot_id].radius,
-                                color=colors(idx), alpha=0.3)
+                                color=colors(idx))
                     ax.add_patch(circ)
                     ax._dyn.extend([line, circ])
                 else:
-                    line, = ax.plot(sx, sy, color=colors(idx), linewidth=0.5, animated=True)
+                    line, = ax.plot(sx, sy, color=colors(idx), linewidth=2.0, alpha=0.7, animated=True)
                     ax._dyn.append(line)
     
     @staticmethod
