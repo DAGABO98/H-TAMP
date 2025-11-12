@@ -47,11 +47,13 @@ parking_spaces:
   - id: P1
     corridor_id: V1
     orientation: right
-    entry_point: [966, 871]
+    entry_point: [966, 881]
+    num_parking_spaces: 3
   - id: P2
     corridor_id: V1
     orientation: right
     entry_point: [966, 951]
+    num_parking_spaces: 6
 
 doorways:
   - id: D1

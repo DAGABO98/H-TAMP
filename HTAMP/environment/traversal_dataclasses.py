@@ -41,6 +41,7 @@ class ParkingSpace:
     corridor_id: str
     orientation: str
     entry_point: Coordinate
+    num_parking_spaces: int
 
 @dataclass
 class TraversalNode:

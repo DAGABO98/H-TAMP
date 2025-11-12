@@ -18,7 +18,7 @@ class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,
                  num_lanes_per_corridor: int = 3, num_lanes_per_drive_through: int = 1, num_lanes_per_doorway: int = 2,
                  doorway_lane_threshold: float = 20.0, tangent_scaling_factor: float = 1.4, num_samples: int = 10, threshold: float = 10.0,
-                 switching_point_offset: float = 15.0, parking_space_offset: float = 14.0, num_parking_spaces: int = 5):
+                 switching_point_offset: float = 15.0, parking_space_offset: float = 18.0):
         self.occupancy_map_path = occupancy_map_path
         self.config_path = config_path
         self.tangent_scaling_factor = tangent_scaling_factor
@@ -27,7 +27,6 @@ class TraversalGraphGenerator:
         self.threshold = threshold * self.meters_per_cell
         self.switching_point_offset = switching_point_offset * self.meters_per_cell
         self.parking_space_offset = parking_space_offset * self.meters_per_cell
-        self.num_parking_spaces = num_parking_spaces
         self.num_lanes_per_corridor = num_lanes_per_corridor
         self.num_lanes_per_drive_through = num_lanes_per_drive_through
         self.doorway_node_offset = 2 * doorway_lane_threshold * self.meters_per_cell  # meters
@@ -246,7 +245,8 @@ class TraversalGraphGenerator:
                 current_parking_space = ParkingSpace(id=ps.get('id', 'unknown'),
                                                      corridor_id=ps.get('corridor_id', 'unknown'),
                                                      orientation=ps.get('orientation', 'unknown'),
-                                                     entry_point=entry_point)
+                                                     entry_point=entry_point,
+                                                     num_parking_spaces=ps.get('num_parking_spaces', 3))
                 parking_spaces.append(current_parking_space)
         return parking_spaces
     
@@ -1667,16 +1667,16 @@ class TraversalGraphGenerator:
                                                  y=parking_space.entry_point.y + (self.parking_space_offset/2))
             left_node_exit_location = Coordinate(x=parking_space.entry_point.x,
                                                 y=parking_space.entry_point.y - (self.parking_space_offset/2))
-            right_node_entry_location = Coordinate(x=parking_space.entry_point.x + ((self.num_parking_spaces+1)*self.parking_space_offset),
+            right_node_entry_location = Coordinate(x=parking_space.entry_point.x + ((parking_space.num_parking_spaces+1)*self.parking_space_offset),
                                                   y=parking_space.entry_point.y + (self.parking_space_offset/2))
-            right_node_exit_location = Coordinate(x=parking_space.entry_point.x + ((self.num_parking_spaces+1)*self.parking_space_offset),
+            right_node_exit_location = Coordinate(x=parking_space.entry_point.x + ((parking_space.num_parking_spaces+1)*self.parking_space_offset),
                                                   y=parking_space.entry_point.y - (self.parking_space_offset/2))
         elif parking_space.orientation == "left":
             entry_orientation_vec = OrientationVector(-1.0, 0.0)
             exit_orientation_vec = OrientationVector(1.0, 0.0)
-            left_node_entry_location = Coordinate(x=parking_space.entry_point.x - ((self.num_parking_spaces+1)*self.parking_space_offset),
+            left_node_entry_location = Coordinate(x=parking_space.entry_point.x - ((parking_space.num_parking_spaces+1)*self.parking_space_offset),
                                                  y=parking_space.entry_point.y - (self.parking_space_offset/2))
-            left_node_exit_location = Coordinate(x=parking_space.entry_point.x - ((self.num_parking_spaces+1)*self.parking_space_offset),
+            left_node_exit_location = Coordinate(x=parking_space.entry_point.x - ((parking_space.num_parking_spaces+1)*self.parking_space_offset),
                                                 y=parking_space.entry_point.y + (self.parking_space_offset/2))
             right_node_entry_location = Coordinate(x=parking_space.entry_point.x,
                                                    y=parking_space.entry_point.y - (self.parking_space_offset/2))
@@ -1690,16 +1690,16 @@ class TraversalGraphGenerator:
             left_node_exit_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
                                                 y=parking_space.entry_point.y)
             right_node_entry_location = Coordinate(x=parking_space.entry_point.x + (self.parking_space_offset/2),
-                                                  y=parking_space.entry_point.y - ((self.num_parking_spaces+1)*self.parking_space_offset))
+                                                  y=parking_space.entry_point.y - ((parking_space.num_parking_spaces+1)*self.parking_space_offset))
             right_node_exit_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
-                                                  y=parking_space.entry_point.y - ((self.num_parking_spaces+1)*self.parking_space_offset))
+                                                  y=parking_space.entry_point.y - ((parking_space.num_parking_spaces+1)*self.parking_space_offset))
         elif parking_space.orientation == "down":
             entry_orientation_vec = OrientationVector(0.0, 1.0)
             exit_orientation_vec = OrientationVector(0.0, -1.0)
             left_node_entry_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
-                                                 y=parking_space.entry_point.y + ((self.num_parking_spaces+1)*self.parking_space_offset))
+                                                 y=parking_space.entry_point.y + ((parking_space.num_parking_spaces+1)*self.parking_space_offset))
             left_node_exit_location = Coordinate(x=parking_space.entry_point.x + (self.parking_space_offset/2),
-                                                y=parking_space.entry_point.y + ((self.num_parking_spaces+1)*self.parking_space_offset))
+                                                y=parking_space.entry_point.y + ((parking_space.num_parking_spaces+1)*self.parking_space_offset))
             right_node_entry_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
                                                   y=parking_space.entry_point.y)
             right_node_exit_location = Coordinate(x=parking_space.entry_point.x + (self.parking_space_offset/2),
@@ -1767,7 +1767,7 @@ class TraversalGraphGenerator:
             down_exit_orientation_vec = OrientationVector(-1.0, 0.0)
             orientation_sign = 1
 
-        for i in range(self.num_parking_spaces):
+        for i in range(parking_space.num_parking_spaces):
             up_node_location = Coordinate(x=parking_space.entry_point.x + (orientation_sign*(i+1)*self.parking_space_offset),
                                                 y=parking_space.entry_point.y - (3/2 * self.parking_space_offset))
             up_entry_node = TraversalNode(label=f"{up_node_location.x:.2f}_{up_node_location.y:.2f}_{up_entry_orientation_vec}",
