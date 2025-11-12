@@ -13,6 +13,8 @@ from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 
+OCCUPANCY_CACHE_VERSION = 1
+
 class GridWorld:
 
     def __init__(self, 
@@ -39,12 +41,17 @@ class GridWorld:
     
     def _load_occupancy_reservations(self) -> Dict[str, Dict[str, Dict[str, List[MotionReservation]]]]:
         with open(self.occupancy_reservations_file, 'rb') as f:
-            occupancy_reservations = pickle.load(f)
-        return occupancy_reservations
-    
+            payload = pickle.load(f)
+        if not isinstance(payload, dict) or payload.get("_version") != OCCUPANCY_CACHE_VERSION:
+            raise ValueError("Occupancy reservation cache version mismatch or corrupted file.")
+        return payload["data"]
+
     def _save_occupancy_reservations(self) -> None:
+        import os
+        os.makedirs(os.path.dirname(self.occupancy_reservations_file) or ".", exist_ok=True)
+        payload = {"_version": OCCUPANCY_CACHE_VERSION, "data": self.occupancy_reservations}
         with open(self.occupancy_reservations_file, 'wb') as f:
-            pickle.dump(self.occupancy_reservations, f)
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     def _cell_rect(self, 
                   cell_index: GridIndex) -> Cell:
@@ -52,11 +59,16 @@ class GridWorld:
         lower_y = cell_index.index_y * self.cell_size
         return Cell(lower_x, lower_y, lower_x + self.cell_size, lower_y + self.cell_size)
     
-    def _get_cell_index(self, 
-                       position: Coordinate) -> GridIndex:
+    # Add this helper in GridWorld
+    def _clamp_index(self, ix: int, iy: int) -> GridIndex:
+        h, w = self.occupancy_map.shape
+        return GridIndex(max(0, min(ix, w - 1)), max(0, min(iy, h - 1)))
+
+    
+    def _get_cell_index(self, position: Coordinate) -> GridIndex:
         index_x = int(np.floor(position.x / self.cell_size))
         index_y = int(np.floor(position.y / self.cell_size))
-        return GridIndex(index_x, index_y)
+        return self._clamp_index(index_x, index_y)
     
     def _generate_closest_cell_coordinate(self, 
                                         robot_center: Coordinate,
@@ -91,11 +103,14 @@ class GridWorld:
     def get_occupied_cells_for_robot(self, 
                                      robot_center: Coordinate, 
                                      robot_profile: RobotProfile) -> List[GridIndex]:
-        bounding_indices = self._get_robot_bounding_indices(robot_center, robot_profile)
+        bounding = self._get_robot_bounding_indices(robot_center, robot_profile)
+        h, w = self.occupancy_map.shape
+        xs = range(max(0, bounding.lower_x), min(w - 1, bounding.upper_x) + 1)
+        ys = range(max(0, bounding.lower_y), min(h - 1, bounding.upper_y) + 1)
 
         occupied_cells = []
-        for index_x in range(bounding_indices.lower_x, bounding_indices.upper_x + 1):
-            for index_y in range(bounding_indices.lower_y, bounding_indices.upper_y + 1):
+        for index_x in xs:
+            for index_y in ys:
                 cell_index = GridIndex(index_x, index_y)
                 if self.robot_intersects_cell(robot_center, robot_profile, cell_index):
                     occupied_cells.append(cell_index)
@@ -157,29 +172,27 @@ class GridWorld:
 
         return robot_occupancies
     
-    def _generate_robot_timing_for_move(self,
-                                        curved_connector: CurvedConnector,
-                                        robot_profile: RobotProfile) -> List[TimeInterval]:
+    def _generate_robot_timing_for_move(self, curved_connector: CurvedConnector, robot_profile: RobotProfile) -> List[TimeInterval]:
         connector_length = curved_connector.length()
-        num_frames = int(np.ceil((connector_length / robot_profile.speed) * self.fps))
+        if robot_profile.speed <= 0:
+            raise ValueError("Robot speed must be > 0")
         total_time = connector_length / robot_profile.speed
-        time_per_frame = total_time / num_frames
+        num_frames = int(np.ceil(total_time * self.fps))
         time_intervals: List[TimeInterval] = []
 
         if num_frames < 1:
-            start_time = 0.0
-            end_time = 0.0
-            time_interval = TimeInterval(start=start_time, end=end_time)
-            time_intervals.append(time_interval)
+            # Zero-length edge => single zero-time interval
+            time_intervals.append(TimeInterval(start=0.0, end=0.0))
+            return time_intervals
 
+        time_per_frame = total_time / num_frames
         for i in range(num_frames):
             start_time = i * time_per_frame
             end_time = (i + 1) * time_per_frame
-            time_interval = TimeInterval(start=start_time, end=end_time)
-            time_intervals.append(time_interval)
+            time_intervals.append(TimeInterval(start=start_time, end=end_time))
 
-        assert end_time == connector_length / robot_profile.speed
-
+        # Be tolerant to floating point
+        assert np.isclose(time_intervals[-1].end, total_time, rtol=1e-6, atol=1e-9)
         return time_intervals
     
     def _check_for_occupancy_conflict(self,
@@ -189,6 +202,9 @@ class GridWorld:
                 if self.occupancy_map[cell_index.index_y, cell_index.index_x] == 1:
                     return True
         return False
+    
+    def get_node_footprint_cells(self, node: TraversalNode, robot_profile: RobotProfile) -> Set[GridIndex]:
+        return self._get_occupied_cells_for_static_position(node.position, robot_profile)
 
     def _create_robot_occupancy_reservations(self, robot_profile: RobotProfile) -> Dict[str, Dict[str, List[MotionReservation]]]:
         occupancy_reservations: Dict[str, Dict[str, List[MotionReservation]]] = {}
@@ -217,76 +233,58 @@ class GridWorld:
                 edges[traversal_edge.to_node].append(reservation)
         
         for node in self.traversal_graph.nodes_dict.values():
-            if node.label not in occupancy_reservations:
-                continue
-            else:
-                edges = occupancy_reservations[node.label]
-                edges.setdefault(node.label, [])
-                occupied_cells = self._get_occupied_cells_for_static_position(node.position,
-                                                                            robot_profile)
-                time_interval = TimeInterval(start=0.0, end=0.0)
-                reservation = MotionReservation(time_interval=time_interval,
-                                                robot_occupancy=RobotOccupancy(occupied_cells=occupied_cells,
-                                                                                start_location=node.position,
-                                                                                end_location=node.position))
-                edges[node.label].append(reservation)
+            edges = occupancy_reservations.setdefault(node.label, {})
+            edges.setdefault(node.label, [])
+            occupied_cells = self.get_node_footprint_cells(node, robot_profile)
+            reservation = MotionReservation(
+                time_interval=TimeInterval(start=0.0, end=0.0),
+                robot_occupancy=RobotOccupancy(
+                    occupied_cells=occupied_cells,
+                    start_location=node.position,
+                    end_location=node.position
+                )
+            )
+            edges[node.label].append(reservation)
 
         return occupancy_reservations
+    
+    def _robot_key(self, robot_profile: RobotProfile) -> str:
+        return f"robot_{robot_profile.speed}_{robot_profile.radius}"
 
     def _create_occupancy_reservations(self) -> Dict[str, Dict[str, Dict[str, List[MotionReservation]]]]:
         occupancy_reservations: Dict[str, Dict[str, Dict[str, List[MotionReservation]]]] = {}
         for robot_profile in self.robot_profiles:
-            robot_id_str = f"robot_{robot_profile.robot_id}"
+            robot_id_str = self._robot_key(robot_profile)
             occupancy_reservations[robot_id_str] = self._create_robot_occupancy_reservations(robot_profile)
 
         return occupancy_reservations
+
+    def _get_robot_reservation_bucket(self, robot_profile: RobotProfile):
+        key = self._robot_key(robot_profile)
+        if key not in self.occupancy_reservations:
+            raise KeyError(
+                f"No occupancy reservations for robot_id={robot_profile.robot_id}. "
+                "Make sure this profile was included when building GridWorld."
+            )
+        return self.occupancy_reservations[key]
     
-    def get_robot_occupancy_for_move(self,
-                                    from_node: TraversalNode,
-                                    to_node: TraversalNode,
-                                    robot_profile: RobotProfile) -> List[RobotOccupancy]:
-        if f"robot_{robot_profile.robot_id}" not in self.occupancy_reservations:
-            robot_motion_reservation = self.occupancy_reservations[f"robot_{0}"]
-        else:
-            robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
+    def get_robot_occupancy_for_move(self, from_node, to_node, robot_profile) -> List[RobotOccupancy]:
+        robot_motion_reservation = self._get_robot_reservation_bucket(robot_profile)
         motion_reservation = robot_motion_reservation[from_node.label][to_node.label]
+        return [res.robot_occupancy for res in motion_reservation]
 
-        robot_occupancies = [res.robot_occupancy for res in motion_reservation]
-
-        return robot_occupancies
-    
-    def get_robot_timing_for_move(self,
-                                 from_node: TraversalNode,
-                                 to_node: TraversalNode,
-                                 robot_profile: RobotProfile) -> List[TimeInterval]:
-        if f"robot_{robot_profile.robot_id}" not in self.occupancy_reservations:
-            robot_motion_reservation = self.occupancy_reservations[f"robot_{0}"]
-        else:
-            robot_motion_reservation = self.occupancy_reservations[f"robot_{robot_profile.robot_id}"]
+    def get_robot_timing_for_move(self, from_node, to_node, robot_profile) -> List[TimeInterval]:
+        robot_motion_reservation = self._get_robot_reservation_bucket(robot_profile)
         motion_reservation = robot_motion_reservation[from_node.label][to_node.label]
+        return [res.time_interval for res in motion_reservation]
 
-        time_intervals = [res.time_interval for res in motion_reservation]
-
-        return time_intervals
-
-    def get_robot_reservations_for_move(self,
-                                        from_node: TraversalNode,
-                                        to_node: TraversalNode,
-                                        robot_profile: RobotProfile,
-                                        current_time: float) -> List[MotionReservation]:
-
+    def get_robot_reservations_for_move(self, from_node, to_node, robot_profile, current_time) -> List[MotionReservation]:
         robot_occupancies = self.get_robot_occupancy_for_move(from_node, to_node, robot_profile)
         time_intervals = self.get_robot_timing_for_move(from_node, to_node, robot_profile)
-
         reservations: List[MotionReservation] = []
-        for i in range(len(robot_occupancies)):
-            shifted_start = time_intervals[i].start + current_time
-            shifted_end = time_intervals[i].end + current_time
-            new_time_interval = TimeInterval(start=shifted_start, end=shifted_end)
-            reservation = MotionReservation(time_interval=new_time_interval,
-                                            robot_occupancy=robot_occupancies[i])
-            reservations.append(reservation)
-
+        for occ, ti in zip(robot_occupancies, time_intervals):
+            new_time_interval = TimeInterval(start=ti.start + current_time, end=ti.end + current_time)
+            reservations.append(MotionReservation(time_interval=new_time_interval, robot_occupancy=occ))
         return reservations
     
     def get_shortest_path(self,

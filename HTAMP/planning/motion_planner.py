@@ -55,7 +55,7 @@ class ReservationTable:
     def get_reservations(self, cell: GridIndex) -> List[TimeReservation]:
         return self.reservations.get(cell, [])
 
-    def add_reservation(self, cell: GridIndex, reservation: TimeReservation) -> None:
+    def add_reservation(self, cell: GridIndex, reservation: TimeReservation) -> TimeReservation:
         if cell in self.reservations:
             for i, existing in enumerate(self.reservations[cell]):
                 if existing.overlaps(reservation) and existing.robot_id == reservation.robot_id:
@@ -91,7 +91,8 @@ class ReservationTable:
                            cell: GridIndex,
                            horizon: float = float('inf'), 
                            robot_id: int = 1) -> List[TimeReservation]:
-        blocked = sorted(self.get_reservations(cell), key=lambda r: r.interval.start)
+        blocked = sorted([r for r in self.get_reservations(cell) if r.robot_id != robot_id], 
+                         key=lambda r: r.interval.start)
         safe_intervals: List[TimeReservation] = []
         current_time = 0.0
         for reservation in blocked:
@@ -176,8 +177,54 @@ class SIPPwRT:
                                                            cell_safe_intervals)
 
         return safe_intervals
-
+    
+    def _get_node_footprint_cells(self,
+                              node: TraversalNode,
+                              robot_profile: RobotProfile) -> Set[GridIndex]:
+        """
+        Returns the set of grid cells occupied by the robot when 'staying' at 'node'.
+        Uses the existing grid API (reservations for a stay-in-place move at t=0).
+        """
+        cells: Set[GridIndex] = set()
+        stay_res = self.grid.get_robot_reservations_for_move(
+            from_node=node, to_node=node,
+            robot_profile=robot_profile, current_time=0.0
+        )
+        if not stay_res:
+            return cells
+        for rr in stay_res:
+            cells.update(rr.robot_occupancy.occupied_cells)
+        return cells
+    
     def _get_safe_intervals_for_move(self, 
+                                 from_traversal_node: TraversalNode,
+                                 to_traversal_node: TraversalNode,
+                                 robot_profile: RobotProfile,
+                                 horizon: float = float('inf')) -> List[TimeReservation]:
+        """
+        Only considers the destination node's footprint to derive absolute-time safe
+        intervals at the end position (standard SIPP approach). Edge conflicts are
+        handled by _get_earliest_departure (suggestion 3).
+        """
+        safe_intervals: List[TimeReservation] = []
+        dest_cells = self._get_node_footprint_cells(to_traversal_node, robot_profile)
+
+        # If the destination footprint has no cells, treat it as unblocked.
+        if not dest_cells:
+            return [TimeReservation(TimeInterval(0.0, horizon), robot_id=robot_profile.robot_id)]
+
+        for cell in dest_cells:
+            cell_safe = self.reservation_table.get_safe_intervals(
+                cell=cell, horizon=horizon, robot_id=robot_profile.robot_id
+            )
+            if not safe_intervals:
+                safe_intervals = cell_safe
+            else:
+                safe_intervals = self._intersect_intervals(safe_intervals, cell_safe)
+
+        return safe_intervals
+
+    def _get_safe_intervals_for_move_v2(self, 
                                      from_traversal_node: TraversalNode,
                                      to_traversal_node: TraversalNode,
                                      robot_profile: RobotProfile,
@@ -231,8 +278,87 @@ class SIPPwRT:
         distance = current_edge.edge_connector.length()
         travel_time = distance / robot_profile.speed if robot_profile.speed > 0 else float('inf')
         return travel_time
+    
+    def _first_conflict_end(self,
+                        from_traversal_node: TraversalNode,
+                        to_traversal_node: TraversalNode,
+                        robot_profile: RobotProfile,
+                        current_time: float) -> Optional[float]:
+        """
+        Returns the earliest 'end' time among blocking reservations that overlap
+        the robot's occupancy along the move starting at current_time.
+        If no conflict, returns None.
+        """
+        robot_reservations = self.grid.get_robot_reservations_for_move(
+            from_node=from_traversal_node,
+            to_node=to_traversal_node,
+            robot_profile=robot_profile,
+            current_time=current_time
+        )
 
+        next_t: Optional[float] = None
+        for rr in robot_reservations:
+            move_interval = rr.time_interval  # interval for this segment of the move
+            for cell in rr.robot_occupancy.occupied_cells:
+                for existing in self.reservation_table.get_reservations(cell):
+                    # Ignore own reservations; only other robots block.
+                    if existing.robot_id == robot_profile.robot_id:
+                        continue
+                    # Reuse your overlap semantics
+                    candidate = TimeReservation(move_interval, robot_profile.robot_id)
+                    if existing.overlaps(candidate):
+                        # Jump to just after the blocking reservation ends
+                        end_t = existing.interval.end
+                        if next_t is None or end_t < next_t:
+                            next_t = end_t
+        return next_t
+    
     def _get_earliest_departure(self,
+                            curr_node: "SIPPNode",
+                            from_traversal_node: TraversalNode,
+                            to_traversal_node: TraversalNode,
+                            robot_profile: RobotProfile,
+                            end_pos_interval: TimeInterval) -> Optional[float]:
+        """
+        Finds the earliest departure time t within the current-node safe interval such that:
+        - t + travel_time lies inside 'end_pos_interval' (destination safe interval), and
+        - the occupancy along the edge [t, t+travel_time] has no conflicts.
+        If a conflict is found at t, we jump to just after the earliest blocking reservation
+        and try again, until we exceed the feasible window.
+        """
+        travel = self._get_travel_time(from_traversal_node, to_traversal_node, robot_profile)
+
+        # Departure window constrained by:
+        #  1) current node safe interval,
+        #  2) arrival must fall inside destination safe interval.
+        t_min = max(curr_node.arrival, curr_node.interval.start, end_pos_interval.start - travel)
+        t_max = min(curr_node.interval.end, end_pos_interval.end) - travel
+
+        if t_min > t_max:
+            return None
+
+        # Small epsilon to avoid getting stuck on boundaries
+        EPS = 1e-6
+        t = t_min
+
+        while t <= t_max + EPS:
+            # Quick boolean check using your existing function
+            if not self.check_conflict_for_move(from_traversal_node, to_traversal_node, robot_profile, t):
+                # By construction, arrival = t + travel is inside end_pos_interval
+                return t
+
+            # Find the earliest blocking reservation end to jump past
+            jump_to = self._first_conflict_end(from_traversal_node, to_traversal_node, robot_profile, t)
+            if jump_to is None:
+                # Shouldn't happen if check_conflict_for_move was True, but guard anyway.
+                t += EPS
+            else:
+                # Move to just after the blocking reservation ends
+                t = max(t + EPS, jump_to + EPS)
+
+        return None
+
+    def _get_earliest_departure_v2(self,
                                 curr_node: SIPPNode,
                                 from_traversal_node: TraversalNode,
                                 to_traversal_node: TraversalNode,
@@ -296,10 +422,11 @@ class SIPPwRT:
         for time_reservation in start_safe_intervals:
             if time_reservation.interval.end < current_time:
                 continue
-            arrival_time = current_time
+            arrival_time = max(current_time, time_reservation.interval.start)
             sipp_node_list.append(SIPPNode(traversal_node=start_traversal_node, interval=time_reservation.interval, arrival=arrival_time))
 
         if not sipp_node_list:
+            print("No valid start SIPP nodes found after filtering by current time.")
             return None
         
         open_set: List[PQItem] = []
@@ -314,8 +441,9 @@ class SIPPwRT:
             current_sipp_node = current_item.node
 
             if current_sipp_node.traversal_node.label == goal_traversal_node.label:
-                return self._reconstruct_path(sipp_node=current_sipp_node, 
-                                              robot_profile=robot_profile)
+                if current_sipp_node.interval.start <= current_sipp_node.arrival <= current_sipp_node.interval.end:
+                    return self._reconstruct_path(sipp_node=current_sipp_node, 
+                                                robot_profile=robot_profile)
 
             for next_traversal_node_label in current_sipp_node.traversal_node.connections:
                 potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
@@ -424,7 +552,7 @@ class MotionPlanner:
                                               robot_profile=robot_profile)
 
     def reserve_path_for_agent(self,
-                               path: List[Tuple[Coordinate, TimeInterval]],
+                               path: List[Tuple[TraversalNode, TimeInterval]],
                                robot_profile: RobotProfile) -> None:
         self._reserve_path(path=path,
                            robot_profile=robot_profile)
@@ -472,6 +600,12 @@ def main():
     selected_start_nodes = random.sample(potential_start_nodes, args.num_robots)
     selected_goal_nodes = random.sample(potential_target_nodes, args.num_robots)
 
+    selected_start_nodes.reverse()
+    selected_goal_nodes.reverse()
+
+    # selected_start_nodes = [tg_generator.traversal_graph.nodes_dict['38.66_35.21_Up']]
+    # selected_goal_nodes = [tg_generator.traversal_graph.nodes_dict['22.25_33.48_Down']]
+
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
         robot_profiles.append(robot_profile)
@@ -507,6 +641,8 @@ def main():
                 print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
             planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
             paths.append(path)
+        else:
+            print(f"No path found for Robot {i} from {selected_start_nodes[i].label} to {selected_goal_nodes[i].label}")
 
     pEnd = datetime.now()
     print(f"Total planning time: {pEnd - pStart}")
