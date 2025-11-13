@@ -110,16 +110,6 @@ class DateOperationalRange:
     def __repr__(self):
         return f"DateOperationalRange(start_date={self.start_date}, end_date={self.end_date})"
 
-
-class Request:
-    def __init__(self, user_id: int, request_type: str, payload: dict):
-        self.user_id = user_id
-        self.request_type = request_type
-        self.payload = payload
-    def __repr__(self):
-        return f"Request(user_id={self.user_id}, request_type='{self.request_type}', payload={self.payload})"
-
-
 class SimulatorConfig:
     def __init__(self, 
                  fps: int,
@@ -133,3 +123,30 @@ class SimulatorConfig:
         self.initial_robot_positions = initial_robot_positions
         self.fps = fps
         self.time_step = 1.0 / fps
+
+class Request:
+    def __init__(self, 
+                 request_id: int, 
+                 request_type: str, 
+                 goal_nodes: list[str], 
+                 wait_times_at_goals: list[float],
+                 start_time: float = 0.0,
+                 end_time: float = 0.0,
+                 desired_time_for_service: float = 0.0,
+                 planned_time_for_service: float = 0.0,
+                 started: bool = False,
+                 completed: bool = False
+                 ):
+        self.request_id = request_id
+        self.request_type = request_type
+        self.goal_nodes = goal_nodes
+        self.wait_times_at_goals = wait_times_at_goals
+        self.start_time = start_time
+        self.end_time = end_time
+        self.desired_time_for_service = desired_time_for_service
+        self.planned_time_for_service = planned_time_for_service
+        self.started = started
+        self.completed = completed
+
+    def __repr__(self):
+        return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"
