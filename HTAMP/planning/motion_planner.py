@@ -6,102 +6,11 @@ import traceback
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple, Dict
 
-from HTAMP.environment.loc_dataclasses import Coordinate
 from HTAMP.environment.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
+from HTAMP.planning.planning_dataclasses import ReservationTable, TimeReservation
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
-
-@dataclass
-class TimeReservation:
-    interval: TimeInterval
-    robot_id: int
-
-    def overlaps(self, other: "TimeReservation") -> bool:
-        return round(self.interval.start, 4) <= round(other.interval.end, 4) and \
-            round(self.interval.end, 4) >= round(other.interval.start, 4)
-    
-    def merge(self, other: "TimeReservation") -> "TimeReservation":
-        if not self.overlaps(other):
-            raise ValueError("Intervals do not overlap and cannot be merged.")
-        
-        if self.robot_id != other.robot_id:
-            raise ValueError("Cannot merge reservations for different robots.")
-        
-        new_start = min(self.interval.start, other.interval.start)
-        new_end = max(self.interval.end, other.interval.end)
-        return TimeReservation(TimeInterval(new_start, new_end), self.robot_id)
-    
-    def duration(self) -> float:
-        return self.interval.end - self.interval.start
-
-    def complement(self, horizon: float) -> List["TimeReservation"]:
-        """Return the complement intervals within [0, horizon)."""
-        complements: List[TimeReservation] = []
-        if self.interval.start > 0:
-            complements.append(TimeReservation(TimeInterval(0, self.interval.start), self.robot_id))
-        if self.interval.end < horizon:
-            complements.append(TimeReservation(TimeInterval(self.interval.end, horizon), self.robot_id))
-        return complements
-    
-    def __repr__(self) -> str:
-        return f"TimeReservation(start={self.interval.start}, end={self.interval.end}, robot_id={self.robot_id})"
-
-@dataclass
-class ReservationTable:
-    reservations: Dict[GridIndex, List[TimeReservation]]
-    robot_cell_dict: Dict[int, List[GridIndex]] = field(default_factory=dict)
-
-    def get_reservations(self, cell: GridIndex) -> List[TimeReservation]:
-        return self.reservations.get(cell, [])
-
-    def add_reservation(self, cell: GridIndex, reservation: TimeReservation) -> TimeReservation:
-        if cell in self.reservations:
-            for i, existing in enumerate(self.reservations[cell]):
-                if existing.overlaps(reservation) and existing.robot_id == reservation.robot_id:
-                    merged = existing.merge(reservation)
-                    self.reservations[cell][i] = merged
-                    return merged
-            self.reservations[cell].append(reservation)
-            self.robot_cell_dict.setdefault(reservation.robot_id, []).append(cell)
-        else:
-            self.reservations[cell] = [reservation]
-            self.robot_cell_dict.setdefault(reservation.robot_id, []).append(cell)
-        return reservation
-
-    def _remove_cell_reservation_for_robot(self, cell: GridIndex, robot_id: int) -> None:
-        if cell in self.reservations:
-            self.reservations[cell] = [r for r in self.reservations[cell] if r.robot_id != robot_id]
-            if not self.reservations[cell]:
-                del self.reservations[cell]
-    
-    def remove_reservations_for_robot(self, robot_id: int) -> None:
-        if robot_id in self.robot_cell_dict:
-            for cell in self.robot_cell_dict[robot_id]:
-                self._remove_cell_reservation_for_robot(cell, robot_id)
-            del self.robot_cell_dict[robot_id]
-
-    def check_conflict(self, cell: GridIndex, reservation: TimeReservation) -> bool:
-        for existing in self.get_reservations(cell):
-            if existing.overlaps(reservation) and existing.robot_id != reservation.robot_id:
-                return True
-        return False
-
-    def get_safe_intervals(self, 
-                           cell: GridIndex,
-                           horizon: float = float('inf'), 
-                           robot_id: int = 1) -> List[TimeReservation]:
-        blocked = sorted([r for r in self.get_reservations(cell) if r.robot_id != robot_id], 
-                         key=lambda r: r.interval.start)
-        safe_intervals: List[TimeReservation] = []
-        current_time = 0.0
-        for reservation in blocked:
-            if reservation.interval.start > current_time:
-                safe_intervals.append(TimeReservation(TimeInterval(current_time, reservation.interval.start), robot_id=robot_id))
-            current_time = max(current_time, reservation.interval.end)
-        if current_time < horizon:
-            safe_intervals.append(TimeReservation(TimeInterval(current_time, horizon), robot_id=robot_id))
-        return safe_intervals
 
 @dataclass(order=True)
 class PQItem:
@@ -332,7 +241,7 @@ class SIPPwRT:
         #  1) current node safe interval,
         #  2) arrival must fall inside destination safe interval.
         t_min = max(curr_node.arrival, curr_node.interval.start, end_pos_interval.start - travel)
-        t_max = min(curr_node.interval.end, end_pos_interval.end) - travel
+        t_max = min(curr_node.interval.end, end_pos_interval.end - travel)
 
         if t_min > t_max:
             return None
@@ -447,6 +356,9 @@ class SIPPwRT:
 
             for next_traversal_node_label in current_sipp_node.traversal_node.connections:
                 potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
+
+                if potential_next_move.label == "34.78_33.91_Left" and robot_profile.robot_id == 1:
+                    print("At node 34.78_33.91_Left")
 
                 for safe_interval in self._get_safe_intervals_for_move(from_traversal_node=current_sipp_node.traversal_node,
                                                                       to_traversal_node=potential_next_move,
@@ -600,8 +512,8 @@ def main():
     selected_start_nodes = random.sample(potential_start_nodes, args.num_robots)
     selected_goal_nodes = random.sample(potential_target_nodes, args.num_robots)
 
-    selected_start_nodes.reverse()
-    selected_goal_nodes.reverse()
+    # selected_start_nodes.reverse()
+    # selected_goal_nodes.reverse()
 
     # selected_start_nodes = [tg_generator.traversal_graph.nodes_dict['38.66_35.21_Up']]
     # selected_goal_nodes = [tg_generator.traversal_graph.nodes_dict['22.25_33.48_Down']]
@@ -654,6 +566,26 @@ def main():
                                     paths=paths,
                                     traversal_graph=tg_generator.traversal_graph,
                                     robot_profiles=robot_profiles)
+    
+    first_robot_path = paths[0]
+    occupancy_reservations = world.get_robot_reservations_for_move(
+        from_node=first_robot_path[2][0],
+        to_node=first_robot_path[3][0],
+        robot_profile=robot_profile,
+        current_time=0.0
+    )
+    MotionPlanningPlotter.plot_motion_reservations(occupancy_map=tg_generator.occupancy_map,
+                                                   origin_x=tg_generator.origin_x,
+                                                   origin_y=tg_generator.origin_y,
+                                                   resolution=tg_generator.meters_per_cell,
+                                                   motion_reservations=occupancy_reservations,
+                                                   filename="results/motion_planning/motion_reservations_example.png")
+    
+    # MotionPlanningPlotter.plot_reservations_in_reservation_table(occupancy_map=tg_generator.occupancy_map,
+    #                                                             origin_x=tg_generator.origin_x,
+    #                                                             origin_y=tg_generator.origin_y,
+    #                                                             resolution=tg_generator.meters_per_cell,
+    #                                                             reservation_table=planner.reservation_table)
 
 if __name__ == "__main__":
     pStart = datetime.now()
