@@ -241,7 +241,8 @@ class SIPPwRT:
 
     def _reconstruct_path(self, 
                           sipp_node: SIPPNode, 
-                          robot_profile: RobotProfile) -> List[Tuple[TraversalNode, TimeInterval]]:
+                          robot_profile: RobotProfile,
+                          horizon = float('inf')) -> List[Tuple[TraversalNode, TimeInterval]]:
         sipp_node_list : List[SIPPNode] = []
         while sipp_node:
             sipp_node_list.append(sipp_node)
@@ -258,7 +259,7 @@ class SIPPwRT:
 
         # Add the last node with an open-ended time interval
         last_sipp_node = sipp_node_list[-1]
-        timed_path.append((last_sipp_node.traversal_node, TimeInterval(last_sipp_node.arrival, float('inf'))))
+        timed_path.append((last_sipp_node.traversal_node, TimeInterval(last_sipp_node.arrival, horizon)))
 
         return timed_path
 
@@ -300,7 +301,8 @@ class SIPPwRT:
             if current_sipp_node.traversal_node.label == goal_traversal_node.label:
                 if current_sipp_node.interval.start <= current_sipp_node.arrival <= current_sipp_node.interval.end:
                     return self._reconstruct_path(sipp_node=current_sipp_node, 
-                                                robot_profile=robot_profile)
+                                                robot_profile=robot_profile,
+                                                horizon=horizon)
 
             for next_traversal_node_label in current_sipp_node.traversal_node.connections:
                 potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
@@ -379,10 +381,22 @@ class MotionPlanner:
                     time_reservation = TimeReservation(interval=robot_reservation.time_interval,
                                                         robot_id=robot_profile.robot_id)
                     self.reservation_table.add_reservation(cell, time_reservation)
+    def _initialize_robot_reservations(self, 
+                                       initial_node: TraversalNode,
+                                       robot_profile: RobotProfile,
+                                       current_time: float,
+                                       horizon: float) -> None:
+        self._reserve_cells_for_time_interval(from_node=initial_node,
+                                              to_node=initial_node,
+                                              time_interval=TimeInterval(start=current_time,
+                                                                          end=horizon),
+                                              robot_profile=robot_profile)
+
 
     def _reserve_path(self,
                       path: List[Tuple[TraversalNode, TimeInterval]],
-                      robot_profile: RobotProfile) -> None:
+                      robot_profile: RobotProfile,
+                      horizon: float) -> None:
 
         # Add reservations to the reservation table
         for i in range(len(path) - 1):
@@ -405,14 +419,20 @@ class MotionPlanner:
         self._reserve_cells_for_time_interval(from_node=last_node,
                                               to_node=last_node,
                                               time_interval=TimeInterval(start=last_time_interval.start,
-                                                                          end=float('inf')),
+                                                                          end=horizon),
                                               robot_profile=robot_profile)
 
     def reserve_path_for_agent(self,
                                path: List[Tuple[TraversalNode, TimeInterval]],
-                               robot_profile: RobotProfile) -> None:
+                               robot_profile: RobotProfile,
+                               horizon: float) -> None:
         self._reserve_path(path=path,
-                           robot_profile=robot_profile)
+                           robot_profile=robot_profile,
+                           horizon=horizon)
+        
+    def clear_reservations_for_agent(self,
+                                   robot_profile: RobotProfile) -> None:
+        self.reservation_table.remove_reservations_for_robot(robot_id=robot_profile.robot_id)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -481,19 +501,34 @@ def main():
     pStart = datetime.now()
 
     for i in range(args.num_robots):
+        planner._initialize_robot_reservations(initial_node=selected_start_nodes[i],
+                                               robot_profile=robot_profiles[i],
+                                               current_time=0.0,
+                                               horizon=10000.0)
+
+    for i in range(args.num_robots):
         path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
                                             goal_traversal_node=selected_goal_nodes[i],
                                             robot_profile=robot_profiles[i],
                                             current_time=0.0,
                                             horizon=10000.0)
         if path:
+            planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
             print(f"Planned Path for Robot {i}:")
             for traversal_node, time_interval in path:
                 print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
-            planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
+            planner.reserve_path_for_agent(path=path,
+                                           robot_profile=robot_profiles[i], 
+                                           horizon=10000.0)
             paths.append(path)
         else:
             print(f"No path found for Robot {i} from {selected_start_nodes[i].label} to {selected_goal_nodes[i].label}")
+    
+    for i in range(args.num_robots):
+        planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
+    
+    assert planner.reservation_table.reservations == {}, "Reservation table not empty after clearing all reservations."
+    assert planner.reservation_table.robot_cell_dict == {}, "Robot-cell dictionary not empty after clearing all reservations."
 
     pEnd = datetime.now()
     print(f"Total planning time: {pEnd - pStart}")

@@ -257,16 +257,25 @@ def main():
     pStart = datetime.now()
 
     for i in range(args.num_robots):
+        planner._initialize_robot_reservations(initial_node=selected_start_nodes[i],
+                                               robot_profile=robot_profiles[i],
+                                               current_time=0.0,
+                                               horizon=5000.0)
+
+    for i in range(args.num_robots):
         path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
                                             goal_traversal_node=selected_goal_nodes[i],
                                             robot_profile=robot_profiles[i],
                                             current_time=0.0,
-                                            horizon=10000.0)
+                                            horizon=5000.0)
         if path:
+            planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
             print(f"Planned Path for Robot {i}:")
             for traversal_node, time_interval in path:
                 print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
-            planner.reserve_path_for_agent(path=path, robot_profile=robot_profile)
+            planner.reserve_path_for_agent(path=path, 
+                                           robot_profile=robot_profiles[i], 
+                                           horizon=5000.0)
             paths.append(path)
             state.assign_robot_path(robot_id=i, path=path, traversal_graph=tg_generator.traversal_graph)
         else:
