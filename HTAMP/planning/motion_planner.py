@@ -132,31 +132,6 @@ class SIPPwRT:
                 safe_intervals = self._intersect_intervals(safe_intervals, cell_safe)
 
         return safe_intervals
-
-    def _get_safe_intervals_for_move_v2(self, 
-                                     from_traversal_node: TraversalNode,
-                                     to_traversal_node: TraversalNode,
-                                     robot_profile: RobotProfile,
-                                     horizon: float = float('inf')) -> List[TimeReservation]:
-        safe_intervals: List[TimeReservation] = []
-        robot_occupancy_list = self.grid.get_robot_occupancy_for_move(from_node=from_traversal_node,
-                                                                      to_node=to_traversal_node,
-                                                                      robot_profile=robot_profile)
-        occupied_cells: Set[GridIndex] = set()
-        for robot_occupancy in robot_occupancy_list:
-            occupied_cells.update(robot_occupancy.occupied_cells)
-
-        for cell in occupied_cells:
-            cell_safe_intervals = self.reservation_table.get_safe_intervals(cell=cell, 
-                                                                            horizon=horizon, 
-                                                                            robot_id=robot_profile.robot_id)
-            if not safe_intervals:
-                safe_intervals = cell_safe_intervals
-            else:
-                safe_intervals = self._intersect_intervals(safe_intervals, 
-                                                           cell_safe_intervals)
-
-        return safe_intervals
     
     def check_conflict_for_move(self,
                                 from_traversal_node: TraversalNode,
@@ -210,13 +185,10 @@ class SIPPwRT:
             move_interval = rr.time_interval  # interval for this segment of the move
             for cell in rr.robot_occupancy.occupied_cells:
                 for existing in self.reservation_table.get_reservations(cell):
-                    # Ignore own reservations; only other robots block.
                     if existing.robot_id == robot_profile.robot_id:
                         continue
-                    # Reuse your overlap semantics
                     candidate = TimeReservation(move_interval, robot_profile.robot_id)
                     if existing.overlaps(candidate):
-                        # Jump to just after the blocking reservation ends
                         end_t = existing.interval.end
                         if next_t is None or end_t < next_t:
                             next_t = end_t
@@ -265,30 +237,6 @@ class SIPPwRT:
                 # Move to just after the blocking reservation ends
                 t = max(t + EPS, jump_to + EPS)
 
-        return None
-
-    def _get_earliest_departure_v2(self,
-                                curr_node: SIPPNode,
-                                from_traversal_node: TraversalNode,
-                                to_traversal_node: TraversalNode,
-                                robot_profile: RobotProfile,
-                                end_pos_interval: TimeInterval) -> Optional[float]:
-        # Find the earliest departure time for the current node
-        current_time = max(curr_node.arrival, curr_node.interval.start)
-        travel_time = self._get_travel_time(from_traversal_node=from_traversal_node, 
-                                             to_traversal_node=to_traversal_node, 
-                                             robot_profile=robot_profile)
-
-        window_start = end_pos_interval.start - travel_time
-        current_time = max(current_time, window_start)
-
-        if self.check_conflict_for_move(from_traversal_node=from_traversal_node, 
-                                        to_traversal_node=to_traversal_node,
-                                        robot_profile=robot_profile,
-                                        current_time=current_time):
-            return None
-        if current_time + travel_time <= end_pos_interval.end:
-            return current_time
         return None
 
     def _reconstruct_path(self, 
@@ -356,9 +304,6 @@ class SIPPwRT:
 
             for next_traversal_node_label in current_sipp_node.traversal_node.connections:
                 potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
-
-                if potential_next_move.label == "34.78_33.91_Left" and robot_profile.robot_id == 1:
-                    print("At node 34.78_33.91_Left")
 
                 for safe_interval in self._get_safe_intervals_for_move(from_traversal_node=current_sipp_node.traversal_node,
                                                                       to_traversal_node=potential_next_move,
@@ -512,12 +457,6 @@ def main():
     selected_start_nodes = random.sample(potential_start_nodes, args.num_robots)
     selected_goal_nodes = random.sample(potential_target_nodes, args.num_robots)
 
-    # selected_start_nodes.reverse()
-    # selected_goal_nodes.reverse()
-
-    # selected_start_nodes = [tg_generator.traversal_graph.nodes_dict['38.66_35.21_Up']]
-    # selected_goal_nodes = [tg_generator.traversal_graph.nodes_dict['22.25_33.48_Down']]
-
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
         robot_profiles.append(robot_profile)
@@ -567,25 +506,6 @@ def main():
                                     traversal_graph=tg_generator.traversal_graph,
                                     robot_profiles=robot_profiles)
     
-    first_robot_path = paths[0]
-    occupancy_reservations = world.get_robot_reservations_for_move(
-        from_node=first_robot_path[2][0],
-        to_node=first_robot_path[3][0],
-        robot_profile=robot_profile,
-        current_time=0.0
-    )
-    MotionPlanningPlotter.plot_motion_reservations(occupancy_map=tg_generator.occupancy_map,
-                                                   origin_x=tg_generator.origin_x,
-                                                   origin_y=tg_generator.origin_y,
-                                                   resolution=tg_generator.meters_per_cell,
-                                                   motion_reservations=occupancy_reservations,
-                                                   filename="results/motion_planning/motion_reservations_example.png")
-    
-    # MotionPlanningPlotter.plot_reservations_in_reservation_table(occupancy_map=tg_generator.occupancy_map,
-    #                                                             origin_x=tg_generator.origin_x,
-    #                                                             origin_y=tg_generator.origin_y,
-    #                                                             resolution=tg_generator.meters_per_cell,
-    #                                                             reservation_table=planner.reservation_table)
 
 if __name__ == "__main__":
     pStart = datetime.now()
