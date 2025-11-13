@@ -8,9 +8,10 @@ from typing import List, Tuple
 from matplotlib import pyplot as plt
 from matplotlib.patches import Circle
 
-from HTAMP.environment.loc_dataclasses import Coordinate
-from HTAMP.environment.grid_world import TimeInterval, RobotProfile
+from HTAMP.environment.loc_dataclasses import Coordinate, MotionReservation, TimeInterval
+from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
+from HTAMP.planning.planning_dataclasses import ReservationTable
 
 class MotionPlanningPlotter:
 
@@ -57,6 +58,66 @@ class MotionPlanningPlotter:
 
         plt.savefig("results/motion_planning/planned_paths.svg")
         plt.close()
+    
+    @staticmethod
+    def plot_motion_reservations(occupancy_map: np.ndarray,
+                                    origin_x: float,
+                                    origin_y: float,
+                                    resolution: float,
+                                    motion_reservations: List[MotionReservation],
+                                    filename: str):
+            rows, cols = occupancy_map.shape
+            xmin, xmax = origin_x, origin_x + cols * resolution
+            ymin, ymax = origin_y, origin_y + rows * resolution
+    
+            fig, ax = plt.subplots(figsize=(8, 8))
+            im = ax.imshow(
+                occupancy_map,
+                cmap="gray_r",
+                origin="upper",              # flip so (0,0) is top-left
+                extent=[xmin, xmax, ymax, ymin],  # still in meters
+                aspect="equal"
+            )
+    
+            for reservation in motion_reservations:
+                occupied_cells = reservation.robot_occupancy.occupied_cells
+                cell_xs = [cell.index_x * resolution for cell in occupied_cells]
+                cell_ys = [cell.index_y * resolution for cell in occupied_cells]
+                ax.scatter(cell_xs, cell_ys, s=0.01, alpha=0.5)
+    
+            ax.set_title("Motion Reservations Overlay")
+            ax.set_xlabel("X (meters)")
+            ax.set_ylabel("Y (meters)")
+            plt.savefig(f"{filename}")
+            plt.close()
+    
+    def plot_reservations_in_reservation_table(occupancy_map: np.ndarray,
+                                                origin_x: float,
+                                                origin_y: float,
+                                                resolution: float,
+                                                reservation_table: ReservationTable):
+        rows, cols = occupancy_map.shape
+        xmin, xmax = origin_x, origin_x + cols * resolution
+        ymin, ymax = origin_y, origin_y + rows * resolution
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(
+            occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+        for cell, reservations in reservation_table.reservations.items():
+            cell_x = cell.index_x * resolution
+            cell_y = cell.index_y * resolution
+            print(f"Cell {cell} has reservations: {reservations}")
+            ax.scatter(cell_x, cell_y, s=0.01, alpha=0.5)
+        ax.set_title("Reservations in Reservation Table Overlay")
+        ax.set_xlabel("X (meters)")
+        ax.set_ylabel("Y (meters)")
+        plt.savefig("results/motion_planning/reservation_table_overlay.svg")
+        plt.close()
+        
     
     @staticmethod
     def plot_state_debug(occupancy_map: np.ndarray, 

@@ -9,7 +9,7 @@ from HTAMP.environment.geometry_helpers import CurvedConnector
 from HTAMP.environment.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
 from HTAMP.environment.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
-from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
+from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 
@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
     print(len(occupancy_reservations))
 
-    TraversalGraphPlottingHelper.plot_motion_reservations(occupancy_map=world.occupancy_map,
+    MotionPlanningPlotter.plot_motion_reservations(occupancy_map=world.occupancy_map,
                                                           origin_x=tg_generator.origin_x,
                                                           origin_y=tg_generator.origin_y,
                                                           resolution=tg_generator.resolution,
