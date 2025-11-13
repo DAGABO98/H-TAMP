@@ -116,6 +116,7 @@ class SimulatorConfig:
                  robot_profiles: list[RobotProfile], 
                  rejection_penalty: float, 
                  date_range: DateOperationalRange,
+                 horizon: float,
                  initial_robot_positions: dict[int, Coordinate]):
         self.robot_profiles = robot_profiles
         self.rejection_penalty = rejection_penalty
@@ -123,8 +124,9 @@ class SimulatorConfig:
         self.initial_robot_positions = initial_robot_positions
         self.fps = fps
         self.time_step = 1.0 / fps
+        self.horizon = horizon
 
-class Request:
+class TaskRequest:
     def __init__(self, 
                  request_id: int, 
                  request_type: str, 

@@ -11,7 +11,7 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import SimulatorConfig
+from HTAMP.planning.planning_dataclasses import SimulatorConfig, TaskRequest
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class PlanningHelpers:
@@ -34,6 +34,7 @@ class PlanningHelpers:
 class PlanningState:
     def __init__(self, simulator_config: SimulatorConfig):
         self.simulator_config = simulator_config
+        self.robot_depots = copy.deepcopy(simulator_config.initial_robot_positions)
         self.robots_positions = copy.deepcopy(simulator_config.initial_robot_positions)
         self.robots_current_node_index: dict[int, int] = {robot_id: 0 for robot_id in simulator_config.initial_robot_positions.keys()}
         self.robots_current_nodes: dict[int, TraversalNode | None] = {robot_id: None for robot_id in simulator_config.initial_robot_positions.keys()}
@@ -47,6 +48,8 @@ class PlanningState:
         self.current_wait_times: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
 
         self.robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
+
+        self.assigned_requests: dict[int, list[TaskRequest]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
 
     def _extract_edge_samples_and_cumulative_lengths(self, 
                                                 start_node: TraversalNode, 
@@ -93,6 +96,14 @@ class PlanningState:
             self.current_wait_times[robot_id] = 0.0
             self.robots_current_node_index[robot_id] = 0
             self.point_indices_on_edge[robot_id] = 0
+    
+    def assign_request_to_robot(self, 
+                                robot_id: int, 
+                                request: TaskRequest, 
+                                path: list[tuple[TraversalNode, TimeInterval]],
+                                traversal_graph: TraversalGraph) -> None:
+        self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
+        self.assigned_requests[robot_id].append(request)
     
     def _move_to_next_node(self, robot_id: int, traversal_graph: TraversalGraph) -> None:
         current_index = self.robots_current_node_index[robot_id] + 1
@@ -178,6 +189,8 @@ class PlanningState:
     def step(self, traversal_graph: TraversalGraph) -> None:
         for robot_id in self.robots_positions:
             self._update_robot_location(robot_id, traversal_graph, self.simulator_config.time_step)
+            if self.robots_current_nodes[robot_id].label == self.goal_nodes_labels[robot_id]:
+                print(f"Robot {robot_id} has reached its goal node {self.goal_nodes_labels[robot_id]}.")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -250,24 +263,41 @@ def main():
                                        robot_profiles=robot_profiles,
                                        rejection_penalty=100.0,
                                        date_range=None,
-                                       initial_robot_positions={i: selected_start_nodes[i].position for i in range(args.num_robots)})
+                                       initial_robot_positions={i: selected_start_nodes[i].position for i in range(args.num_robots)},
+                                       horizon=5000.0)
     
     state = PlanningState(simulator_config=simulator_config)
 
     pStart = datetime.now()
 
+    requests: list[TaskRequest] = []
+
     for i in range(args.num_robots):
         planner._initialize_robot_reservations(initial_node=selected_start_nodes[i],
                                                robot_profile=robot_profiles[i],
                                                current_time=0.0,
-                                               horizon=5000.0)
+                                               horizon=simulator_config.horizon)
+        current_request = TaskRequest(request_id=i, 
+                                      request_type="move", 
+                                      goal_nodes=[selected_goal_nodes[i].label], 
+                                      wait_times_at_goals=[10.0],
+                                      start_time=0.0,
+                                      end_time=simulator_config.horizon,
+                                      desired_time_for_service=0.0,
+                                      planned_time_for_service=0.0,
+                                      started=False,
+                                      completed=False)
+        
+        requests.append(current_request)
+        
 
     for i in range(args.num_robots):
+        current_request = requests[i]
         path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
-                                            goal_traversal_node=selected_goal_nodes[i],
+                                            goal_traversal_node=current_request.goal_nodes[0],
                                             robot_profile=robot_profiles[i],
                                             current_time=0.0,
-                                            horizon=5000.0)
+                                            horizon=simulator_config.horizon)
         if path:
             planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
             print(f"Planned Path for Robot {i}:")
@@ -275,9 +305,12 @@ def main():
                 print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
             planner.reserve_path_for_agent(path=path, 
                                            robot_profile=robot_profiles[i], 
-                                           horizon=5000.0)
+                                           horizon=simulator_config.horizon)
             paths.append(path)
-            state.assign_robot_path(robot_id=i, path=path, traversal_graph=tg_generator.traversal_graph)
+            state.assign_request_to_robot(robot_id=i, 
+                                          request=TaskRequest(request_id=i, request_type="move", goal_nodes=[selected_goal_nodes[i].label], wait_times_at_goals=[0.0]), 
+                                          path=path, 
+                                          traversal_graph=tg_generator.traversal_graph)
         else:
             print(f"No path found for Robot {i}")
     
@@ -294,7 +327,7 @@ def main():
     point_indices_on_edge_seq: list[dict[int, int]] =[]
     robot_paths_seq: list[dict[int, list[tuple[TraversalNode, TimeInterval]]]] = []
     
-    for i in range(1000):
+    for i in range(500):
         print(f"Step {i}:")
         state.step(traversal_graph=tg_generator.traversal_graph)
         robot_positions_seq.append(copy.deepcopy(state.robots_positions))
@@ -313,7 +346,7 @@ def main():
                                             traversal_graph=tg_generator.traversal_graph,
                                             robot_profiles=robot_profiles,
                                             fps_sim=args.fps,
-                                            num_sim_frames=1000)
+                                            num_sim_frames=500)
 
     pEnd = datetime.now()
     print(f"Total planning time: {pEnd - pStart}")
