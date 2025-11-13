@@ -3423,6 +3423,7 @@ class TraversalGraphGenerator:
         for node_label, node in subgraph.nodes_dict.items():
             if node_label not in traversal_graph.nodes_dict:
                 traversal_graph.nodes_dict[node_label] = node
+                node.connections = list(set(node.connections))
             else:
                 existing_node = traversal_graph.nodes_dict[node_label]
                 assert node == existing_node , f"Node mismatch for label {node_label} during traversal graph assembly."
