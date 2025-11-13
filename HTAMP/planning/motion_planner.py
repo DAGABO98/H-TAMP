@@ -105,8 +105,7 @@ class SIPPwRT:
             cells.update(rr.robot_occupancy.occupied_cells)
         return cells
     
-    def _get_safe_intervals_for_move(self, 
-                                 from_traversal_node: TraversalNode,
+    def _get_safe_intervals_for_move(self,
                                  to_traversal_node: TraversalNode,
                                  robot_profile: RobotProfile,
                                  horizon: float = float('inf')) -> List[TimeReservation]:
@@ -242,7 +241,7 @@ class SIPPwRT:
     def _reconstruct_path(self, 
                           sipp_node: SIPPNode, 
                           robot_profile: RobotProfile,
-                          horizon = float('inf')) -> List[Tuple[TraversalNode, TimeInterval]]:
+                          wait_time_at_goal: float = 0.0) -> List[Tuple[TraversalNode, TimeInterval]]:
         sipp_node_list : List[SIPPNode] = []
         while sipp_node:
             sipp_node_list.append(sipp_node)
@@ -259,7 +258,7 @@ class SIPPwRT:
 
         # Add the last node with an open-ended time interval
         last_sipp_node = sipp_node_list[-1]
-        timed_path.append((last_sipp_node.traversal_node, TimeInterval(last_sipp_node.arrival, horizon)))
+        timed_path.append((last_sipp_node.traversal_node, TimeInterval(last_sipp_node.arrival, last_sipp_node.arrival + wait_time_at_goal)))
 
         return timed_path
 
@@ -268,6 +267,7 @@ class SIPPwRT:
                   goal_traversal_node: TraversalNode, 
                   robot_profile: RobotProfile,
                   current_time: float = 0.0,
+                  wait_time_at_goal: float = 0.0,
                   horizon: float = float('inf')) -> Optional[List[Tuple[TraversalNode, TimeInterval]]]:
         # Plan the path from start to goal while avoiding obstacles
         start_safe_intervals = self._get_safe_intervals_for_current_node(start_traversal_node,
@@ -302,13 +302,12 @@ class SIPPwRT:
                 if current_sipp_node.interval.start <= current_sipp_node.arrival <= current_sipp_node.interval.end:
                     return self._reconstruct_path(sipp_node=current_sipp_node, 
                                                 robot_profile=robot_profile,
-                                                horizon=horizon)
+                                                wait_time_at_goal=wait_time_at_goal)
 
             for next_traversal_node_label in current_sipp_node.traversal_node.connections:
                 potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
 
-                for safe_interval in self._get_safe_intervals_for_move(from_traversal_node=current_sipp_node.traversal_node,
-                                                                      to_traversal_node=potential_next_move,
+                for safe_interval in self._get_safe_intervals_for_move(to_traversal_node=potential_next_move,
                                                                       robot_profile=robot_profile,
                                                                       horizon=horizon):
 
@@ -348,14 +347,32 @@ class MotionPlanner:
                               goal_traversal_node: TraversalNode,
                               robot_profile: RobotProfile,
                               current_time: float = 0.0,
+                              wait_time_at_goal: float = 0.0,
                               horizon: float = float('inf')) -> Optional[List[Tuple[TraversalNode, TimeInterval]]]:
         path = self.planner.plan_path(start_traversal_node=start_traversal_node,
                                         goal_traversal_node=goal_traversal_node,
                                         robot_profile=robot_profile,
                                         current_time=current_time,
+                                        wait_time_at_goal=wait_time_at_goal,
                                         horizon=horizon)
 
         return path
+    
+    def combine_paths(self,
+                      paths: List[List[Tuple[TraversalNode, TimeInterval]]]) -> List[Tuple[TraversalNode, TimeInterval]]:
+        combined_path: List[Tuple[TraversalNode, TimeInterval]] = []
+        for path in paths:
+            if not combined_path:
+                combined_path.extend(path)
+            else:
+                # Avoid duplicating the connecting node
+                if combined_path[-1][0].label == path[0][0].label:
+                    new_time_interval = TimeInterval(start=combined_path[-1][1].start, end=path[0][1].end)
+                    combined_path[-1] = (combined_path[-1][0], new_time_interval)
+                    combined_path.extend(path[1:])
+                else:
+                    combined_path.extend(path)
+        return combined_path
 
     def _reserve_cells_for_time_interval(self,
                                           from_node: TraversalNode,
@@ -396,7 +413,7 @@ class MotionPlanner:
     def _reserve_path(self,
                       path: List[Tuple[TraversalNode, TimeInterval]],
                       robot_profile: RobotProfile,
-                      horizon: float) -> None:
+                      wait_time_at_goal: float = 0.0) -> None:
 
         # Add reservations to the reservation table
         for i in range(len(path) - 1):
@@ -419,16 +436,16 @@ class MotionPlanner:
         self._reserve_cells_for_time_interval(from_node=last_node,
                                               to_node=last_node,
                                               time_interval=TimeInterval(start=last_time_interval.start,
-                                                                          end=horizon),
+                                                                          end=last_time_interval.start + wait_time_at_goal),
                                               robot_profile=robot_profile)
 
     def reserve_path_for_agent(self,
                                path: List[Tuple[TraversalNode, TimeInterval]],
                                robot_profile: RobotProfile,
-                               horizon: float) -> None:
+                               wait_time_at_goal: float = 0.0) -> None:
         self._reserve_path(path=path,
                            robot_profile=robot_profile,
-                           horizon=horizon)
+                           wait_time_at_goal=wait_time_at_goal)
         
     def clear_reservations_for_agent(self,
                                    robot_profile: RobotProfile) -> None:
@@ -511,6 +528,7 @@ def main():
                                             goal_traversal_node=selected_goal_nodes[i],
                                             robot_profile=robot_profiles[i],
                                             current_time=0.0,
+                                            wait_time_at_goal=10.0,
                                             horizon=10000.0)
         if path:
             planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
@@ -519,8 +537,24 @@ def main():
                 print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
             planner.reserve_path_for_agent(path=path,
                                            robot_profile=robot_profiles[i], 
-                                           horizon=10000.0)
-            paths.append(path)
+                                           wait_time_at_goal=10.0)
+            return_path = planner.obtain_path_for_agent(start_traversal_node=selected_goal_nodes[i],
+                                            goal_traversal_node=selected_start_nodes[i],
+                                            robot_profile=robot_profiles[i],
+                                            current_time=path[-1][1].end,
+                                            wait_time_at_goal=100.0,
+                                            horizon=10000.0)
+            if return_path:
+                print(f"Return Path for Robot {i}:")
+                for traversal_node, time_interval in return_path:
+                    print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
+                planner.reserve_path_for_agent(path=return_path,
+                                               robot_profile=robot_profiles[i],
+                                               wait_time_at_goal=100.0)
+            else:
+                print(f"No return path found for Robot {i} from {selected_goal_nodes[i].label} to {selected_start_nodes[i].label}")
+            final_path = planner.combine_paths([path, return_path]) if return_path else path
+            paths.append(final_path)
         else:
             print(f"No path found for Robot {i} from {selected_start_nodes[i].label} to {selected_goal_nodes[i].label}")
     
