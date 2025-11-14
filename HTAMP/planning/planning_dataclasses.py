@@ -137,7 +137,10 @@ class TaskRequest:
                  desired_time_for_service: float = 0.0,
                  planned_time_for_service: float = 0.0,
                  started: bool = False,
-                 completed: bool = False
+                 completed_goals: int = 0,
+                 completed: bool = False,
+                 completion_time: float = 0.0,
+                 planned_goal_indices: list[int] = None
                  ):
         self.request_id = request_id
         self.request_type = request_type
@@ -148,7 +151,22 @@ class TaskRequest:
         self.desired_time_for_service = desired_time_for_service
         self.planned_time_for_service = planned_time_for_service
         self.started = started
+        self.planned_goal_indices = planned_goal_indices
+        self.completed_goals = completed_goals
         self.completed = completed
+        self.completion_time = completion_time
+        self.total_cost = 0.0
+    
+    def mark_completed(self, completion_time: float) -> None:
+        self.completed = True
+        self.completion_time = completion_time
+        self.total_cost = max(self.completion_time - self.desired_time_for_service, 0.0)
+    
+    def mark_started(self) -> None:
+        self.started = True
+
+    def schedule_task(self, planned_time: float) -> None:
+        self.planned_time_for_service = planned_time
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"
