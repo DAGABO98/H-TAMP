@@ -213,6 +213,7 @@ class MotionPlanningPlotter:
             robot_position = robot_positions[robot_id]
             current_node_index = robots_current_node_index[robot_id]
             planned_goal_indices_robot = planned_goal_indices.get(robot_id, [])
+            # TODO: We can change this to plot the entire route for the task instead of just up to the current goal
             completed_goals_robot = completed_goals.get(robot_id, 0)
             current_goal_index = (planned_goal_indices_robot[completed_goals_robot] 
                                   if completed_goals_robot < len(planned_goal_indices_robot) 

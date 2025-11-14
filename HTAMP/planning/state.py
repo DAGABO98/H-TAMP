@@ -409,14 +409,14 @@ def main():
         robots_current_node_index_seq.append(copy.deepcopy(state.robots_current_node_index))
         point_indices_on_edge_seq.append(copy.deepcopy(state.point_indices_on_edge))
         robot_paths_seq.append(copy.deepcopy(state.robot_paths))
-        planned_goal_indices: dict[int, list[int]] = {}
-        completed_goals: dict[int, int] = {}
+        planned_goal_indices_dict: dict[int, list[int]] = {}
+        completed_goals_dict: dict[int, int] = {}
         for robot_id, requests in state.assigned_requests.items():
             if requests:
-                planned_goal_indices[robot_id] = state.assigned_requests[robot_id][0].planned_goal_indices
-                completed_goals[robot_id] = state.assigned_requests[robot_id][0].completed_goals
-        planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices))
-        completed_goals_seq.append(copy.deepcopy(completed_goals))
+                planned_goal_indices_dict[robot_id] = state.assigned_requests[robot_id][0].planned_goal_indices
+                completed_goals_dict[robot_id] = state.assigned_requests[robot_id][0].completed_goals
+        planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
+        completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
     
     print(state.completed_requests)
     
