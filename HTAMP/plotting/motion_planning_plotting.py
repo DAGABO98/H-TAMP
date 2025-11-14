@@ -194,6 +194,8 @@ class MotionPlanningPlotter:
                    robots_current_node_index: dict[int, int],
                    point_indices_on_edge: dict[int, int],
                    robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]], 
+                   planned_goal_indices: dict[int, list[int]],
+                   completed_goals: dict[int, int],
                    traversal_graph: TraversalGraph,
                    robot_profiles: List[RobotProfile]) -> None:
 
@@ -210,8 +212,13 @@ class MotionPlanningPlotter:
             path = robot_paths[robot_id]
             robot_position = robot_positions[robot_id]
             current_node_index = robots_current_node_index[robot_id]
+            planned_goal_indices_robot = planned_goal_indices.get(robot_id, [])
+            completed_goals_robot = completed_goals.get(robot_id, 0)
+            current_goal_index = (planned_goal_indices_robot[completed_goals_robot] 
+                                  if completed_goals_robot < len(planned_goal_indices_robot) 
+                                  else len(path) - 1)
             point_index_on_edge = point_indices_on_edge[robot_id]
-            truncated_path = path[current_node_index:]
+            truncated_path = path[current_node_index:current_goal_index + 1]
 
             if len(truncated_path) < 2:
                 circ = Circle((robot_position.x, robot_position.y),
@@ -249,6 +256,8 @@ class MotionPlanningPlotter:
                                  robots_current_node_index_seq: List[dict[int, int]],
                                  point_indices_on_edge_seq: List[dict[int, int]],
                                  robot_paths_seq: List[dict[int, list[tuple[TraversalNode, TimeInterval]]]],
+                                 planned_goal_indices_seq: List[dict[int, list[int]]],
+                                 completed_goals_seq: List[dict[int, int]],
                                  traversal_graph: TraversalGraph,
                                  robot_profiles: List[RobotProfile],
                                  fps_sim: int,
@@ -271,6 +280,8 @@ class MotionPlanningPlotter:
                                                   robots_current_node_index=robots_current_node_index_seq[step],
                                                   point_indices_on_edge=point_indices_on_edge_seq[step], 
                                                   robot_paths=robot_paths_seq[step],
+                                                  planned_goal_indices=planned_goal_indices_seq[step],
+                                                  completed_goals=completed_goals_seq[step],
                                                   traversal_graph=traversal_graph, 
                                                   robot_profiles=robot_profiles)
                 writer.grab_frame()

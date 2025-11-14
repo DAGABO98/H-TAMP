@@ -165,8 +165,9 @@ class TaskRequest:
     def mark_started(self) -> None:
         self.started = True
 
-    def schedule_task(self, planned_time: float) -> None:
+    def schedule_task(self, planned_time: float, planned_goal_indices: list[int]) -> None:
         self.planned_time_for_service = planned_time
+        self.planned_goal_indices = planned_goal_indices
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"

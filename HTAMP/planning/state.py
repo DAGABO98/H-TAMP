@@ -338,6 +338,7 @@ def main():
         current_request = requests[i]
         start_node = selected_start_nodes[i]
         sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
+        planned_goal_indices: list[int] = []
         for j, goal_node_label in enumerate(current_request.goal_nodes):
             goal_node = tg_generator.traversal_graph.nodes_dict[goal_node_label]
             sub_path = planner.obtain_path_for_agent(start_traversal_node=start_node,
@@ -350,6 +351,11 @@ def main():
                 sub_paths = []
                 break
             sub_paths.append(sub_path)
+            if planned_goal_indices:
+                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path))
+            else:
+                planned_goal_indices.append(len(sub_path) - 1)
+            start_node = goal_node
         
         if sub_paths:
             return_path = planner.obtain_path_for_agent(start_traversal_node=sub_paths[-1][-1][0],
@@ -360,6 +366,9 @@ def main():
                                                        horizon=simulator_config.horizon)
             if return_path:
                 sub_paths.append(return_path)
+                planned_goal_indices.append(planned_goal_indices[-1] + len(return_path))
+                current_request.schedule_task(planned_time=sub_paths[-2][-1][1].end,
+                                             planned_goal_indices=planned_goal_indices)
                 planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
                 final_path = planner.combine_paths(sub_paths)
                 planner.reserve_path_for_agent(path=final_path, 
@@ -390,6 +399,8 @@ def main():
     robots_current_node_index_seq: list[dict[int, int]] =[]
     point_indices_on_edge_seq: list[dict[int, int]] =[]
     robot_paths_seq: list[dict[int, list[tuple[TraversalNode, TimeInterval]]]] = []
+    planned_goal_indices_seq: list[dict[int, list[int]]] = []
+    completed_goals_seq: list[dict[int, int]] = []
     
     for i in range(700):
         print(f"Step {i}:")
@@ -398,6 +409,14 @@ def main():
         robots_current_node_index_seq.append(copy.deepcopy(state.robots_current_node_index))
         point_indices_on_edge_seq.append(copy.deepcopy(state.point_indices_on_edge))
         robot_paths_seq.append(copy.deepcopy(state.robot_paths))
+        planned_goal_indices: dict[int, list[int]] = {}
+        completed_goals: dict[int, int] = {}
+        for robot_id, requests in state.assigned_requests.items():
+            if requests:
+                planned_goal_indices[robot_id] = state.assigned_requests[robot_id][0].planned_goal_indices
+                completed_goals[robot_id] = state.assigned_requests[robot_id][0].completed_goals
+        planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices))
+        completed_goals_seq.append(copy.deepcopy(completed_goals))
     
     print(state.completed_requests)
     
@@ -409,6 +428,8 @@ def main():
                                             robots_current_node_index_seq=robots_current_node_index_seq,
                                             point_indices_on_edge_seq=point_indices_on_edge_seq,
                                             robot_paths_seq=robot_paths_seq,
+                                            planned_goal_indices_seq=planned_goal_indices_seq,
+                                            completed_goals_seq=completed_goals_seq,
                                             traversal_graph=tg_generator.traversal_graph,
                                             robot_profiles=robot_profiles,
                                             fps_sim=args.fps,
