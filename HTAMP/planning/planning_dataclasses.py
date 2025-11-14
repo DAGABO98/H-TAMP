@@ -166,6 +166,7 @@ class TaskRequest:
         self.started = True
 
     def schedule_task(self, planned_time: float, planned_goal_indices: list[int]) -> None:
+        self.completed_goals = 0
         self.planned_time_for_service = planned_time
         self.planned_goal_indices = planned_goal_indices
 

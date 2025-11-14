@@ -276,7 +276,7 @@ def main():
     # randomly select start and goal nodes for each robot
     random.seed(11)
     selected_start_nodes = random.sample(potential_start_nodes, args.num_robots)
-    selected_goal_nodes = random.sample(potential_target_nodes, args.num_robots)
+    selected_goal_nodes = random.sample(potential_target_nodes, 2*args.num_robots)
 
     selected_start_nodes.reverse()
     selected_goal_nodes.reverse()  # to avoid selecting the same node as start and goal
@@ -322,8 +322,8 @@ def main():
                                                horizon=simulator_config.horizon)
         current_request = TaskRequest(request_id=i, 
                                       request_type="move", 
-                                      goal_nodes=[selected_goal_nodes[i].label], 
-                                      wait_times_at_goals=[10.0],
+                                      goal_nodes=[selected_goal_nodes[i].label, selected_goal_nodes[i + args.num_robots].label], 
+                                      wait_times_at_goals=[10.0, 10.0],
                                       start_time=0.0,
                                       end_time=simulator_config.horizon,
                                       desired_time_for_service=0.0,
@@ -341,10 +341,11 @@ def main():
         planned_goal_indices: list[int] = []
         for j, goal_node_label in enumerate(current_request.goal_nodes):
             goal_node = tg_generator.traversal_graph.nodes_dict[goal_node_label]
+            current_time = 0.0 if not sub_paths else sub_paths[-1][-1][1].end
             sub_path = planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                     goal_traversal_node=goal_node,
                                                     robot_profile=robot_profiles[i],
-                                                    current_time=0.0,
+                                                    current_time=current_time,
                                                     wait_time_at_goal=current_request.wait_times_at_goals[j],
                                                     horizon=simulator_config.horizon)
             if not sub_path:
@@ -352,7 +353,7 @@ def main():
                 break
             sub_paths.append(sub_path)
             if planned_goal_indices:
-                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path))
+                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
             else:
                 planned_goal_indices.append(len(sub_path) - 1)
             start_node = goal_node
@@ -366,7 +367,6 @@ def main():
                                                        horizon=simulator_config.horizon)
             if return_path:
                 sub_paths.append(return_path)
-                planned_goal_indices.append(planned_goal_indices[-1] + len(return_path))
                 current_request.schedule_task(planned_time=sub_paths[-2][-1][1].end,
                                              planned_goal_indices=planned_goal_indices)
                 planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
@@ -379,6 +379,13 @@ def main():
                                               request=current_request, 
                                               path=final_path, 
                                               traversal_graph=tg_generator.traversal_graph)
+                
+                for k, planned_goal_index in enumerate(planned_goal_indices):
+                    node_at_goal, time_interval_at_goal = final_path[planned_goal_index]
+                    request_goal_node_label = current_request.goal_nodes[k]
+                    assert node_at_goal.label == request_goal_node_label, \
+                        f"Mismatch in planned goal node: expected {request_goal_node_label}, got {node_at_goal.label}"
+                    
                 print(f"Planned Path for Robot {i}:")
                 for traversal_node, time_interval in final_path:
                     print(f"Node: ({traversal_node.label}), Time: [{time_interval.start:.2f}, {time_interval.end:.2f}]")
@@ -386,6 +393,8 @@ def main():
                 print(f"No return path found for Robot {i}")
         else:
             print(f"No path found for Robot {i}")
+
+    pEnd = datetime.now()
     
     MotionPlanningPlotter.plot_paths(occupancy_map=tg_generator.occupancy_map,
                                 origin_x=tg_generator.origin_x,
@@ -402,7 +411,7 @@ def main():
     planned_goal_indices_seq: list[dict[int, list[int]]] = []
     completed_goals_seq: list[dict[int, int]] = []
     
-    for i in range(700):
+    for i in range(1000):
         print(f"Step {i}:")
         state.step(traversal_graph=tg_generator.traversal_graph)
         robot_positions_seq.append(copy.deepcopy(state.robots_positions))
@@ -433,9 +442,7 @@ def main():
                                             traversal_graph=tg_generator.traversal_graph,
                                             robot_profiles=robot_profiles,
                                             fps_sim=args.fps,
-                                            num_sim_frames=700)
-
-    pEnd = datetime.now()
+                                            num_sim_frames=1000)
     print(f"Total planning time: {pEnd - pStart}")
 
 
