@@ -1,18 +1,18 @@
 <?xml version="1.0" ?>
 <sdf version="1.6">
-  <model name="FA3_floor">
+  <model name="hospital_floor">
     <link name="link">
       <visual name="visual">
 	    <geometry>
           <mesh>
-            <uri>model://FA3_floor/meshes/FA3_floor_vis.glb</uri>
+            <uri>model://hospital_floor/meshes/hospital_floor_vis.glb</uri>
           </mesh>
         </geometry>
       </visual>
       <collision name="collision">
         <geometry>
           <mesh>
-            <uri>model://FA3_floor/meshes/FA3_floor_col.glb</uri>
+            <uri>model://hospital_floor/meshes/hospital_floor_col.glb</uri>
           </mesh>
         </geometry>
         <surface>

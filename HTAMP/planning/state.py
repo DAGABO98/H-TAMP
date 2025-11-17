@@ -237,8 +237,8 @@ class PlanningState:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_path", type=str, default="maps/FA3/FA3_lanes.yaml", help="Path to the configuration file")
-    parser.add_argument("--occupancy_map_path", type=str, default="maps/FA3/occupancy_map.npy", help="Path to the input occupancy map")
+    parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")
+    parser.add_argument("--occupancy_map_path", type=str, default="maps/hospital_floor/occupancy_map.npy", help="Path to the input occupancy map")
     parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
     parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
     parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")

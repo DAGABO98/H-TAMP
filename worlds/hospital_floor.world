@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <sdf version="1.6">
-  <world name="FA3">
+  <world name="hospital_floor">
     <gravity>0 0 -9.8</gravity>
     <physics default="0" name="default_physics" type="ode">
       <max_step_size>0.001</max_step_size>
@@ -22,16 +22,16 @@
       <shadows>false</shadows>
       <grid>false</grid>
     </scene>
-    <model name="FA3_floor">
+    <model name="hospital_floor">
       <include>
-        <uri>model://FA3_floor</uri>
+        <uri>model://hospital_floor</uri>
         <static>true</static>
         <pose>0 0 -0.001 0 -0 0</pose>
       </include>
     </model>
-    <model name="FA3_walls">
+    <model name="hospital_walls">
       <include>
-        <uri>model://FA3_walls</uri>
+        <uri>model://hospital_walls</uri>
         <static>true</static>
         <pose>0 0 0 0 -0 0</pose>
       </include>
