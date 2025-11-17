@@ -164,51 +164,51 @@ doorways:
     corridor_id: H2
     start_point: [1361, 814]
     end_point: [1388, 814]
-  - id: D29
+  - id: D28
     corridor_id: V2
     start_point: [1264, 918]
     end_point: [1264, 946]
-  - id: D30
+  - id: D29
     corridor_id: V2
     start_point: [1264, 818]
     end_point: [1264, 862]
-  - id: D31
+  - id: D30
     corridor_id: V1
     start_point: [890, 810]
     end_point: [890, 866]
-  - id: D32
+  - id: D31
     corridor_id: V1
     start_point: [884, 659]
     end_point: [884, 697]
-  - id: D33
+  - id: D32
     corridor_id: V1
     start_point: [886, 556]
     end_point: [886, 591]
-  - id: D34
+  - id: D33
     corridor_id: V1
     start_point: [886, 372]
     end_point: [886, 410]
-  - id: D35
+  - id: D34
     corridor_id: V1
     start_point: [886, 253]
     end_point: [886, 288]
-  - id: D36
+  - id: D35
     corridor_id: V1
     start_point: [892, 165]
     end_point: [892, 195]
-  - id: D37
+  - id: D36
     corridor_id: V1
     start_point: [980, 169]
     end_point: [980, 216]
-  - id: D38
+  - id: D37
     corridor_id: V1
     start_point: [974, 282]
     end_point: [974, 311]
-  - id: D39
+  - id: D38
     corridor_id: V1
     start_point: [980, 454]
     end_point: [980, 493]
-  - id: D40
+  - id: D39
     corridor_id: V1
     start_point: [1000, 575]
     end_point: [1000, 604]
