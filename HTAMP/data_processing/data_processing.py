@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+import re
 import traceback
 
 import numpy as np
@@ -23,6 +24,13 @@ class DataProcessor:
 
         return data_frames
     
+    def _compose_location_string(self, department, room) -> str:
+        department = str(department).strip()
+        department = re.sub(r'\s+', '-', department)
+        room = str(room).strip()
+        room = re.sub(r'\s+', '-', room)
+        return f"{department}_{room}"
+    
     def _extract_patient_room_stays(self) -> pd.DataFrame:
         """Extract patient room stay data."""
         visits_data = self.hospital_data['visits_data']
@@ -32,20 +40,32 @@ class DataProcessor:
         for c in [col for col in visits_time_columns if col in visits_data.columns]:
             visits_data[c] = pd.to_datetime(visits_data[c], errors='coerce')
 
+        visits_data["IN_LOCATION"] = visits_data.apply(
+            lambda row: self._compose_location_string(department=row[self.hospital_data_fields.visits_dept_in_column],
+                                                     room=row[self.hospital_data_fields.visits_location_in_column]),
+            axis=1
+        )
+
+        visits_data["OUT_LOCATION"] = visits_data.apply(
+            lambda row: self._compose_location_string(department=row[self.hospital_data_fields.visits_dept_out_column],
+                                                     room=row[self.hospital_data_fields.visits_location_out_column]),
+            axis=1
+        )
+
         # Build event stream (IN + OUT)
         in_events = (
             visits_data[self.hospital_data_fields.visits_time_in_columns + \
                         [self.hospital_data_fields.visits_patient_id_column, 
-                         self.hospital_data_fields.visits_location_in_column]]
-            .rename(columns={self.hospital_data_fields.visits_location_in_column:"room", "IN_TIME":"ts"})
+                         "IN_LOCATION"]]
+            .rename(columns={"IN_LOCATION":"room", "IN_TIME":"ts"})
             .assign(etype="IN")
         )
 
         out_events = (
             visits_data[self.hospital_data_fields.visits_time_out_columns + \
                         [self.hospital_data_fields.visits_patient_id_column, 
-                         self.hospital_data_fields.visits_location_out_column]]
-            .rename(columns={self.hospital_data_fields.visits_location_out_column:"room", "OUT_TIME":"ts"})
+                         "OUT_LOCATION"]]
+            .rename(columns={"OUT_LOCATION":"room", "OUT_TIME":"ts"})
             .assign(etype="OUT")
         )
 
@@ -108,22 +128,41 @@ class DataProcessor:
 def main():
     parser = argparse.ArgumentParser(description="Process hospital data to extract patient room stays.")
     parser.add_argument("--visits_data_file", type=str, default="data/Visit_Data.csv", help="Path to the visits data CSV file.")
+    parser.add_argument("--medications_orders_file", type=str, default="data/Medications_Data.csv", help="Path to the medications orders CSV file.")
+    parser.add_argument("--blood_pressure_orders_file", type=str, default="data/Blood_Pressure_Data.csv", help="Path to the blood pressure orders CSV file.")
+    parser.add_argument("--heart_rate_orders_file", type=str, default="data/Heart_Rate_Data.csv", help="Path to the heart rate orders CSV file.")
+    parser.add_argument("--respiratory_rate_orders_file", type=str, default="data/Respiration_Data.csv", help="Path to the respiratory rate orders CSV file.")
+    parser.add_argument("--temperature_orders_file", type=str, default="data/Temperature_Data.csv", help="Path to the temperature orders CSV file.")
+    parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/SP02_Data.csv", help="Path to the oxygen saturation orders CSV file.")
     args = parser.parse_args()
 
     hospital_data_files = HospitalDataFiles(
+        medications_orders=args.medications_orders_file,
+        blood_pressure_orders=args.blood_pressure_orders_file,
+        heart_rate_orders=args.heart_rate_orders_file,
+        respiratory_rate_orders=args.respiratory_rate_orders_file,
+        temperature_orders=args.temperature_orders_file,
+        oxygen_saturation_orders=args.oxygen_saturation_orders_file,
         visits_data=args.visits_data_file
     )
 
     hospital_data_fields = HospitalDataFields(
-        visits_patient_id_column="MRN",
-        visits_location_in_column="ROOM_IN",
-        visits_location_out_column="ROOM_OUT",
-        visits_time_in_columns=["IN_TIME", "HOSPITAL_ADMISSION"],
-        visits_time_out_columns=["OUT_TIME", "HOSPITAL_DISCHARGE"]
+        visits_patient_id_col="MRN",
+        visits_location_in_col="IN_BED",
+        visits_location_out_col="OUT_ROOM",
+        visits_dept_in_col="IN_DEP",
+        visits_dept_out_col="OUT_DEP",
+        visits_time_in_cols=["IN_TIME", "HOSPITAL_ADMISSION"],
+        visits_time_out_cols=["OUT_TIME", "HOSPITAL_DISCHARGE"]
     )
 
     processor = DataProcessor(hospital_data_files, hospital_data_fields)
     stays = processor._extract_patient_room_stays()
+
+    # get unique locations
+    unique_locations = stays['location'].unique()
+    sorted_locations = np.sort(unique_locations)
+    print(f"Unique Locations: {sorted_locations}")
 
 
 if __name__ == "__main__":

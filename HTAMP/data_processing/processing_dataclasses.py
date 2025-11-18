@@ -18,6 +18,8 @@ class HospitalDataFields:
     def __init__(self, 
                  visits_time_in_cols: Optional[list[str]] = None,
                  visits_time_out_cols: Optional[list[str]] = None,
+                 visits_dept_in_col: Optional[str] = None,
+                 visits_dept_out_col: Optional[str] = None,
                  visits_location_in_col: Optional[str] = None,
                  visits_location_out_col: Optional[str] = None,
                  visits_patient_id_col: Optional[str] = None):
@@ -38,6 +40,14 @@ class HospitalDataFields:
         if visits_location_out_col is None:
             visits_location_out_col = "OUT_ROOM"
         self.visits_location_out_column = visits_location_out_col
+
+        if visits_dept_in_col is None:
+            visits_dept_in_col = "IN_DEP"
+        self.visits_dept_in_column = visits_dept_in_col
+
+        if visits_dept_out_col is None:
+            visits_dept_out_col = "OUT_DEP"
+        self.visits_dept_out_column = visits_dept_out_col
 
         if visits_patient_id_col is None:
             visits_patient_id_col = "MRN"
