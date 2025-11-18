@@ -5,14 +5,17 @@ import traceback
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from HTAMP.data_processing.processing_dataclasses import HospitalDataFields, HospitalDataFiles
 
 class DataProcessor:
-    def __init__(self, hospital_data_files: HospitalDataFiles, hospital_data_fields: HospitalDataFields):
+    def __init__(self, hospital_data_files: HospitalDataFiles, hospital_config_file: str, hospital_data_fields: HospitalDataFields):
         self.hospital_data_files = hospital_data_files
+        self.hospital_config_file = hospital_config_file
         self.hospital_data_fields = hospital_data_fields
         self.hospital_data = self._load_hospital_data()
+        self.space_lookup = self._extract_space_lookup(hospital_config_file)
 
     def _load_hospital_data(self) -> dict[str, pd.DataFrame]:
         """Load and concatenate hospital data from multiple CSV files."""
@@ -24,12 +27,25 @@ class DataProcessor:
 
         return data_frames
     
+    def _extract_space_lookup(self, file_path: str):
+        space_config = yaml.safe_load(open(file_path, 'r'))
+        space_lookup = {}
+        for item in space_config.get("rooms", []):
+            rid = item["id"]
+            for loc in item["locations"]:
+                space_lookup[loc] = rid
+                    
+        return space_lookup
+    
     def _compose_location_string(self, department, room) -> str:
         department = str(department).strip()
         department = re.sub(r'\s+', '-', department)
         room = str(room).strip()
         room = re.sub(r'\s+', '-', room)
         return f"{department}_{room}"
+    
+    def _map_location_to_space(self, location: str) -> str:
+        return self.space_lookup.get(location, "UNKNOWN_SPACE")
     
     def _extract_patient_room_stays(self) -> pd.DataFrame:
         """Extract patient room stay data."""
@@ -121,6 +137,8 @@ class DataProcessor:
 
         result = pd.concat(stays, ignore_index=True).sort_values([self.hospital_data_fields.visits_patient_id_column, "start"])
 
+        result["space_id"] = result["location"].apply(self._map_location_to_space)
+
         print(result.head(20))
 
         return result
@@ -156,13 +174,10 @@ def main():
         visits_time_out_cols=["OUT_TIME", "HOSPITAL_DISCHARGE"]
     )
 
-    processor = DataProcessor(hospital_data_files, hospital_data_fields)
+    processor = DataProcessor(hospital_data_files=hospital_data_files, 
+                              hospital_config_file="data/Floor_Mappings.yaml", 
+                              hospital_data_fields=hospital_data_fields)
     stays = processor._extract_patient_room_stays()
-
-    # get unique locations
-    unique_locations = stays['location'].unique()
-    sorted_locations = np.sort(unique_locations)
-    print(f"Unique Locations: {sorted_locations}")
 
 
 if __name__ == "__main__":
