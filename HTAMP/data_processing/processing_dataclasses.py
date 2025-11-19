@@ -22,7 +22,8 @@ class HospitalDataFields:
                  visits_dept_out_col: Optional[str] = None,
                  visits_location_in_col: Optional[str] = None,
                  visits_location_out_col: Optional[str] = None,
-                 visits_patient_id_col: Optional[str] = None):
+                 visits_patient_id_col: Optional[str] = None,
+                 visits_encounter_id_col: Optional[str] = None):
         if visits_time_in_cols is None:
             visits_time_in_cols = ["IN_TIME",  
                                 "HOSPITAL_ADMISSION"]
@@ -52,3 +53,7 @@ class HospitalDataFields:
         if visits_patient_id_col is None:
             visits_patient_id_col = "MRN"
         self.visits_patient_id_column = visits_patient_id_col
+
+        if visits_encounter_id_col is None:
+            visits_encounter_id_col = "Patient Encounter CSN"
+        self.visits_encounter_id_column = visits_encounter_id_col
