@@ -16,6 +16,10 @@ class DataProcessor:
         self.hospital_data_fields = hospital_data_fields
         self.hospital_data = self._load_hospital_data()
         self.space_lookup = self._extract_space_lookup(hospital_config_file)
+        self.stays_df = self._extract_patient_room_stays()
+        self.medication_orders_df = self._annotate_medication_orders_with_room()
+        
+        self.medication_orders_df.to_csv("data/Annotated_Medications_Data.csv", index=False)
 
     def _load_hospital_data(self) -> dict[str, pd.DataFrame]:
         """Load and concatenate hospital data from multiple CSV files."""
@@ -23,6 +27,7 @@ class DataProcessor:
         for file_attr in vars(self.hospital_data_files):
             file_path = getattr(self.hospital_data_files, file_attr)
             df = pd.read_csv(file_path)
+            df = df.drop_duplicates().reset_index(drop=True)
             data_frames[file_attr] = df
 
         return data_frames
@@ -139,9 +144,93 @@ class DataProcessor:
 
         result["space_id"] = result["location"].apply(self._map_location_to_space)
 
-        print(result.head(20))
-
         return result
+    
+    def _annotate_events_with_room(self, 
+                                  events_df: pd.DataFrame, 
+                                  ts_col: str, 
+                                  rooms_df: pd.DataFrame,
+                                  new_room_label_col: str,
+                                  new_space_id_col: str,
+                                  new_start_col: str,
+                                  new_end_col: str,
+                                  patient_id_col: str) -> pd.DataFrame:
+        r = rooms_df.copy()
+        r[patient_id_col] = r[patient_id_col].astype(str)
+        r["start"] = pd.to_datetime(r["start"], errors="coerce", utc=True).dt.tz_convert(None)
+        r["end"]   = pd.to_datetime(r["end"],   errors="coerce", utc=True).dt.tz_convert(None)
+        r["end"]   = r["end"].fillna(pd.Timestamp.max)
+        r = r.sort_values(["start"], kind="mergesort").reset_index(drop=True)
+
+        e = events_df.copy()
+        e[patient_id_col] = e[patient_id_col].astype(str)
+        e[ts_col] = pd.to_datetime(e[ts_col], errors="coerce", utc=True).dt.tz_convert(None)
+        e = e.dropna(subset=[ts_col]).sort_values([ts_col], kind="mergesort").reset_index(drop=True)
+
+        m = pd.merge_asof(
+            e,
+            r[[patient_id_col,"location","space_id","start","end"]],
+            left_on=ts_col, right_on="start",
+            by=patient_id_col,
+            direction="backward",
+            allow_exact_matches=True,
+        )
+
+        mask = m[ts_col].lt(m["end"])   # [start, end)
+        m.loc[~mask, ["location","space_id","start","end"]] = [pd.NA, pd.NA, pd.NaT, pd.NaT]
+        return m.rename(columns={"location":new_room_label_col,"space_id":new_space_id_col,
+                                "start":new_start_col,"end":new_end_col})
+    
+    def _annotate_medication_orders_with_room(self) -> pd.DataFrame:
+        """Annotate medication orders with room stay information."""
+
+        med_ordered_df = self._annotate_events_with_room(
+            events_df=self.hospital_data['medications_orders'],
+            ts_col="Medication Order DTTM",
+            rooms_df=self.stays_df,
+            new_room_label_col="ordered_room",
+            new_space_id_col="ordered_space_id",
+            new_start_col="ordered_start",
+            new_end_col="ordered_end",
+            patient_id_col=self.hospital_data_fields.visits_patient_id_column
+        )
+
+        scheduled_df = self._annotate_events_with_room(
+            events_df=med_ordered_df,
+            ts_col="Medication Scheduled DTTM",
+            rooms_df=self.stays_df,
+            new_room_label_col="scheduled_room",
+            new_space_id_col="scheduled_space_id",
+            new_start_col="scheduled_start",
+            new_end_col="scheduled_end",
+            patient_id_col=self.hospital_data_fields.visits_patient_id_column
+        )
+
+        administered_df = self._annotate_events_with_room(
+            events_df=scheduled_df,
+            ts_col="Administered DTTM",
+            rooms_df=self.stays_df,
+            new_room_label_col="administered_room",
+            new_space_id_col="administered_space_id",
+            new_start_col="administered_start",
+            new_end_col="administered_end",
+            patient_id_col=self.hospital_data_fields.visits_patient_id_column
+        )
+
+        administered_df.drop(columns=["ordered_start",
+                                  "ordered_end",
+                                  "scheduled_start",
+                                  "scheduled_end",
+                                  "administered_start", 
+                                  "administered_end", 
+                                  "Patient ID", 
+                                  "Patient Encounter CSN", 
+                                  "Race",
+                                  "Age at Admission",
+                                  "Order Med ID"], inplace=True)
+        
+        return administered_df
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process hospital data to extract patient room stays.")
@@ -177,7 +266,8 @@ def main():
     processor = DataProcessor(hospital_data_files=hospital_data_files, 
                               hospital_config_file="data/Floor_Mappings.yaml", 
                               hospital_data_fields=hospital_data_fields)
-    stays = processor._extract_patient_room_stays()
+
+    print(processor.hospital_data['temperature_orders'].head(10))
 
 
 if __name__ == "__main__":
