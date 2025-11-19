@@ -178,6 +178,7 @@ class DataProcessor:
 
         mask = m[ts_col].lt(m["end"])   # [start, end)
         m.loc[~mask, ["location","space_id","start","end"]] = [pd.NA, pd.NA, pd.NaT, pd.NaT]
+        m.dropna(subset=["location"], inplace=True)
         return m.rename(columns={"location":new_room_label_col,"space_id":new_space_id_col,
                                 "start":new_start_col,"end":new_end_col})
     
