@@ -61,6 +61,7 @@ class HospitalDataFields:
 @dataclass
 class AnnotatedDataFiles:
     annotated_visits: str
+    annotated_admissions_discharges: str
     annotated_medications: str
     annotated_blood_pressure: str
     annotated_heart_rate: str
