@@ -41,3 +41,25 @@ class DataStatisticsPlottingHelper:
         plt.tight_layout()
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()
+    
+    @staticmethod
+    def plot_weekly_u_chart(weekly: pd.DataFrame, out_png: Path) -> None:
+        """
+        Plot u vs time with center line and control limits.
+        """
+        plt.figure(figsize=(10, 5))
+        # x-axis as week_start
+        x = weekly["week_start"]
+        plt.plot(x, weekly["u"], marker="o")
+        plt.plot(x, weekly["ucl"], linestyle="--")
+        plt.plot(x, weekly["lcl"], linestyle="--")
+        # center line (horizontal) using full span
+        if not weekly.empty:
+            u_bar = weekly.attrs.get("u_bar", weekly["u"].mean())
+            plt.axhline(u_bar, linestyle=":")
+        plt.xlabel("ISO Week (by week start)")
+        plt.ylabel("Average requests per floor-day (u)")
+        plt.title("Weekly Shewhart u-chart: requests per floor-day")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160, bbox_inches="tight")
+        plt.close()

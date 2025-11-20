@@ -6,6 +6,7 @@ import traceback
 from pathlib import Path
 from typing import Optional, Sequence, List, Tuple
 
+import numpy as np
 import pandas as pd
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
@@ -88,6 +89,20 @@ class DataStatisticsHelpers:
             dff = dff[mask]
 
         return dff
+
+    @staticmethod
+    def compute_per_day_counts(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        One row per (floor, day) with n_requests.
+        """
+        if df.empty:
+            return pd.DataFrame(columns=["__floor__", "__day__", "n_requests"])
+        per_day = (
+            df.groupby(["__floor__", "__day__"], as_index=False)
+            .size()
+            .rename(columns={"size": "n_requests"})
+        )
+        return per_day
     
     @staticmethod
     def compute_distribution(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -118,6 +133,53 @@ class DataStatisticsHelpers:
         total = dist["absolute_count"].sum()
         dist["relative_frequency"] = 0.0 if total == 0 else dist["absolute_count"] / total
         return dist, per_day
+    
+    @staticmethod
+    def weekly_u_chart(per_day: pd.DataFrame) -> pd.DataFrame:
+        """
+        Build weekly metrics for u-chart.
+        Returns a DataFrame with columns:
+        - iso_year, iso_week, n_units, total_requests, u, ucl, lcl, flagged
+        - week_start (Monday) for plotting/sorting
+        """
+        if per_day.empty:
+            return pd.DataFrame(columns=[
+                "iso_year","iso_week","week_start","n_units","total_requests","u","ucl","lcl","flagged"
+            ])
+
+        # Add ISO year/week
+        tmp = per_day.copy()
+        tmp["iso_year"] = tmp["__day__"].apply(lambda d: d.isocalendar().year)
+        tmp["iso_week"] = tmp["__day__"].apply(lambda d: d.isocalendar().week)
+
+        # Compute weekly totals
+        g = tmp.groupby(["iso_year","iso_week"], as_index=False)
+        weekly = g.agg(
+            n_units=("n_requests","size"),               # number of floor-days
+            total_requests=("n_requests","sum"),         # total requests across floor-days
+        )
+        # u_t per week
+        weekly["u"] = weekly["total_requests"] / weekly["n_units"]
+
+        # Weighted center line u_bar
+        total_requests_all = weekly["total_requests"].sum()
+        total_units_all = weekly["n_units"].sum()
+        u_bar = 0.0 if total_units_all == 0 else total_requests_all / total_units_all
+
+        # Control limits depend on n_units_t
+        weekly["ucl"] = u_bar + 3.0 * np.sqrt(np.where(weekly["n_units"]>0, u_bar/weekly["n_units"], 0.0))
+        weekly["lcl"] = np.maximum(0.0, u_bar - 3.0 * np.sqrt(np.where(weekly["n_units"]>0, u_bar/weekly["n_units"], 0.0)))
+        weekly["flagged"] = weekly["u"] > weekly["ucl"]
+
+        # Add week_start (Monday) for plotting
+        tmp_dates = tmp.groupby(["iso_year","iso_week"])["__day__"].min().reset_index()
+        tmp_dates["__day__"] = pd.to_datetime(tmp_dates["__day__"])
+        tmp_dates["week_start"] = tmp_dates["__day__"] - pd.to_timedelta(tmp_dates["__day__"].dt.weekday, unit="D")
+        weekly = weekly.merge(tmp_dates[["iso_year","iso_week","week_start"]], on=["iso_year","iso_week"], how="left")
+
+        weekly = weekly.sort_values(["week_start","iso_year","iso_week"], ignore_index=True)
+        weekly.attrs["u_bar"] = u_bar
+        return weekly
 
 
 class DataStatistics:
@@ -133,6 +195,12 @@ class DataStatistics:
     def _make_dirs(self, outdir: str, dist_data_dir: str) -> None:
         self.outdir = Path(outdir)
         self.outdir.mkdir(parents=True, exist_ok=True)
+
+        self.dist_outdir = self.outdir / "distributions"
+        self.dist_outdir.mkdir(parents=True, exist_ok=True)
+
+        self.u_chart_outdir = self.outdir / "u_charts"
+        self.u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
         self.dist_data_dir = Path(dist_data_dir)
         self.dist_data_dir.mkdir(parents=True, exist_ok=True)
@@ -218,7 +286,7 @@ class DataStatistics:
         per_day.to_csv(per_day_csv, index=False)
     
     def plot_distribution(self, dist: pd.DataFrame, out_png: str) -> None:
-        png = self.outdir / out_png
+        png = self.dist_outdir / out_png
         DataStatisticsPlottingHelper.plot_distribution(
             dist=dist,
             out_png=png,
@@ -332,6 +400,97 @@ class DataStatistics:
             label="discharges"
         )
     
+    def generate_and_plot_weekly_u_chart(self,
+                                         original_df: pd.DataFrame,
+                                         time_col: str,
+                                         room_col: str,
+                                         start_date: str,
+                                         end_date: str,
+                                         label: str) -> None:
+        df_prep = DataStatisticsHelpers.prepare_df(
+            original_df,
+            time_col=time_col,
+            room_col=room_col,
+        )
+
+        per_day = DataStatisticsHelpers.compute_per_day_counts(df=df_prep)
+
+        weekly = DataStatisticsHelpers.weekly_u_chart(per_day)
+
+        out_png = self.u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_weekly_u_chart(
+            weekly=weekly,
+            out_png=out_png
+        )
+    
+    def generate_and_plot_all_weekly_u_charts(self,
+                                            start_date: str,
+                                            end_date: str) -> None:
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions"
+        )
+        self.generate_and_plot_weekly_u_chart(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges"
+        )
+    
 def main():
     parser = argparse.ArgumentParser(description="Weekly histograms of scheduled requests per floor")
     parser.add_argument("--visits_data_file", type=str, default="data/processed/patient_room_stays.csv", help="Path to the visits data CSV file.")
@@ -343,7 +502,7 @@ def main():
     parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
     parser.add_argument("--week-start", default="MON", help="Week anchor day: MON (default), SUN, TUE, ...")
-    parser.add_argument("--outdir", default="results/distributions", help="Directory to write outputs (default: ./results/distributions)")
+    parser.add_argument("--outdir", default="results", help="Directory to write outputs (default: ./results)")
     parser.add_argument("--dist-data-dir", default="data/distributions", help="Directory to write distribution data outputs (default: ./data/distributions/)")
     args = parser.parse_args()
 
@@ -368,6 +527,11 @@ def main():
         start_date="2025-01-01",
         end_date="2025-06-30",
         exclude_iso_weeks=[],
+    )
+
+    data_stats.generate_and_plot_all_weekly_u_charts(
+        start_date="2025-01-01",
+        end_date="2025-06-30"
     )
 
     
