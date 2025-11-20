@@ -180,6 +180,42 @@ class DataStatisticsHelpers:
         weekly = weekly.sort_values(["week_start","iso_year","iso_week"], ignore_index=True)
         weekly.attrs["u_bar"] = u_bar
         return weekly
+    
+    @staticmethod
+    def compute_floor_week_totals(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Step 1: per (floor, day) counts -> n_requests
+        Step 2: per (floor, ISO week) totals -> total_requests
+        """
+        if df.empty:
+            return pd.DataFrame(columns=["__floor__", "iso_year", "iso_week", "week_start", "iso_label", "total_requests"])
+
+        # per (floor, day)
+        per_day = (
+            df.groupby(["__floor__", "__day__"], as_index=False)
+            .size()
+            .rename(columns={"size": "n_requests"})
+        )
+
+        # ISO year/week and week_start (Monday)
+        per_day["iso_year"] = per_day["__day__"].apply(lambda d: d.isocalendar().year)
+        per_day["iso_week"] = per_day["__day__"].apply(lambda d: d.isocalendar().week)
+        tmp_dates = per_day.assign(_d=pd.to_datetime(per_day["__day__"])).groupby(
+            ["iso_year","iso_week"]
+        )["_d"].min().reset_index()
+        tmp_dates["week_start"] = tmp_dates["_d"] - pd.to_timedelta(tmp_dates["_d"].dt.weekday, unit="D")
+        tmp_dates = tmp_dates.drop(columns=["_d"])
+
+        # weekly totals per floor
+        weekly = (
+            per_day.groupby(["__floor__", "iso_year", "iso_week"], as_index=False)["n_requests"]
+            .sum()
+            .rename(columns={"n_requests": "total_requests"})
+        )
+        weekly = weekly.merge(tmp_dates, on=["iso_year","iso_week"], how="left")
+        weekly["iso_label"] = weekly["iso_year"].astype(str) + "-W" + weekly["iso_week"].astype(int).astype(str).str.zfill(2)
+
+        return weekly
 
 
 class DataStatistics:
@@ -201,6 +237,9 @@ class DataStatistics:
 
         self.u_chart_outdir = self.outdir / "u_charts"
         self.u_chart_outdir.mkdir(parents=True, exist_ok=True)
+
+        self.heatmap_outdir = self.outdir / "heatmaps"
+        self.heatmap_outdir.mkdir(parents=True, exist_ok=True)
 
         self.dist_data_dir = Path(dist_data_dir)
         self.dist_data_dir.mkdir(parents=True, exist_ok=True)
@@ -413,7 +452,13 @@ class DataStatistics:
             room_col=room_col,
         )
 
-        per_day = DataStatisticsHelpers.compute_per_day_counts(df=df_prep)
+        df_filtered = DataStatisticsHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        per_day = DataStatisticsHelpers.compute_per_day_counts(df=df_filtered)
 
         weekly = DataStatisticsHelpers.weekly_u_chart(per_day)
 
@@ -491,6 +536,101 @@ class DataStatistics:
             label="discharges"
         )
     
+    def generate_and_plot_heatmap(self,
+                                        original_df: pd.DataFrame,
+                                        time_col: str,
+                                        room_col: str,
+                                        start_date: str,
+                                        end_date: str,
+                                        label: str) -> None:
+            df_prep = DataStatisticsHelpers.prepare_df(
+                original_df,
+                time_col=time_col,
+                room_col=room_col,
+            )
+    
+            df_filtered = DataStatisticsHelpers.apply_date_filters(
+                df_prep,
+                start_date=start_date,
+                end_date=end_date,
+            )
+    
+            weekly = DataStatisticsHelpers.compute_floor_week_totals(df_filtered)
+    
+            out_png = self.heatmap_outdir / f"{label}_floor_week_heatmap_{start_date}_{end_date}.png"
+            DataStatisticsPlottingHelper.plot_heatmap(
+                weekly=weekly,
+                out_png=out_png
+            )
+    
+    def generate_and_plot_all_heatmaps(self,
+                                     start_date: str,
+                                     end_date: str) -> None:
+        self.generate_and_plot_heatmap(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions"
+        )
+        self.generate_and_plot_heatmap(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges"
+        )
+    
 def main():
     parser = argparse.ArgumentParser(description="Weekly histograms of scheduled requests per floor")
     parser.add_argument("--visits_data_file", type=str, default="data/processed/patient_room_stays.csv", help="Path to the visits data CSV file.")
@@ -524,13 +664,18 @@ def main():
     )
 
     data_stats.generate_and_plot_all_distributions(
-        start_date="2025-01-01",
+        start_date="2024-06-01",
         end_date="2025-06-30",
         exclude_iso_weeks=[],
     )
 
     data_stats.generate_and_plot_all_weekly_u_charts(
-        start_date="2025-01-01",
+        start_date="2024-06-01",
+        end_date="2025-06-30"
+    )
+
+    data_stats.generate_and_plot_all_heatmaps(
+        start_date="2024-06-01",
         end_date="2025-06-30"
     )
 

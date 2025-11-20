@@ -1,6 +1,7 @@
 
 from pathlib import Path
 from matplotlib import pyplot as plt
+import numpy as np
 import pandas as pd
 
 
@@ -60,6 +61,49 @@ class DataStatisticsPlottingHelper:
         plt.xlabel("ISO Week (by week start)")
         plt.ylabel("Average requests per floor-day (u)")
         plt.title("Weekly Shewhart u-chart: requests per floor-day")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160, bbox_inches="tight")
+        plt.close()
+
+    @staticmethod
+    def plot_heatmap(weekly: pd.DataFrame, out_png: Path) -> None:
+        """
+        Pivot to floor × week matrix and plot heatmap with matplotlib.
+        """
+        if weekly.empty:
+            # still create an empty figure so a file exists
+            plt.figure(figsize=(10, 6))
+            plt.title("Floor × Week total requests (no data)")
+            plt.xlabel("ISO week")
+            plt.ylabel("Floor")
+            plt.tight_layout()
+            plt.savefig(out_png, dpi=160, bbox_inches="tight")
+            plt.close()
+            return
+
+        # order columns by week_start, de-duplicated
+        weeks = weekly[["iso_label","week_start"]].drop_duplicates().sort_values("week_start")
+        week_order = weeks["iso_label"].tolist()
+
+        # Build pivot table
+        pivot = weekly.pivot_table(
+            index="__floor__", columns="iso_label", values="total_requests", aggfunc="sum", fill_value=0
+        )
+        # Reindex columns to chronological order
+        pivot = pivot.reindex(columns=week_order)
+
+        # Plot
+        plt.figure(figsize=(max(10, len(pivot.columns)*0.6), max(6, len(pivot.index)*0.4)))
+        im = plt.imshow(pivot.values, aspect="auto")  # default colormap/styles only
+        plt.colorbar(im, fraction=0.046, pad=0.04)
+        plt.title("Floor × Week total requests")
+        plt.xlabel("ISO week")
+        plt.ylabel("Floor")
+
+        # Tick labels
+        plt.xticks(ticks=np.arange(pivot.shape[1]), labels=pivot.columns, rotation=90)
+        plt.yticks(ticks=np.arange(pivot.shape[0]), labels=pivot.index)
+
         plt.tight_layout()
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()
