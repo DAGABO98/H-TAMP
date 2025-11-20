@@ -4,7 +4,7 @@ import re
 import traceback
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence, List, Tuple
 
 import pandas as pd
 
@@ -26,45 +26,118 @@ class DataStatisticsHelpers:
         return None
     
     @staticmethod
-    def build_weekly_counts(df: pd.DataFrame, date_col: str, room_col: str, week_start: str) -> pd.DataFrame:
-        # Ensure datetime
-        df = df.copy()
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    def parse_iso_week_args(vals: Sequence[str]) -> List[Tuple[int, int]]:
+        """
+        Parse values like '2024W26', '2024-W26', '2024,26', or '2024-26' into (year, week).
+        """
+        out: List[Tuple[int, int]] = []
+        for v in vals:
+            v = v.strip()
+            if not v:
+                continue
+            cleaned = (v.replace("W", "-")
+                        .replace(",", "-")
+                        .replace("_", "-"))
+            parts = cleaned.split("-")
+            parts = [p for p in parts if p]
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                out.append((int(parts[0]), int(parts[1])))
+            else:
+                raise ValueError(f"Could not parse ISO week value: '{v}'. Try formats like 2024W26 or 2024-W26.")
+        return out
+    
+    @staticmethod
+    def prepare_df(df: pd.DataFrame, time_col: str, room_col: str) -> pd.DataFrame:
+        # Parse datetime columns if present
+        df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
 
+        if time_col not in df.columns:
+            raise KeyError(f"TIME_COL '{time_col}' not in CSV columns: {list(df.columns)}")
+        if room_col not in df.columns:
+            raise KeyError(f"ROOM_COL '{room_col}' not in CSV columns: {list(df.columns)}")
 
-        # Parse floor from the chosen room column
-        df["floor"] = df[room_col].apply(DataStatisticsHelpers.extract_floor)
+        dff = df.copy()
+        dff["__day__"] = dff[time_col].dt.date
+        dff["__floor__"] = dff[room_col].apply(lambda x: DataStatisticsHelpers.extract_floor(x))
+        dff = dff.dropna(subset=["__day__", "__floor__"])
 
+        return dff
+    
+    @staticmethod
+    def apply_date_filters(df: pd.DataFrame, 
+                           start_date: Optional[str] = None, 
+                           end_date: Optional[str] = None,
+                           exclude_iso_weeks: Optional[Sequence[Tuple[int, int]]] = None) -> pd.DataFrame:
+        dff = df.copy()
 
-        # Keep rows with valid date and floor
-        df = df.dropna(subset=[date_col, "floor"]) # floor may be float from NA; coerce to Int64
-        df["floor"] = df["floor"].astype("Int64")
+        # Inclusive date range
+        if start_date:
+            sd = pd.to_datetime(start_date).date()
+            dff = dff[dff["__day__"] >= sd]
+        if end_date:
+            ed = pd.to_datetime(end_date).date()
+            dff = dff[dff["__day__"] <= ed]
 
+        # Exclude ISO weeks
+        if exclude_iso_weeks:
+            iso_year = dff["__day__"].apply(lambda d: d.isocalendar().year)
+            iso_week = dff["__day__"].apply(lambda d: d.isocalendar().week)
+            mask = pd.Series(True, index=dff.index)
+            for (y, w) in exclude_iso_weeks:
+                mask &= ~((iso_year == y) & (iso_week == w))
+            dff = dff[mask]
 
-        # Derive week bucket (start date of the week)
-        week_alias = f"W-{week_start.upper()}" # e.g., W-MON
-        df["week_start"] = df[date_col].dt.to_period(week_alias).dt.start_time
+        return dff
+    
+    @staticmethod
+    def compute_distribution(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Returns (distribution, per_day) where:
+        - per_day: counts per (__floor__, __day__) with column 'n_requests'
+        - distribution: counts of 'n_requests' values and relative frequencies
+        """
+        if df.empty:
+            dist = pd.DataFrame(columns=["requests_per_day", "absolute_count", "relative_frequency"])
+            per_day = pd.DataFrame(columns=["__floor__", "__day__", "n_requests"])
+            return dist, per_day
 
-
-        # Aggregate
-        counts = (
-        df.groupby(["floor", "week_start"], dropna=False)
+        per_day = (
+            df.groupby(["__floor__", "__day__"], as_index=False)
             .size()
-            .reset_index(name="num_requests")
-            .sort_values(["floor", "week_start"])
+            .rename(columns={"size": "n_requests"})
         )
 
-        return counts
+        dist = (
+            per_day["n_requests"]
+            .value_counts()
+            .sort_index()
+            .rename_axis("requests_per_day")
+            .reset_index(name="absolute_count")
+        )
+
+        total = dist["absolute_count"].sum()
+        dist["relative_frequency"] = 0.0 if total == 0 else dist["absolute_count"] / total
+        return dist, per_day
 
 
 class DataStatistics:
-    def __init__(self, outdir: str, week_start: str, annotated_data_files: AnnotatedDataFiles):
+    def __init__(self, 
+                 outdir: str, 
+                 dist_data_dir: str,
+                 annotated_data_files: AnnotatedDataFiles):
+        
+        self._make_dirs(outdir, dist_data_dir)
+        self.annotated_data_files = annotated_data_files
+        self._load_data()
+    
+    def _make_dirs(self, outdir: str, dist_data_dir: str) -> None:
         self.outdir = Path(outdir)
         self.outdir.mkdir(parents=True, exist_ok=True)
-        
-        self.annotated_data_files = annotated_data_files
-        self.week_start = week_start
 
+        self.dist_data_dir = Path(dist_data_dir)
+        self.dist_data_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _load_data(self):
         self.bp_df = self._load_bp_data()
         self.medications_df = self._load_medications_data()
         self.hr_df = self._load_hr_data()
@@ -72,15 +145,6 @@ class DataStatistics:
         self.temp_df = self._load_temp_data()
         self.oximetry_df = self._load_oximetry_data()
         self.admissions_discharges_df = self._load_admissions_discharges_data()
-
-        self.weekly_bp_counts = self._generate_weekly_bp_counts()
-        self.weekly_medications_counts = self._generate_weekly_medications_counts()
-        self.weekly_hr_counts = self._generate_weekly_hr_counts()
-        self.weekly_rr_counts = self._generate_weekly_rr_counts()
-        self.weekly_temp_counts = self._generate_weekly_temp_counts()
-        self.weekly_oximetry_counts = self._generate_weekly_oximetry_counts()
-        self.weekly_admissions_counts = self._generate_weekly_admissions_counts()
-        self.weekly_discharges_counts = self._generate_weekly_discharges_counts()
     
     def _load_bp_data(self) -> pd.DataFrame:
         df = pd.read_csv(self.annotated_data_files.annotated_blood_pressure)
@@ -114,77 +178,159 @@ class DataStatistics:
         df = pd.read_csv(self.annotated_data_files.annotated_admissions_discharges)
         return df
     
-    def _generate_weekly_bp_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.bp_df,
-            date_col="Scheduled DTTM",
-            room_col="scheduled_room",
-            week_start=self.week_start,
+    def generate_count_distribution(self, 
+                                    original_df: pd.DataFrame, 
+                                    time_col: str, 
+                                    room_col: str,
+                                    start_date: str, 
+                                    end_date: str, 
+                                    exclude_iso_weeks: Sequence[int]) -> pd.DataFrame:
+        df_prep = DataStatisticsHelpers.prepare_df(
+            original_df,
+            time_col=time_col,
+            room_col=room_col,
         )
-        return counts
-    
-    def _generate_weekly_medications_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.medications_df,
-            date_col="Medication Scheduled DTTM",
-            room_col="scheduled_room",
-            week_start=self.week_start,
+
+        df_filtered = DataStatisticsHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
         )
-        return counts
+
+        dist, per_day = DataStatisticsHelpers.compute_distribution(df_filtered)
+
+        return dist, per_day
     
-    def _generate_weekly_hr_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.hr_df,
-            date_col="Scheduled DTTM",
-            room_col="scheduled_room",
-            week_start=self.week_start,
+    def save_distribution_files(self, 
+                                 dist: pd.DataFrame, 
+                                 per_day: pd.DataFrame, 
+                                 start_date: str, 
+                                 end_date: str,
+                                 label: str) -> None:
+        dist_dir = self.dist_data_dir / label
+        dist_dir.mkdir(parents=True, exist_ok=True)
+
+        dist_csv = dist_dir / f"floor_requests_distribution_{start_date}_{end_date}.csv"
+        per_day_csv = dist_dir / f"counts_per_floor_day_{start_date}_{end_date}.csv"
+
+        dist.to_csv(dist_csv, index=False)
+        per_day.to_csv(per_day_csv, index=False)
+    
+    def plot_distribution(self, dist: pd.DataFrame, out_png: str) -> None:
+        png = self.outdir / out_png
+        DataStatisticsPlottingHelper.plot_distribution(
+            dist=dist,
+            out_png=png,
         )
-        return counts
     
-    def _generate_weekly_rr_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.rr_df,
-            date_col="Scheduled DTTM",
-            room_col="scheduled_room",
-            week_start=self.week_start,
+    def generate_and_plot_distribution(self,
+                                       original_df: pd.DataFrame,
+                                       time_col: str,
+                                       room_col: str,
+                                       start_date: str,
+                                       end_date: str,
+                                       exclude_iso_weeks: Sequence[Tuple[int, int]],
+                                       label: str) -> None:
+        dist, per_day = self.generate_count_distribution(
+            original_df=original_df,
+            time_col=time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks
         )
-        return counts
-    
-    def _generate_weekly_temp_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.temp_df,
-            date_col="Scheduled DTTM",
-            room_col="scheduled_room",
-            week_start=self.week_start,
+
+        self.save_distribution_files(
+            dist=dist,
+            per_day=per_day,
+            start_date=start_date,
+            end_date=end_date,
+            label=label
         )
-        return counts
-    
-    def _generate_weekly_oximetry_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.oximetry_df,
-            date_col="Scheduled DTTM",
-            room_col="scheduled_room",
-            week_start=self.week_start,
+
+        out_png = f"{label}_requests_distribution_{start_date}_{end_date}.png"
+        self.plot_distribution(
+            dist=dist,
+            out_png=out_png
         )
-        return counts
     
-    def _generate_weekly_admissions_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.admissions_discharges_df,
-            date_col="HOSPITAL_ADMISSION",
+    def generate_and_plot_all_distributions(self,
+                                            start_date: str,
+                                            end_date: str,
+                                            exclude_iso_weeks: Sequence[Tuple[int, int]]) -> None:
+        self.generate_and_plot_distribution(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="blood_pressure"
+        )
+        self.generate_and_plot_distribution(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="medications"
+        )
+        self.generate_and_plot_distribution(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="heart_rate"
+        )
+        self.generate_and_plot_distribution(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="respiratory_rate"
+        )
+        self.generate_and_plot_distribution(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="temperature"
+        )
+        self.generate_and_plot_distribution(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="oxygen_saturation"
+        )
+        self.generate_and_plot_distribution(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
             room_col="IN_DEP",
-            week_start=self.week_start,
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="admissions"
         )
-        return counts
-    
-    def _generate_weekly_discharges_counts(self) -> pd.DataFrame:
-        counts = DataStatisticsHelpers.build_weekly_counts(
-            self.admissions_discharges_df,
-            date_col="HOSPITAL_DISCHARGE",
+        self.generate_and_plot_distribution(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
             room_col="OUT_DEP",
-            week_start=self.week_start,
+            start_date=start_date,
+            end_date=end_date,
+            exclude_iso_weeks=exclude_iso_weeks,
+            label="discharges"
         )
-        return counts
     
 def main():
     parser = argparse.ArgumentParser(description="Weekly histograms of scheduled requests per floor")
@@ -198,6 +344,7 @@ def main():
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
     parser.add_argument("--week-start", default="MON", help="Week anchor day: MON (default), SUN, TUE, ...")
     parser.add_argument("--outdir", default="results/distributions", help="Directory to write outputs (default: ./results/distributions)")
+    parser.add_argument("--dist-data-dir", default="data/distributions", help="Directory to write distribution data outputs (default: ./data/distributions/)")
     args = parser.parse_args()
 
     annotated_data_files = AnnotatedDataFiles(
@@ -213,20 +360,15 @@ def main():
 
     data_stats = DataStatistics(
         outdir=args.outdir,
-        week_start=args.week_start,
+        dist_data_dir=args.dist_data_dir,
         annotated_data_files=annotated_data_files,
     )
 
-    # Generate plots
-    bp_fig_paths = DataStatisticsPlottingHelper.plot_per_floor(data_stats.weekly_bp_counts, Path(args.outdir))
-    if bp_fig_paths:
-        print("Saved figures:")
-        for pth in bp_fig_paths:
-            print(f" - {pth}")
-    else:
-        print("No floors found to plot.")
-
-
+    data_stats.generate_and_plot_all_distributions(
+        start_date="2025-01-01",
+        end_date="2025-06-30",
+        exclude_iso_weeks=[],
+    )
 
     
 if __name__ == "__main__":
