@@ -76,12 +76,10 @@ class DataProcessor:
         agg = df.groupby(group_key, dropna=False).agg({
             "PAT_ID": self._first_non_null,
             "MRN": self._first_non_null,
-            "GENDER": self._first_non_null,
-            "AGE_AT_ADMISSION": self._first_non_null,
-            "RACE": self._first_non_null,
-            "HISPANIC_YN": self._first_non_null,
             "HOSPITAL_ADMISSION": "min",   # earliest admission in the stay
+            "IN_DEP": self._first_non_null,
             "HOSPITAL_DISCHARGE": "max",   # latest discharge in the stay
+            "OUT_DEP": self._first_non_null,
             "DISCH_DISPOSITION": self._first_non_null
         }).reset_index()
 
@@ -90,18 +88,14 @@ class DataProcessor:
             group_key,
             "MRN",
             "HOSPITAL_ADMISSION",
+            "IN_DEP",
             "HOSPITAL_DISCHARGE",
+            "OUT_DEP",
             "DISCH_DISPOSITION",
         ]
-        agg = agg[cols].rename(columns={
-            group_key: "encounter_id",
-            "MRN": "mrn",
-            "HOSPITAL_ADMISSION": "admit_ts",
-            "HOSPITAL_DISCHARGE": "discharge_ts",
-            "DISCH_DISPOSITION": "discharge_disposition",
-        })
-        # Optional: sort for readability
-        agg = agg.sort_values(["mrn", "admit_ts", "discharge_ts"], na_position="last")
+
+        agg = agg[cols]
+        agg = agg.sort_values(["MRN", "HOSPITAL_ADMISSION", "HOSPITAL_DISCHARGE"], na_position="last")
         return agg
     
     def _extract_patient_room_stays(self) -> pd.DataFrame:
