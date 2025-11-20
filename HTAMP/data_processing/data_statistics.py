@@ -1,10 +1,11 @@
 import argparse
+from cProfile import label
 from datetime import datetime
 import re
 import traceback
 
 from pathlib import Path
-from typing import Optional, Sequence, List, Tuple
+from typing import Dict, Optional, Sequence, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -88,51 +89,98 @@ class DataStatisticsHelpers:
                 mask &= ~((iso_year == y) & (iso_week == w))
             dff = dff[mask]
 
+        # Attach ISO year & week for later grouping
+        dff["iso_year"] = dff["__day__"].apply(lambda d: d.isocalendar().year)
+        dff["iso_week"] = dff["__day__"].apply(lambda d: d.isocalendar().week)
+
         return dff
 
     @staticmethod
-    def compute_per_day_counts(df: pd.DataFrame) -> pd.DataFrame:
+    def compute_per_day_counts(dff: pd.DataFrame) -> pd.DataFrame:
         """
-        One row per (floor, day) with n_requests.
+        Returns one row per (floor, day) with n_requests and ISO week/year attached.
         """
-        if df.empty:
-            return pd.DataFrame(columns=["__floor__", "__day__", "n_requests"])
-        per_day = (
-            df.groupby(["__floor__", "__day__"], as_index=False)
-            .size()
-            .rename(columns={"size": "n_requests"})
-        )
+        if dff.empty:
+            return pd.DataFrame(columns=["__floor__", "__day__", "n_requests", "iso_year", "iso_week"])
+        # group by floor-day
+        g = dff.groupby(["__floor__", "__day__"], as_index=False)
+        per_day = g.size().rename(columns={"size": "n_requests"})
+        # Re-attach ISO fields by merging from unique day -> (year, week)
+        unique_days = (dff[["__day__", "iso_year", "iso_week"]].drop_duplicates())
+        per_day = per_day.merge(unique_days, on="__day__", how="left")
         return per_day
     
-    @staticmethod
-    def compute_distribution(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    @staticmethod  
+    def distribution_of_counts(per_day: pd.DataFrame) -> pd.DataFrame:
         """
-        Returns (distribution, per_day) where:
-        - per_day: counts per (__floor__, __day__) with column 'n_requests'
-        - distribution: counts of 'n_requests' values and relative frequencies
+        Compute distribution of n_requests across floor-days.
+        Returns columns: requests_per_day, absolute_count, relative_frequency
         """
-        if df.empty:
-            dist = pd.DataFrame(columns=["requests_per_day", "absolute_count", "relative_frequency"])
-            per_day = pd.DataFrame(columns=["__floor__", "__day__", "n_requests"])
-            return dist, per_day
-
-        per_day = (
-            df.groupby(["__floor__", "__day__"], as_index=False)
-            .size()
-            .rename(columns={"size": "n_requests"})
-        )
-
-        dist = (
-            per_day["n_requests"]
-            .value_counts()
-            .sort_index()
-            .rename_axis("requests_per_day")
-            .reset_index(name="absolute_count")
-        )
-
+        if per_day.empty:
+            return pd.DataFrame(columns=["requests_per_day", "absolute_count", "relative_frequency"])
+        dist = (per_day["n_requests"]
+                .value_counts()
+                .sort_index()
+                .rename_axis("requests_per_day")
+                .reset_index(name="absolute_count"))
         total = dist["absolute_count"].sum()
         dist["relative_frequency"] = 0.0 if total == 0 else dist["absolute_count"] / total
-        return dist, per_day
+        dist["requests_per_day"] = dist["requests_per_day"].astype(int)
+        return dist
+    
+    @staticmethod
+    def pmf_from_dist(dist: pd.DataFrame) -> dict[int, float]:
+        return {int(r): float(p) for r, p in zip(dist["requests_per_day"], dist["relative_frequency"])}
+    
+    @staticmethod
+    def wasserstein_1_intbins(pmf1: dict[int, float], pmf2: dict[int, float]) -> float:
+        """
+        1D Wasserstein distance for discrete integer supports (unit spacing).
+        W1 = sum_i |F1(x_i) - F2(x_i)| * (x_{i+1} - x_i), with unit steps -> sum |ΔCDF|.
+        """
+        if not pmf1 and not pmf2:
+            return 0.0
+        keys = sorted(set(pmf1.keys()) | set(pmf2.keys()))
+        # enforce full integer range (monotone CDF step at each integer)
+        lo, hi = int(min(keys)), int(max(keys))
+        xs = list(range(lo, hi + 1))
+        p1 = np.array([pmf1.get(x, 0.0) for x in xs], dtype=float)
+        p2 = np.array([pmf2.get(x, 0.0) for x in xs], dtype=float)
+        F1 = np.cumsum(p1)
+        F2 = np.cumsum(p2)
+        # step size = 1 between consecutive integers
+        return float(np.sum(np.abs(F1 - F2)))
+    
+    @staticmethod
+    def align_distributions(dist_a: pd.DataFrame, dist_b: pd.DataFrame):
+        """
+        Align two distributions to a common set of integer categories (union of requests_per_day).
+        Returns (dist_a_aligned, dist_b_aligned, categories)
+        """
+        cats = sorted(set(dist_a["requests_per_day"].tolist()) | set(dist_b["requests_per_day"].tolist()))
+        def reindex(dist):
+            out = pd.DataFrame({"requests_per_day": cats})
+            out = out.merge(dist[["requests_per_day", "relative_frequency"]], on="requests_per_day", how="left")
+            out["relative_frequency"] = out["relative_frequency"].fillna(0.0)
+            return out
+        return reindex(dist_a), reindex(dist_b), cats
+    
+    @staticmethod
+    def align_for_plot(dist_a: pd.DataFrame, dist_b: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Return (bins, relA, relB) aligned on the union of integer bins for plotting.
+        """
+        keys = sorted(set(dist_a["requests_per_day"].astype(int).tolist()) |
+                    set(dist_b["requests_per_day"].astype(int).tolist()))
+        if not keys:
+            return np.array([], dtype=int), np.array([], dtype=float), np.array([], dtype=float)
+        lo, hi = min(keys), max(keys)
+        bins = np.arange(lo, hi + 1, dtype=int)
+        pmfa = DataStatisticsHelpers.pmf_from_dist(dist_a)
+        pmfb = DataStatisticsHelpers.pmf_from_dist(dist_b)
+        relA = np.array([pmfa.get(int(k), 0.0) for k in bins], dtype=float)
+        relB = np.array([pmfb.get(int(k), 0.0) for k in bins], dtype=float)
+        return bins, relA, relB
     
     @staticmethod
     def weekly_u_chart(per_day: pd.DataFrame) -> pd.DataFrame:
@@ -239,6 +287,9 @@ class DataStatistics:
         self.dist_outdir = self.outdir / "distributions"
         self.dist_outdir.mkdir(parents=True, exist_ok=True)
 
+        self.indiv_dist_outdir = self.dist_outdir / "individual_distributions"
+        self.indiv_dist_outdir.mkdir(parents=True, exist_ok=True)
+
         self.u_chart_outdir = self.outdir / "u_charts"
         self.u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +360,9 @@ class DataStatistics:
             exclude_iso_weeks=exclude_iso_weeks,
         )
 
-        dist, per_day = DataStatisticsHelpers.compute_distribution(df_filtered)
+        per_day = DataStatisticsHelpers.compute_per_day_counts(dff=df_filtered)
+
+        dist = DataStatisticsHelpers.distribution_of_counts(per_day=per_day)
 
         return dist, per_day
     
@@ -462,7 +515,7 @@ class DataStatistics:
             end_date=end_date,
         )
 
-        per_day = DataStatisticsHelpers.compute_per_day_counts(df=df_filtered)
+        per_day = DataStatisticsHelpers.compute_per_day_counts(dff=df_filtered)
 
         weekly = DataStatisticsHelpers.weekly_u_chart(per_day)
 
@@ -635,6 +688,172 @@ class DataStatistics:
             label="discharges"
         )
     
+    def generate_weekly_distributions(self,
+                                      original_df: pd.DataFrame,
+                                      time_col: str,
+                                      room_col: str,
+                                      start_date: str,
+                                      end_date: str,
+                                      label: str,
+                                      top_k: int) -> pd.DataFrame:
+        df_prep = DataStatisticsHelpers.prepare_df(
+            original_df,
+            time_col=time_col,
+            room_col=room_col,
+        )
+
+        df_filtered = DataStatisticsHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        per_day = DataStatisticsHelpers.compute_per_day_counts(dff=df_filtered)
+
+        dist_all = DataStatisticsHelpers.distribution_of_counts(per_day)
+        pmf_all = DataStatisticsHelpers.pmf_from_dist(dist_all)
+
+        # List ISO weeks
+        weeks = (per_day[["iso_year","iso_week"]].drop_duplicates()
+                .sort_values(["iso_year","iso_week"])
+                .to_records(index=False))
+        weeks_list = [(int(y), int(w)) for (y, w) in weeks]
+
+        results = []
+
+        for (yy, ww) in weeks:
+            week_mask = (per_day["iso_year"] == int(yy)) & (per_day["iso_week"] == int(ww))
+            dist_week = DataStatisticsHelpers.distribution_of_counts(per_day[week_mask])
+
+            others_dist = DataStatisticsHelpers.distribution_of_counts(per_day[~week_mask])
+            pmf_base = DataStatisticsHelpers.pmf_from_dist(others_dist)
+
+            wdist = DataStatisticsHelpers.wasserstein_1_intbins(DataStatisticsHelpers.pmf_from_dist(dist_week), pmf_base)
+            results.append({"iso_year": int(yy), "iso_week": int(ww), "wasserstein": wdist})
+
+        results_df = pd.DataFrame(results).sort_values("wasserstein", ascending=False)
+
+          # Take top-K weeks
+        top = results_df.head(top_k)
+        # Optional: bar chart of top-K distances
+        out_png = self.outdir / f"{label}_wasserstein_distances.png"
+        if not top.empty:
+            DataStatisticsPlottingHelper.plot_wasserstein_distance(top, out_png)
+
+        for _, row in top.iterrows(): 
+            yy, ww = int(row["iso_year"]), int(row["iso_week"])
+            focal = per_day[(per_day["iso_year"] == yy) & (per_day["iso_week"] == ww)]
+            others = per_day[~((per_day["iso_year"] == yy) & (per_day["iso_week"] == ww))]
+
+            # Compute distributions
+            dist_focal = DataStatisticsHelpers.distribution_of_counts(focal)
+            dist_others = DataStatisticsHelpers.distribution_of_counts(others)
+
+            # Align categories (bins) for plotting comparability
+            if dist_focal.empty and dist_others.empty:
+                # Nothing to plot; create empty charts for consistency
+                cats = []
+                aligned_focal = pd.DataFrame(columns=["requests_per_day","relative_frequency"])
+                aligned_others = aligned_focal.copy()
+            else:
+                aligned_focal, aligned_others, cats = DataStatisticsHelpers.align_distributions(dist_focal, dist_others)
+            
+            new_label = f"{label}_{yy}W{ww:02d}"
+            focal_out_png = self.indiv_dist_outdir / f"{new_label}_focal.png"
+            others_out_png = self.indiv_dist_outdir / f"{new_label}_others.png"
+            title_focal = f"Week {new_label}: relative frequency of requests per floor-day"
+            title_others = f"All other weeks (excl. {new_label}): relative frequency of requests per floor-day"
+
+            if len(cats) == 0:
+                # No data to plot
+                print(f"No data for weekly distribution plot: {new_label}")
+            else:
+                DataStatisticsPlottingHelper.plot_rel_freq_bar(categories=cats,
+                                                               rel_freq=aligned_focal["relative_frequency"],
+                                                               title=title_focal,
+                                                               out_png=focal_out_png)
+                DataStatisticsPlottingHelper.plot_rel_freq_bar(categories=cats,
+                                                               rel_freq=aligned_others["relative_frequency"],
+                                                               title=title_others,
+                                                               out_png=others_out_png)
+    
+    def generate_and_plot_all_weekly_distributions(self,
+                                                 start_date: str,
+                                                 end_date: str,
+                                                 top_k: int) -> None:
+        self.generate_weekly_distributions(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions",
+            top_k=top_k
+        )
+        self.generate_weekly_distributions(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges",
+            top_k=top_k
+        )
+    
 def main():
     parser = argparse.ArgumentParser(description="Weekly histograms of scheduled requests per floor")
     parser.add_argument("--visits_data_file", type=str, default="data/processed/patient_room_stays.csv", help="Path to the visits data CSV file.")
@@ -681,6 +900,12 @@ def main():
     data_stats.generate_and_plot_all_heatmaps(
         start_date="2024-06-01",
         end_date="2025-06-30"
+    )
+
+    data_stats.generate_and_plot_all_weekly_distributions(
+        start_date="2024-06-01",
+        end_date="2025-06-30",
+        top_k=5
     )
 
     

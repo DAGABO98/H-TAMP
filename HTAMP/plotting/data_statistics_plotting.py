@@ -117,3 +117,28 @@ class DataStatisticsPlottingHelper:
         plt.tight_layout()
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()
+
+    @staticmethod
+    def plot_rel_freq_bar(categories, rel_freq, title, out_png: Path) -> None:
+        # Simple bar chart (no custom colors/styles), one figure per chart
+        plt.figure(figsize=(8, 5))
+        x = np.array(categories, dtype=int)
+        y = np.array(rel_freq, dtype=float)
+        plt.bar(x, y)
+        plt.xlabel("Requests entering a floor in a day")
+        plt.ylabel("Relative frequency")
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160, bbox_inches="tight")
+        plt.close()
+
+    def plot_wasserstein_distance(top: pd.DataFrame, out_png: Path) -> None:
+        plt.figure(figsize=(8, 5))
+        labels = [f'{y}-W{str(w).zfill(2)}' for y, w in zip(top["iso_year"], top["iso_week"])]
+        plt.bar(np.arange(len(top)), top["wasserstein"].astype(float).values)
+        plt.xticks(np.arange(len(top)), labels, rotation=0)
+        plt.ylabel("Wasserstein distance")
+        plt.title(f"Top {len(top)} weeks by Wasserstein distance")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160, bbox_inches="tight")
+        plt.close()
