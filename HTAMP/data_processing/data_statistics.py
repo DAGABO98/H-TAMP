@@ -182,40 +182,44 @@ class DataStatisticsHelpers:
         return weekly
     
     @staticmethod
-    def compute_floor_week_totals(df: pd.DataFrame) -> pd.DataFrame:
+    def compute_week_by_dow(df: pd.DataFrame) -> pd.DataFrame:
         """
-        Step 1: per (floor, day) counts -> n_requests
-        Step 2: per (floor, ISO week) totals -> total_requests
+        Returns a long table of total_requests per (iso_year, iso_week, dow)
+        where totals are summed across all floors.
         """
         if df.empty:
-            return pd.DataFrame(columns=["__floor__", "iso_year", "iso_week", "week_start", "iso_label", "total_requests"])
+            return pd.DataFrame(columns=[
+                "iso_year", "iso_week", "week_start", "dow", "dow_name", "date", "total_requests"
+            ])
 
-        # per (floor, day)
+        # per (floor, day) => n_requests
         per_day = (
             df.groupby(["__floor__", "__day__"], as_index=False)
             .size()
             .rename(columns={"size": "n_requests"})
         )
 
-        # ISO year/week and week_start (Monday)
-        per_day["iso_year"] = per_day["__day__"].apply(lambda d: d.isocalendar().year)
-        per_day["iso_week"] = per_day["__day__"].apply(lambda d: d.isocalendar().week)
-        tmp_dates = per_day.assign(_d=pd.to_datetime(per_day["__day__"])).groupby(
-            ["iso_year","iso_week"]
-        )["_d"].min().reset_index()
-        tmp_dates["week_start"] = tmp_dates["_d"] - pd.to_timedelta(tmp_dates["_d"].dt.weekday, unit="D")
-        tmp_dates = tmp_dates.drop(columns=["_d"])
-
-        # weekly totals per floor
-        weekly = (
-            per_day.groupby(["__floor__", "iso_year", "iso_week"], as_index=False)["n_requests"]
-            .sum()
-            .rename(columns={"n_requests": "total_requests"})
+        # collapse across floors: total per calendar day
+        daily_totals = per_day.groupby("__day__", as_index=False)["n_requests"].sum().rename(
+            columns={"n_requests": "total_requests"}
         )
-        weekly = weekly.merge(tmp_dates, on=["iso_year","iso_week"], how="left")
-        weekly["iso_label"] = weekly["iso_year"].astype(str) + "-W" + weekly["iso_week"].astype(int).astype(str).str.zfill(2)
 
-        return weekly
+        # ISO fields & week_start & day-of-week
+        daily_totals["date"] = pd.to_datetime(daily_totals["__day__"])
+        daily_totals["iso_year"] = daily_totals["date"].dt.isocalendar().year.astype(int)
+        daily_totals["iso_week"] = daily_totals["date"].dt.isocalendar().week.astype(int)
+        daily_totals["dow"] = daily_totals["date"].dt.weekday.astype(int)   # Monday=0
+        daily_totals["dow_name"] = daily_totals["dow"].map(lambda d: {0:"Mon",1:"Tue",2:"Wed",3:"Thu",4:"Fri",5:"Sat",6:"Sun"}[d])
+
+        # compute week_start (Monday) for ordering
+        daily_totals["week_start"] = daily_totals["date"] - pd.to_timedelta(daily_totals["date"].dt.weekday, unit="D")
+
+        # aggregate in case there are multiple records per (week,dow)
+        weekly_dow = (daily_totals
+                    .groupby(["iso_year","iso_week","week_start","dow","dow_name"], as_index=False)["total_requests"]
+                    .sum())
+
+        return weekly_dow
 
 
 class DataStatistics:
@@ -555,11 +559,11 @@ class DataStatistics:
                 end_date=end_date,
             )
     
-            weekly = DataStatisticsHelpers.compute_floor_week_totals(df_filtered)
+            weekly_dow = DataStatisticsHelpers.compute_week_by_dow(df_filtered)
     
             out_png = self.heatmap_outdir / f"{label}_floor_week_heatmap_{start_date}_{end_date}.png"
             DataStatisticsPlottingHelper.plot_heatmap(
-                weekly=weekly,
+                weekly_dow=weekly_dow,
                 out_png=out_png
             )
     
