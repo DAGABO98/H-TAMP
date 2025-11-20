@@ -5,6 +5,7 @@ import traceback
 
 import numpy as np
 import pandas as pd
+from pyparsing import Iterable
 import yaml
 from typing import Optional
 
@@ -18,6 +19,7 @@ class DataProcessor:
         self.hospital_data = self._load_hospital_data()
         self.space_lookup = self._extract_space_lookup(hospital_config_file)
         self.stays_df = self._extract_patient_room_stays()
+        self.admissions_discharges_df = self.extract_admits_discharges()
         self.medication_orders_df = self._annotate_medication_orders_with_room()
         self.blood_pressure_orders_df = self._annotate_blood_pressure_orders_with_room()
         self.heart_rate_orders_df = self._annotate_heart_rate_orders_with_room()
@@ -56,6 +58,51 @@ class DataProcessor:
     
     def _map_location_to_space(self, location: str) -> str:
         return self.space_lookup.get(location, "UNKNOWN_SPACE")
+    
+    def _parse_dates(self, df: pd.DataFrame, date_cols: Iterable[str]) -> pd.DataFrame:
+        for c in date_cols:
+            if c in df.columns:
+                df[c] = pd.to_datetime(df[c], errors="coerce")
+        return df
+
+    def _first_non_null(self, s: pd.Series):
+        s = s.dropna()
+        return s.iloc[0] if not s.empty else None
+    
+    def extract_admits_discharges(self) -> pd.DataFrame:
+        df = self.hospital_data['visits_data']
+        group_key = "PAT_ENC_CSN_ID"
+        # Aggregate per hospital stay
+        agg = df.groupby(group_key, dropna=False).agg({
+            "PAT_ID": self._first_non_null,
+            "MRN": self._first_non_null,
+            "GENDER": self._first_non_null,
+            "AGE_AT_ADMISSION": self._first_non_null,
+            "RACE": self._first_non_null,
+            "HISPANIC_YN": self._first_non_null,
+            "HOSPITAL_ADMISSION": "min",   # earliest admission in the stay
+            "HOSPITAL_DISCHARGE": "max",   # latest discharge in the stay
+            "DISCH_DISPOSITION": self._first_non_null
+        }).reset_index()
+
+        # Select & rename for a clean output
+        cols = [
+            group_key,
+            "MRN",
+            "HOSPITAL_ADMISSION",
+            "HOSPITAL_DISCHARGE",
+            "DISCH_DISPOSITION",
+        ]
+        agg = agg[cols].rename(columns={
+            group_key: "encounter_id",
+            "MRN": "mrn",
+            "HOSPITAL_ADMISSION": "admit_ts",
+            "HOSPITAL_DISCHARGE": "discharge_ts",
+            "DISCH_DISPOSITION": "discharge_disposition",
+        })
+        # Optional: sort for readability
+        agg = agg.sort_values(["mrn", "admit_ts", "discharge_ts"], na_position="last")
+        return agg
     
     def _extract_patient_room_stays(self) -> pd.DataFrame:
         """Extract patient room stay data."""
@@ -423,6 +470,7 @@ class DataProcessor:
         self.temperature_orders_df.to_csv("data/processed/temperature_orders_annotated.csv", index=False)
         self.oxygen_saturation_orders_df.to_csv("data/processed/oxygen_saturation_orders_annotated.csv", index=False)
         self.stays_df.to_csv("data/processed/patient_room_stays.csv", index=False)
+        self.admissions_discharges_df.to_csv("data/processed/admissions_discharges.csv", index=False)
 
 
 def main():

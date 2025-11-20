@@ -57,3 +57,13 @@ class HospitalDataFields:
         if visits_encounter_id_col is None:
             visits_encounter_id_col = "Patient Encounter CSN"
         self.visits_encounter_id_column = visits_encounter_id_col
+
+@dataclass
+class AnnotatedDataFiles:
+    annotated_visits: str
+    annotated_medications: str
+    annotated_blood_pressure: str
+    annotated_heart_rate: str
+    annotated_respiratory_rate: str
+    annotated_temperature: str
+    annotated_oxygen_saturation: str
