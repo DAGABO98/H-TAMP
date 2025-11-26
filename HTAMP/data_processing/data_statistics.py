@@ -710,20 +710,27 @@ class DataStatistics:
 
         per_day = DataStatisticsHelpers.compute_per_day_counts(dff=df_filtered)
 
-        dist_all = DataStatisticsHelpers.distribution_of_counts(per_day)
-        pmf_all = DataStatisticsHelpers.pmf_from_dist(dist_all)
+        weekly_u_chart = DataStatisticsHelpers.weekly_u_chart(per_day)
 
         # List ISO weeks
         weeks = (per_day[["iso_year","iso_week"]].drop_duplicates()
                 .sort_values(["iso_year","iso_week"])
                 .to_records(index=False))
-        weeks_list = [(int(y), int(w)) for (y, w) in weeks]
 
         results = []
 
         for (yy, ww) in weeks:
             week_mask = (per_day["iso_year"] == int(yy)) & (per_day["iso_week"] == int(ww))
             dist_week = DataStatisticsHelpers.distribution_of_counts(per_day[week_mask])
+
+            u_chart_data = weekly_u_chart[(weekly_u_chart["iso_year"] == int(yy)) & (weekly_u_chart["iso_week"] == int(ww))]
+            if not u_chart_data.empty:
+                u_t = float(u_chart_data["u"].values[0])
+                lcl = float(u_chart_data["lcl"].values[0])
+                if u_t < lcl:
+                    continue
+            else:
+                continue
 
             others_dist = DataStatisticsHelpers.distribution_of_counts(per_day[~week_mask])
             pmf_base = DataStatisticsHelpers.pmf_from_dist(others_dist)
@@ -887,24 +894,24 @@ def main():
     )
 
     data_stats.generate_and_plot_all_distributions(
-        start_date="2024-06-01",
-        end_date="2025-06-30",
+        start_date="2024-06-24",
+        end_date="2025-06-29",
         exclude_iso_weeks=[],
     )
 
     data_stats.generate_and_plot_all_weekly_u_charts(
-        start_date="2024-06-01",
-        end_date="2025-06-30"
+        start_date="2024-06-24",
+        end_date="2025-06-29"
     )
 
     data_stats.generate_and_plot_all_heatmaps(
-        start_date="2024-06-01",
-        end_date="2025-06-30"
+        start_date="2024-06-24",
+        end_date="2025-06-29"
     )
 
     data_stats.generate_and_plot_all_weekly_distributions(
-        start_date="2024-06-01",
-        end_date="2025-06-30",
+        start_date="2024-06-24",
+        end_date="2025-06-29",
         top_k=5
     )
 
