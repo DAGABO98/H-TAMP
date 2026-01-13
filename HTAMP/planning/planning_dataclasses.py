@@ -1,6 +1,8 @@
 
 
 from dataclasses import dataclass, field
+
+import pandas as pd
 from HTAMP.environment.loc_dataclasses import Coordinate, GridIndex, TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
@@ -126,6 +128,40 @@ class SimulatorConfig:
         self.time_step = 1.0 / fps
         self.horizon = horizon
 
+class DateStamp:
+    def __init__(self, year: int, month, day):
+        self.year = year
+        self.month = month
+        self.day = day
+        time_stamp = pd.Timestamp(year=year,
+                                  month=month,
+                                  day=day)
+        self.weekday = time_stamp.weekday()
+    
+    def __repr__(self):
+        date_stamp_str = str(self.year) + "-" + str(self.month) + "-" + str(self.day)
+
+        return date_stamp_str
+
+class TimeSignal:
+    def __init__(self, year: int, month, day, hour, minute):
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        time_stamp = pd.Timestamp(year=year,
+                                  month=month,
+                                  day=day,
+                                  hour=hour,
+                                  minute=minute)
+        self.weekday = time_stamp.weekday()
+    
+    def __repr__(self):
+        time_signal_str = str(self.year) + "-" + str(self.month) + "-" + str(self.day)+ " " + str(self.hour) + ":" + str(self.minute)
+
+        return time_signal_str
+
 class TaskRequest:
     def __init__(self, 
                  request_id: int, 
@@ -172,3 +208,12 @@ class TaskRequest:
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"
+
+class FrameData:
+    def __init__(self):
+        self.robot_positions_seq: list[dict[int, Coordinate]] = []
+        self.robots_current_node_index_seq: list[dict[int, int]] =[]
+        self.point_indices_on_edge_seq: list[dict[int, int]] =[]
+        self.robot_paths_seq: list[dict[int, list[tuple[TraversalNode, TimeInterval]]]] = []
+        self.planned_goal_indices_seq: list[dict[int, list[int]]] = []
+        self.completed_goals_seq: list[dict[int, int]] = []
