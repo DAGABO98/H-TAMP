@@ -17,7 +17,8 @@ class DataProcessor:
         self.hospital_config_file = hospital_config_file
         self.hospital_data_fields = hospital_data_fields
         self.hospital_data = self._load_hospital_data()
-        self.space_lookup = self._extract_space_lookup(hospital_config_file)
+        self.space_lookup = self._extract_space_lookup()
+        self.supplies_lookup = self._extract_supplies_lookup()
         self.stays_df = self._extract_patient_room_stays()
         self.admissions_discharges_df = self.extract_admits_discharges()
         self.medication_orders_df = self._annotate_medication_orders_with_room()
@@ -39,8 +40,8 @@ class DataProcessor:
 
         return data_frames
     
-    def _extract_space_lookup(self, file_path: str):
-        space_config = yaml.safe_load(open(file_path, 'r'))
+    def _extract_space_lookup(self):
+        space_config = yaml.safe_load(open(self.hospital_config_file, 'r'))
         space_lookup = {}
         for item in space_config.get("rooms", []):
             rid = item["id"]
@@ -48,6 +49,16 @@ class DataProcessor:
                 space_lookup[loc] = rid
                     
         return space_lookup
+    
+    def _extract_supplies_lookup(self):
+        space_config = yaml.safe_load(open(self.hospital_config_file, 'r'))
+        supplies_lookup = {}
+        for item in space_config.get("supplies", []):
+            rid = item["id"]
+            for room in item["rooms"]:
+                supplies_lookup[room] = rid
+                    
+        return supplies_lookup
     
     def _compose_location_string(self, department, room) -> str:
         department = str(department).strip()
@@ -58,6 +69,9 @@ class DataProcessor:
     
     def _map_location_to_space(self, location: str) -> str:
         return self.space_lookup.get(location, "UNKNOWN_SPACE")
+    
+    def _map_space_to_supplies(self, space_id: str) -> str:
+        return self.supplies_lookup.get(space_id, "UNKNOWN_SUPPLIES")
     
     def _parse_dates(self, df: pd.DataFrame, date_cols: Iterable[str]) -> pd.DataFrame:
         for c in date_cols:
@@ -262,6 +276,8 @@ class DataProcessor:
                                   "Race",
                                   "Age at Admission",
                                   "Order Med ID"], inplace=True)
+        
+        administered_df["scheduled_space_supplies"] = administered_df["scheduled_space_id"].apply(self._map_space_to_supplies)
         
         return administered_df
     def parse_frequency_to_timedelta(self, s: str) -> Optional[pd.Timedelta]:
