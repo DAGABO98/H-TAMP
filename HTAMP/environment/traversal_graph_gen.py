@@ -1657,11 +1657,14 @@ class TraversalGraphGenerator:
     
     def _extract_parking_space_left_right_nodes(self,
                                           parking_space: ParkingSpace, 
-                                          nodes_dict: Dict[str, TraversalNode]) -> Tuple[List[str], List[str], List[str], List[str]]:
+                                          nodes_dict: Dict[str, TraversalNode],
+                                          max_num_parking_spaces: int = 6) -> Tuple[List[str], List[str], List[str], List[str], List[str], List[str]]:
         left_entry_nodes = []
         left_exit_nodes = []
         right_exit_nodes = []
         right_entry_nodes = []
+        middle_entry_nodes = []
+        middle_exit_nodes = []
 
         if parking_space.orientation == "right":
             entry_orientation_vec = OrientationVector(1.0, 0.0)
@@ -1674,6 +1677,14 @@ class TraversalGraphGenerator:
                                                   y=parking_space.entry_point.y + (self.parking_space_offset/2))
             right_node_exit_location = Coordinate(x=parking_space.entry_point.x + ((parking_space.num_parking_spaces+1)*self.parking_space_offset),
                                                   y=parking_space.entry_point.y - (self.parking_space_offset/2))
+            if parking_space.num_parking_spaces > max_num_parking_spaces:
+                middle_node_entry_location = Coordinate(x=parking_space.entry_point.x + (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset),
+                                                         y=parking_space.entry_point.y + (self.parking_space_offset/2))
+                middle_node_exit_location = Coordinate(x=parking_space.entry_point.x + (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset),
+                                                        y=parking_space.entry_point.y - (self.parking_space_offset/2))
+            else:
+                middle_node_entry_location = None
+                middle_node_exit_location = None
         elif parking_space.orientation == "left":
             entry_orientation_vec = OrientationVector(-1.0, 0.0)
             exit_orientation_vec = OrientationVector(1.0, 0.0)
@@ -1685,6 +1696,14 @@ class TraversalGraphGenerator:
                                                    y=parking_space.entry_point.y - (self.parking_space_offset/2))
             right_node_exit_location = Coordinate(x=parking_space.entry_point.x,
                                                   y=parking_space.entry_point.y + (self.parking_space_offset/2))
+            if parking_space.num_parking_spaces > max_num_parking_spaces:
+                middle_node_entry_location = Coordinate(x=parking_space.entry_point.x - (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset),
+                                                         y=parking_space.entry_point.y - (self.parking_space_offset/2))
+                middle_node_exit_location = Coordinate(x=parking_space.entry_point.x - (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset),
+                                                        y=parking_space.entry_point.y + (self.parking_space_offset/2))
+            else:
+                middle_node_entry_location = None
+                middle_node_exit_location = None
         elif parking_space.orientation == "up":
             entry_orientation_vec = OrientationVector(0.0, -1.0)
             exit_orientation_vec = OrientationVector(0.0, 1.0)
@@ -1696,6 +1715,14 @@ class TraversalGraphGenerator:
                                                   y=parking_space.entry_point.y - ((parking_space.num_parking_spaces+1)*self.parking_space_offset))
             right_node_exit_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
                                                   y=parking_space.entry_point.y - ((parking_space.num_parking_spaces+1)*self.parking_space_offset))
+            if parking_space.num_parking_spaces > max_num_parking_spaces:
+                middle_node_entry_location = Coordinate(x=parking_space.entry_point.x + (self.parking_space_offset/2),
+                                                         y=parking_space.entry_point.y - (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset))
+                middle_node_exit_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
+                                                        y=parking_space.entry_point.y - (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset))
+            else:
+                middle_node_entry_location = None
+                middle_node_exit_location = None
         elif parking_space.orientation == "down":
             entry_orientation_vec = OrientationVector(0.0, 1.0)
             exit_orientation_vec = OrientationVector(0.0, -1.0)
@@ -1707,6 +1734,14 @@ class TraversalGraphGenerator:
                                                   y=parking_space.entry_point.y)
             right_node_exit_location = Coordinate(x=parking_space.entry_point.x + (self.parking_space_offset/2),
                                                   y=parking_space.entry_point.y)
+            if parking_space.num_parking_spaces > max_num_parking_spaces:
+                middle_node_entry_location = Coordinate(x=parking_space.entry_point.x - (self.parking_space_offset/2),
+                                                         y=parking_space.entry_point.y + (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset))
+                middle_node_exit_location = Coordinate(x=parking_space.entry_point.x + (self.parking_space_offset/2),
+                                                        y=parking_space.entry_point.y + (((parking_space.num_parking_spaces//2)+1)*self.parking_space_offset))
+            else:
+                middle_node_entry_location = None
+                middle_node_exit_location = None
         else:
             raise ValueError(f"Invalid parking space orientation: {parking_space.orientation}")
         
@@ -1734,8 +1769,20 @@ class TraversalGraphGenerator:
         left_exit_nodes.append(left_node_exit.label)
         right_entry_nodes.append(right_node_entry.label)
         right_exit_nodes.append(right_node_exit.label)
-
-        return left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes
+        if middle_node_entry_location is not None and middle_node_exit_location is not None:
+            middle_node_entry = TraversalNode(label=f"{middle_node_entry_location.x:.2f}_{middle_node_entry_location.y:.2f}_{entry_orientation_vec}",
+                                                position=middle_node_entry_location,
+                                                orientation_vec=entry_orientation_vec,
+                                                connections=[])
+            middle_node_exit = TraversalNode(label=f"{middle_node_exit_location.x:.2f}_{middle_node_exit_location.y:.2f}_{exit_orientation_vec}",
+                                            position=middle_node_exit_location,
+                                            orientation_vec=exit_orientation_vec,
+                                            connections=[])
+            nodes_dict[middle_node_entry.label] = middle_node_entry
+            nodes_dict[middle_node_exit.label] = middle_node_exit
+            middle_entry_nodes.append(middle_node_entry.label)
+            middle_exit_nodes.append(middle_node_exit.label)
+        return left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes, middle_entry_nodes, middle_exit_nodes
     
     def _extract_parking_space_nodes(self, 
                                      parking_space: ParkingSpace,
@@ -1913,7 +1960,7 @@ class TraversalGraphGenerator:
         lateral_extraction = self._extract_parking_space_left_right_nodes(parking_space=parking_space, 
                                                                           nodes_dict=nodes_dict)
         
-        left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes = lateral_extraction
+        left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes, middle_entry_nodes, middle_exit_nodes = lateral_extraction
 
         parking_spaces = self._extract_parking_space_nodes(parking_space=parking_space,
                                                            nodes_dict=nodes_dict)
@@ -1926,6 +1973,7 @@ class TraversalGraphGenerator:
 
         return up_parking_nodes_entry, down_parking_nodes_entry, down_parking_nodes_exit, \
             up_parking_nodes_exit, left_entry_nodes, left_exit_nodes, right_entry_nodes, right_exit_nodes, \
+                middle_entry_nodes, middle_exit_nodes, \
                 up_corridor_nodes, down_corridor_nodes, nodes_dict
     
     def _connect_lateral_nodes_to_parking_space_nodes(self,
@@ -2076,48 +2124,18 @@ class TraversalGraphGenerator:
             
         return edges
     
-    def _create_parking_space_connections_for_nodes(self,
-                                                    parking_space: ParkingSpace,
-                                                    up_parking_nodes_entry: List[str],
-                                                    down_parking_nodes_entry: List[str],
-                                                    down_parking_nodes_exit: List[str],
-                                                    up_parking_nodes_exit: List[str],
-                                                    left_entry_nodes: List[str],
-                                                    left_exit_nodes: List[str],
-                                                    right_entry_nodes: List[str],
-                                                    right_exit_nodes: List[str],
-                                                    up_corridor_nodes: List[str],
-                                                    down_corridor_nodes: List[str],
-                                                    nodes_dict: Dict[str, TraversalNode]) -> None:
-        edges = []
-        up_parking_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=up_parking_nodes_entry,
-                                                                         destination_lateral_nodes=up_parking_nodes_exit,
-                                                                         nodes_dict=nodes_dict)
-        edges.extend(up_parking_opposite_edges)
-
-        down_parking_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=down_parking_nodes_entry,
-                                                                            destination_lateral_nodes=down_parking_nodes_exit,
-                                                                            nodes_dict=nodes_dict)
-        edges.extend(down_parking_opposite_edges)
-
-        corridor = self._get_corridor_by_id(parking_space.corridor_id)
-
-        corridor_edges = self._create_corridor_straight_connections_for_nodes(corridor=corridor,
-                                                                              left_nodes=down_corridor_nodes,
-                                                                              right_nodes=up_corridor_nodes,
-                                                                              nodes_dict=nodes_dict)
-        edges.extend(corridor_edges)
-
-        corridor_connection_edges = self._create_parking_corridor_connections_for_nodes(parking_space=parking_space,
-                                                                                      up_corridor_nodes=up_corridor_nodes,
-                                                                                      down_corridor_nodes=down_corridor_nodes,
-                                                                                      left_entry_nodes=left_entry_nodes,
-                                                                                      left_exit_nodes=left_exit_nodes,
-                                                                                      right_entry_nodes=right_entry_nodes,
-                                                                                      right_exit_nodes=right_exit_nodes,
-                                                                                      nodes_dict=nodes_dict)
-        edges.extend(corridor_connection_edges)
-
+    def _create_small_parking_space_connections_for_nodes(self,
+                                                          edges: List[TraversalEdge],
+                                                          parking_space: ParkingSpace,
+                                                          up_parking_nodes_entry: List[str],
+                                                          down_parking_nodes_entry: List[str],
+                                                          down_parking_nodes_exit: List[str],
+                                                          up_parking_nodes_exit: List[str],
+                                                          left_entry_nodes: List[str],
+                                                          left_exit_nodes: List[str],
+                                                          right_entry_nodes: List[str],
+                                                          right_exit_nodes: List[str],
+                                                          nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
         if parking_space.orientation == "right" or parking_space.orientation == "up":
             opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=right_entry_nodes,
                                                                  destination_lateral_nodes=right_exit_nodes,
@@ -2197,6 +2215,216 @@ class TraversalGraphGenerator:
                                                         nodes_dict=nodes_dict)
             edges.extend(up_exit_edges)
     
+    def _create_large_parking_space_connections_for_nodes(self,
+                                                          edges: List[TraversalEdge],
+                                                          parking_space: ParkingSpace,
+                                                          up_parking_nodes_entry: List[str],
+                                                          down_parking_nodes_entry: List[str],
+                                                          down_parking_nodes_exit: List[str],
+                                                          up_parking_nodes_exit: List[str],
+                                                          left_entry_nodes: List[str],
+                                                          left_exit_nodes: List[str],
+                                                          right_entry_nodes: List[str],
+                                                          right_exit_nodes: List[str],
+                                                          middle_entry_nodes: List[str],
+                                                          middle_exit_nodes: List[str],
+                                                          nodes_dict: Dict[str, TraversalNode]) -> List[TraversalEdge]:
+        if parking_space.orientation == "right" or parking_space.orientation == "up":
+            right_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=right_entry_nodes,
+                                                                 destination_lateral_nodes=right_exit_nodes,
+                                                                 nodes_dict=nodes_dict)
+            edges.extend(right_opposite_edges)
+
+            middle_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=middle_entry_nodes,
+                                                                 destination_lateral_nodes=middle_exit_nodes,
+                                                                 nodes_dict=nodes_dict)
+            edges.extend(middle_opposite_edges)
+
+
+
+            first_exit_straight_edges = self._connect_straight_parking_lanes(origin_lateral_nodes=right_exit_nodes,
+                                                                 destination_lateral_nodes=middle_exit_nodes,
+                                                                 nodes_dict=nodes_dict)
+            edges.extend(first_exit_straight_edges)
+
+            second_exit_straight_edges = self._connect_straight_parking_lanes(origin_lateral_nodes=middle_exit_nodes,
+                                                                    destination_lateral_nodes=left_exit_nodes,
+                                                                    nodes_dict=nodes_dict)
+            edges.extend(second_exit_straight_edges)
+
+            first_entry_straight_edges = self._connect_straight_parking_lanes(origin_lateral_nodes=left_entry_nodes,
+                                                                    destination_lateral_nodes=middle_entry_nodes,
+                                                                    nodes_dict=nodes_dict)
+            edges.extend(first_entry_straight_edges)
+
+            second_entry_straight_edges = self._connect_straight_parking_lanes(origin_lateral_nodes=middle_entry_nodes,
+                                                                    destination_lateral_nodes=right_entry_nodes,
+                                                                    nodes_dict=nodes_dict)
+            edges.extend(second_entry_straight_edges)
+
+
+
+            first_down_entry_edges = self._connect_lateral_nodes_to_parking_space_nodes(lateral_nodes=left_entry_nodes,
+                                                        parking_space_nodes=down_parking_nodes_entry[:(parking_space.num_parking_spaces//2)+1],
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(first_down_entry_edges)
+
+            second_down_entry_edges = self._connect_lateral_nodes_to_parking_space_nodes(lateral_nodes=middle_entry_nodes,
+                                                        parking_space_nodes=down_parking_nodes_entry[(parking_space.num_parking_spaces//2)+1:],
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(second_down_entry_edges)
+
+            first_up_entry_edges = self._connect_lateral_nodes_to_parking_space_nodes(lateral_nodes=right_exit_nodes,
+                                                        parking_space_nodes=up_parking_nodes_entry[(parking_space.num_parking_spaces//2):],
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(first_up_entry_edges)
+
+            second_up_entry_edges = self._connect_lateral_nodes_to_parking_space_nodes(lateral_nodes=middle_exit_nodes,
+                                                        parking_space_nodes=up_parking_nodes_entry[:(parking_space.num_parking_spaces//2)],
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(second_up_entry_edges)
+
+            first_down_exit_edges = self._connect_parking_space_nodes_to_lateral_nodes(parking_space_nodes=down_parking_nodes_exit[:(parking_space.num_parking_spaces//2)],
+                                                        lateral_nodes=middle_entry_nodes,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(first_down_exit_edges)
+
+            second_down_exit_edges = self._connect_parking_space_nodes_to_lateral_nodes(parking_space_nodes=down_parking_nodes_exit[(parking_space.num_parking_spaces//2):],
+                                                        lateral_nodes=right_entry_nodes,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(second_down_exit_edges)
+
+            first_up_exit_edges = self._connect_parking_space_nodes_to_lateral_nodes(parking_space_nodes=up_parking_nodes_exit[:(parking_space.num_parking_spaces//2)+1],
+                                                        lateral_nodes=left_exit_nodes,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(first_up_exit_edges)
+
+            second_up_exit_edges = self._connect_parking_space_nodes_to_lateral_nodes(parking_space_nodes=up_parking_nodes_exit[(parking_space.num_parking_spaces//2)+1:],
+                                                        lateral_nodes=middle_exit_nodes,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(second_up_exit_edges)
+                                                                                       
+        elif parking_space.orientation == "left" or parking_space.orientation == "down":
+            left_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=left_entry_nodes,
+                                                                 destination_lateral_nodes=left_exit_nodes,
+                                                                 nodes_dict=nodes_dict)
+            edges.extend(left_opposite_edges)
+
+            exit_straight_edges = self._connect_straight_parking_lanes(origin_lateral_nodes=left_exit_nodes,
+                                                                 destination_lateral_nodes=right_exit_nodes,
+                                                                 nodes_dict=nodes_dict)
+            edges.extend(exit_straight_edges)
+
+            entry_straight_edges = self._connect_straight_parking_lanes(origin_lateral_nodes=right_entry_nodes,
+                                                                 destination_lateral_nodes=left_entry_nodes,
+                                                                 nodes_dict=nodes_dict)
+            edges.extend(entry_straight_edges)
+
+            down_entry_edges = self._connect_lateral_nodes_to_parking_space_nodes(lateral_nodes=right_entry_nodes,
+                                                        parking_space_nodes=up_parking_nodes_entry,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(down_entry_edges)
+
+            up_entry_edges = self._connect_lateral_nodes_to_parking_space_nodes(lateral_nodes=left_exit_nodes,
+                                                        parking_space_nodes=down_parking_nodes_entry,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(up_entry_edges)
+
+            down_exit_edges = self._connect_parking_space_nodes_to_lateral_nodes(parking_space_nodes=down_parking_nodes_exit,
+                                                        lateral_nodes=right_exit_nodes,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(down_exit_edges)
+
+            up_exit_edges = self._connect_parking_space_nodes_to_lateral_nodes(parking_space_nodes=up_parking_nodes_exit,
+                                                        lateral_nodes=left_entry_nodes,
+                                                        action="turn_right",
+                                                        nodes_dict=nodes_dict)
+            edges.extend(up_exit_edges)
+    
+    def _create_parking_space_connections_for_nodes(self,
+                                                    parking_space: ParkingSpace,
+                                                    up_parking_nodes_entry: List[str],
+                                                    down_parking_nodes_entry: List[str],
+                                                    down_parking_nodes_exit: List[str],
+                                                    up_parking_nodes_exit: List[str],
+                                                    left_entry_nodes: List[str],
+                                                    left_exit_nodes: List[str],
+                                                    right_entry_nodes: List[str],
+                                                    right_exit_nodes: List[str],
+                                                    up_corridor_nodes: List[str],
+                                                    down_corridor_nodes: List[str],
+                                                    middle_entry_nodes: List[str],
+                                                    middle_exit_nodes: List[str],
+                                                    nodes_dict: Dict[str, TraversalNode]) -> None:
+        edges = []
+        up_parking_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=up_parking_nodes_entry,
+                                                                         destination_lateral_nodes=up_parking_nodes_exit,
+                                                                         nodes_dict=nodes_dict)
+        edges.extend(up_parking_opposite_edges)
+
+        down_parking_opposite_edges = self._connect_opposite_parking_lanes(origin_lateral_nodes=down_parking_nodes_entry,
+                                                                            destination_lateral_nodes=down_parking_nodes_exit,
+                                                                            nodes_dict=nodes_dict)
+        edges.extend(down_parking_opposite_edges)
+
+        corridor = self._get_corridor_by_id(parking_space.corridor_id)
+
+        corridor_edges = self._create_corridor_straight_connections_for_nodes(corridor=corridor,
+                                                                              left_nodes=down_corridor_nodes,
+                                                                              right_nodes=up_corridor_nodes,
+                                                                              nodes_dict=nodes_dict)
+        edges.extend(corridor_edges)
+
+        corridor_connection_edges = self._create_parking_corridor_connections_for_nodes(parking_space=parking_space,
+                                                                                      up_corridor_nodes=up_corridor_nodes,
+                                                                                      down_corridor_nodes=down_corridor_nodes,
+                                                                                      left_entry_nodes=left_entry_nodes,
+                                                                                      left_exit_nodes=left_exit_nodes,
+                                                                                      right_entry_nodes=right_entry_nodes,
+                                                                                      right_exit_nodes=right_exit_nodes,
+                                                                                      nodes_dict=nodes_dict)
+        edges.extend(corridor_connection_edges)
+
+        if middle_entry_nodes and middle_exit_nodes:
+            self._create_large_parking_space_connections_for_nodes(edges=edges,
+                                                                    parking_space=parking_space,
+                                                                    up_parking_nodes_entry=up_parking_nodes_entry,
+                                                                    down_parking_nodes_entry=down_parking_nodes_entry,
+                                                                    down_parking_nodes_exit=down_parking_nodes_exit,
+                                                                    up_parking_nodes_exit=up_parking_nodes_exit,
+                                                                    left_entry_nodes=left_entry_nodes,
+                                                                    left_exit_nodes=left_exit_nodes,
+                                                                    right_entry_nodes=right_entry_nodes,
+                                                                    right_exit_nodes=right_exit_nodes,
+                                                                    middle_entry_nodes=middle_entry_nodes,
+                                                                    middle_exit_nodes=middle_exit_nodes,
+                                                                    nodes_dict=nodes_dict)
+        else:
+            self._create_small_parking_space_connections_for_nodes(edges=edges,
+                                                                     parking_space=parking_space,
+                                                                     up_parking_nodes_entry=up_parking_nodes_entry,
+                                                                     down_parking_nodes_entry=down_parking_nodes_entry,
+                                                                     down_parking_nodes_exit=down_parking_nodes_exit,
+                                                                     up_parking_nodes_exit=up_parking_nodes_exit,
+                                                                     left_entry_nodes=left_entry_nodes,
+                                                                     left_exit_nodes=left_exit_nodes,
+                                                                     right_entry_nodes=right_entry_nodes,
+                                                                     right_exit_nodes=right_exit_nodes,
+                                                                     nodes_dict=nodes_dict)
+
+        
+    
         return edges
 
     def _generate_parking_space_subgraph(self, parking_space: ParkingSpace) -> ParkingSpaceSubgraph:
@@ -2205,8 +2433,8 @@ class TraversalGraphGenerator:
 
         up_parking_nodes_entry, down_parking_nodes_entry, \
             down_parking_nodes_exit, up_parking_nodes_exit, left_entry_nodes, \
-                left_exit_nodes, right_entry_nodes, right_exit_nodes, up_corridor_nodes, \
-                    down_corridor_nodes, nodes_dict = parking_space_nodes
+                left_exit_nodes, right_entry_nodes, right_exit_nodes, middle_entry_nodes, middle_exit_nodes, \
+                    up_corridor_nodes, down_corridor_nodes, nodes_dict = parking_space_nodes
         
         parking_space_connection_edges = self._create_parking_space_connections_for_nodes(parking_space=parking_space,
                                                                                         up_parking_nodes_entry=up_parking_nodes_entry,
@@ -2219,6 +2447,8 @@ class TraversalGraphGenerator:
                                                                                         right_exit_nodes=right_exit_nodes,
                                                                                         up_corridor_nodes=up_corridor_nodes,
                                                                                         down_corridor_nodes=down_corridor_nodes,
+                                                                                        middle_entry_nodes=middle_entry_nodes,
+                                                                                        middle_exit_nodes=middle_exit_nodes,
                                                                                         nodes_dict=nodes_dict)
         
         parking_space_subgraph = ParkingSpaceSubgraph(up_parking_nodes_entry=up_parking_nodes_entry,
