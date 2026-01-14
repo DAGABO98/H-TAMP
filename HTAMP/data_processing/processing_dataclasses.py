@@ -81,3 +81,12 @@ class PreprocessedDataFrames:
     respiratory_rate_df: Optional[pd.DataFrame] = None
     temperature_df: Optional[pd.DataFrame] = None
     oxygen_saturation_df: Optional[pd.DataFrame] = None
+
+@dataclass
+class DailyRequestsDataFrames:
+    blood_pressure_requests_df: Optional[pd.DataFrame] = None
+    heart_rate_requests_df: Optional[pd.DataFrame] = None
+    respiratory_rate_requests_df: Optional[pd.DataFrame] = None
+    temperature_requests_df: Optional[pd.DataFrame] = None
+    oxygen_saturation_requests_df: Optional[pd.DataFrame] = None
+    medications_requests_df: Optional[pd.DataFrame] = None

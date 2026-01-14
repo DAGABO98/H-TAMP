@@ -85,6 +85,15 @@ class DataHelpers:
         dff["iso_week"] = dff["__day__"].apply(lambda d: d.isocalendar().week)
 
         return dff
+    
+    @staticmethod
+    def get_daily_requests(df: pd.DataFrame, date_stamp: pd.Timestamp) -> pd.DataFrame:
+        """
+        Extract all requests for a specific date_stamp (date).
+        """
+        target_date = date_stamp.date()
+        daily_df = df[df["__day__"] == target_date].copy()
+        return daily_df
 
     @staticmethod
     def compute_per_day_counts(dff: pd.DataFrame) -> pd.DataFrame:

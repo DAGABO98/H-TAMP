@@ -5,7 +5,8 @@ from typing import Sequence
 import pandas as pd
 
 from HTAMP.data_processing.data_helpers import DataHelpers
-from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles, PreprocessedDataFrames
+from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles, DailyRequestsDataFrames, PreprocessedDataFrames
+from HTAMP.planning.planning_dataclasses import TimeSignal
 
 class GlobalRequestHandler:
 
@@ -144,27 +145,124 @@ class GlobalRequestHandler:
 
 class DailyRequestHandler(GlobalRequestHandler):
     
-    def __init__(self, annotated_data_files: AnnotatedDataFiles, request_dir: str, use_saved_data: bool = False):
+    def __init__(self, 
+                 date_stamp: pd.Timestamp,
+                 annotated_data_files: AnnotatedDataFiles, 
+                 request_dir: str, 
+                 use_saved_data: bool = False):
         super().__init__(annotated_data_files, request_dir, use_saved_data)
+        self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp)
+    
+    def _process_daily_requests(self, date_stamp: pd.Timestamp) -> DailyRequestsDataFrames:
+        daily_bp_requests = DataHelpers.get_daily_requests(self.bp_df, date_stamp=date_stamp)
+        daily_hr_requests = DataHelpers.get_daily_requests(self.hr_df, date_stamp=date_stamp)
+        daily_rr_requests = DataHelpers.get_daily_requests(self.rr_df, date_stamp=date_stamp)
+        daily_temp_requests = DataHelpers.get_daily_requests(self.temp_df, date_stamp=date_stamp)
+        daily_os_requests = DataHelpers.get_daily_requests(self.os_df, date_stamp=date_stamp)
+        daily_med_requests = DataHelpers.get_daily_requests(self.med_df, date_stamp=date_stamp)
+
+        daily_requests_dfs = DailyRequestsDataFrames(
+            blood_pressure_requests_df=daily_bp_requests,
+            heart_rate_requests_df=daily_hr_requests,
+            respiratory_rate_requests_df=daily_rr_requests,
+            temperature_requests_df=daily_temp_requests,
+            oxygen_saturation_requests_df=daily_os_requests,
+            medications_requests_df=daily_med_requests
+        )
+
+        return daily_requests_dfs
+    
+    def _extract_requests_for_time_signal(self, 
+                                         df: pd.DataFrame, 
+                                         time_signal: TimeSignal, 
+                                         scheduled_time_col: str, 
+                                         ordered_time_col: str,
+                                         lookahead_minutes: int) -> pd.DataFrame:
+        next_hour_time_stamp = time_signal.time_stamp + pd.Timedelta(minutes=lookahead_minutes)
+        mask = (df[scheduled_time_col] >= time_signal.time_stamp) & \
+               (df[scheduled_time_col] < next_hour_time_stamp) & \
+               (df[ordered_time_col] <= time_signal.time_stamp)
+        extracted_requests = df[mask].copy()
+        df.drop(extracted_requests.index, inplace=True)
+        return extracted_requests
+    
+    def extract_all_requests_for_time_signal(self, 
+                                         time_signal: TimeSignal,
+                                         look_ahead_minutes: int) -> DailyRequestsDataFrames:
+        extracted_bp_requests = self._extract_requests_for_time_signal(
+            df=self.daily_requests_dfs.blood_pressure_requests_df,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes
+            )
+        
+        extracted_hr_requests = self._extract_requests_for_time_signal(
+            df=self.daily_requests_dfs.heart_rate_requests_df,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes
+            )
+        
+        extracted_rr_requests = self._extract_requests_for_time_signal(
+            df=self.daily_requests_dfs.respiratory_rate_requests_df,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes
+            )
+        
+        extracted_temp_requests = self._extract_requests_for_time_signal(
+            df=self.daily_requests_dfs.temperature_requests_df,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes
+            )
+        
+        extracted_os_requests = self._extract_requests_for_time_signal(
+            df=self.daily_requests_dfs.oxygen_saturation_requests_df,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes
+            )
+        
+        extracted_med_requests = self._extract_requests_for_time_signal(
+            df=self.daily_requests_dfs.medications_requests_df,
+            time_signal=time_signal,
+            scheduled_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            lookahead_minutes=look_ahead_minutes
+            )
+        
+        extracted_requests_dfs = DailyRequestsDataFrames(
+            blood_pressure_requests_df=extracted_bp_requests,
+            heart_rate_requests_df=extracted_hr_requests,
+            respiratory_rate_requests_df=extracted_rr_requests,
+            temperature_requests_df=extracted_temp_requests,
+            oxygen_saturation_requests_df=extracted_os_requests,
+            medications_requests_df=extracted_med_requests
+            )
+
+        return extracted_requests_dfs
+        
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Weekly histograms of scheduled requests per floor")
-    parser.add_argument("--visits_data_file", type=str, default="data/processed/patient_room_stays.csv", help="Path to the visits data CSV file.")
-    parser.add_argument("--admissions_discharges_file", type=str, default="data/processed/admissions_discharges.csv", help="Path to the annotated admissions and discharges CSV file.")
+    parser = argparse.ArgumentParser(description="Process hospital data and generate daily requests.")
     parser.add_argument("--medications_orders_file", type=str, default="data/processed/medication_orders_annotated.csv", help="Path to the medications orders CSV file.")
     parser.add_argument("--blood_pressure_orders_file", type=str, default="data/processed/blood_pressure_orders_annotated.csv", help="Path to the blood pressure orders CSV file.")
     parser.add_argument("--heart_rate_orders_file", type=str, default="data/processed/heart_rate_orders_annotated.csv", help="Path to the heart rate orders CSV file.")
     parser.add_argument("--respiratory_rate_orders_file", type=str, default="data/processed/respiratory_rate_orders_annotated.csv", help="Path to the respiratory rate orders CSV file.")
     parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
-    parser.add_argument("--week-start", default="MON", help="Week anchor day: MON (default), SUN, TUE, ...")
-    parser.add_argument("--outdir", default="results", help="Directory to write outputs (default: ./results)")
-    parser.add_argument("--dist-data-dir", default="data/distributions", help="Directory to write distribution data outputs (default: ./data/distributions/)")
     args = parser.parse_args()
 
     annotated_data_files = AnnotatedDataFiles(
-        annotated_visits=args.visits_data_file,
-        annotated_admissions_discharges=args.admissions_discharges_file,
+        annotated_visits=None,
+        annotated_admissions_discharges=None,
         annotated_medications=args.medications_orders_file,
         annotated_blood_pressure=args.blood_pressure_orders_file,
         annotated_heart_rate=args.heart_rate_orders_file,
