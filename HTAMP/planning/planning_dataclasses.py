@@ -150,64 +150,84 @@ class TimeSignal:
         self.day = day
         self.hour = hour
         self.minute = minute
-        time_stamp = pd.Timestamp(year=year,
+        self.time_stamp = pd.Timestamp(year=year,
                                   month=month,
                                   day=day,
                                   hour=hour,
                                   minute=minute)
-        self.weekday = time_stamp.weekday()
+        self.weekday = self.time_stamp.weekday()
     
     def __repr__(self):
         time_signal_str = str(self.year) + "-" + str(self.month) + "-" + str(self.day)+ " " + str(self.hour) + ":" + str(self.minute)
 
         return time_signal_str
 
+@dataclass
+class TaskProperties:
+    task_type: str
+    wait_time_seconds: float
+    time_for_rejection_minutes: float
+
+@dataclass
+class AllTaskProperties:
+    blood_pressure: TaskProperties
+    heart_rate: TaskProperties
+    respiratory_rate: TaskProperties
+    temperature: TaskProperties
+    oxygen_saturation: TaskProperties
+    medications: TaskProperties
+
 class TaskRequest:
     def __init__(self, 
                  request_id: int, 
                  request_type: str, 
                  goal_nodes: list[str], 
-                 wait_times_at_goals: list[float],
-                 start_time: float = 0.0,
-                 end_time: float = 0.0,
-                 desired_time_for_service: float = 0.0,
-                 planned_time_for_service: float = 0.0,
+                 wait_times_at_goals_seconds: list[float],
+                 time_for_rejection_minutes: float,
+                 ordered_time: pd.Timestamp,
+                 scheduled_time: pd.Timestamp,
                  started: bool = False,
                  completed_goals: int = 0,
                  completed: bool = False,
-                 completion_time: float = 0.0,
-                 planned_goal_indices: list[int] = None
-                 ):
+                 rejected: bool = False):
         self.request_id = request_id
         self.request_type = request_type
         self.goal_nodes = goal_nodes
-        self.wait_times_at_goals = wait_times_at_goals
-        self.start_time = start_time
-        self.end_time = end_time
-        self.desired_time_for_service = desired_time_for_service
-        self.planned_time_for_service = planned_time_for_service
+        self.wait_times_at_goals_seconds = wait_times_at_goals_seconds
+        self.ordered_time = ordered_time
+        self.scheduled_time = scheduled_time
+        self.desired_time_for_service = scheduled_time + pd.Timedelta(minutes=time_for_rejection_minutes)
         self.started = started
-        self.planned_goal_indices = planned_goal_indices
         self.completed_goals = completed_goals
         self.completed = completed
-        self.completion_time = completion_time
+        self.rejected = rejected
         self.total_cost = 0.0
     
-    def mark_completed(self, completion_time: float) -> None:
+    def mark_completed(self, completion_time: pd.Timestamp) -> None:
         self.completed = True
-        self.completion_time = completion_time
-        self.total_cost = max(self.completion_time - self.desired_time_for_service, 0.0)
+        self.total_cost = (completion_time - self.scheduled_time).total_seconds()
+    
+    def mark_rejected(self, rejection_penalty: float) -> None:
+        self.rejected = True
+        self.total_cost = rejection_penalty
     
     def mark_started(self) -> None:
         self.started = True
 
-    def schedule_task(self, planned_time: float, planned_goal_indices: list[int]) -> None:
+    def schedule_task(self) -> None:
         self.completed_goals = 0
-        self.planned_time_for_service = planned_time
-        self.planned_goal_indices = planned_goal_indices
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"
+    
+@dataclass
+class RequestsLists:
+    blood_pressure_requests: list[TaskRequest]
+    heart_rate_requests: list[TaskRequest]
+    respiratory_rate_requests: list[TaskRequest]
+    temperature_requests: list[TaskRequest]
+    oxygen_saturation_requests: list[TaskRequest]
+    medications_requests: list[TaskRequest]
 
 class FrameData:
     def __init__(self):

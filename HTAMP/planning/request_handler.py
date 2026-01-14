@@ -1,12 +1,11 @@
 import argparse
 from pathlib import Path
-from typing import Sequence
 
 import pandas as pd
 
 from HTAMP.data_processing.data_helpers import DataHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles, DailyRequestsDataFrames, PreprocessedDataFrames
-from HTAMP.planning.planning_dataclasses import TimeSignal
+from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskProperties, TaskRequest, TimeSignal
 
 class GlobalRequestHandler:
 
@@ -69,7 +68,10 @@ class GlobalRequestHandler:
         df = pd.read_csv(self.annotated_data_files.annotated_medications)
         return df
     
-    def _extend_dataframes(self, preprocessed_dfs: PreprocessedDataFrames, start_date: str, end_date: str) -> pd.DataFrame:
+    def _extend_dataframes(self, 
+                           preprocessed_dfs: PreprocessedDataFrames, 
+                           start_date: str, 
+                           end_date: str) -> None:
 
         self.bp_df = self._prepare_floor_data(original_df=preprocessed_dfs.blood_pressure_df, 
                                  time_col="Scheduled DTTM",
@@ -172,7 +174,7 @@ class DailyRequestHandler(GlobalRequestHandler):
 
         return daily_requests_dfs
     
-    def _extract_requests_for_time_signal(self, 
+    def _extract_requests_df_for_time_signal(self, 
                                          df: pd.DataFrame, 
                                          time_signal: TimeSignal, 
                                          scheduled_time_col: str, 
@@ -186,72 +188,162 @@ class DailyRequestHandler(GlobalRequestHandler):
         df.drop(extracted_requests.index, inplace=True)
         return extracted_requests
     
-    def extract_all_requests_for_time_signal(self, 
+    def _convert_df_into_requests_list(self, 
+                                       df: pd.DataFrame, 
+                                       request_type: str, 
+                                       wait_time_seconds: float, 
+                                       time_for_rejection_minutes: float) -> list[TaskRequest]:
+        task_requets_list = []
+        for req_index, row in df.iterrows():
+            if request_type == "medication":
+                goal_nodes = [str(row["scheduled_space_supplies"]), str(row["scheduled_space_id"])]
+                wait_times_at_goals_seconds = [wait_time_seconds, wait_time_seconds]
+                ordered_time = pd.Timestamp(row["Medication Order DTTM"])
+                scheduled_time = pd.Timestamp(row["Medication Scheduled DTTM"])
+            else:
+                goal_nodes = [str(row["scheduled_space_id"])]
+                wait_times_at_goals_seconds = [wait_time_seconds]
+                ordered_time = pd.Timestamp(row["Ordered DTTM"])
+                scheduled_time = pd.Timestamp(row["Scheduled DTTM"])
+
+            task_request = TaskRequest(
+                request_id=req_index,
+                request_type=request_type,
+                goal_nodes=goal_nodes,
+                wait_times_at_goals_seconds=wait_times_at_goals_seconds,
+                time_for_rejection_minutes=time_for_rejection_minutes,
+                ordered_time=ordered_time,
+                scheduled_time=scheduled_time
+                )
+
+            task_requets_list.append(task_request)
+        return task_requets_list
+            
+    
+    def _get_requests_for_time_signal(self, 
+                                     df: pd.DataFrame, 
+                                     time_signal: TimeSignal, 
+                                     scheduled_time_col: str, 
+                                     ordered_time_col: str,
+                                     lookahead_minutes: int,
+                                     request_type: str,
+                                     wait_time_seconds: float,
+                                     time_for_rejection_minutes: float) -> list[TaskRequest]:
+        extracted_requests_df = self._extract_requests_df_for_time_signal(
+                                                                    df=df,
+                                                                    time_signal=time_signal,
+                                                                    scheduled_time_col=scheduled_time_col,
+                                                                    ordered_time_col=ordered_time_col,
+                                                                    lookahead_minutes=lookahead_minutes
+                                                                    )
+        requests_list = self._convert_df_into_requests_list(
+            df=extracted_requests_df,
+            request_type=request_type,
+            wait_time_seconds=wait_time_seconds,
+            time_for_rejection_minutes=time_for_rejection_minutes
+            )
+
+        return requests_list
+
+        
+    
+    def get_all_requests_for_time_signal(self, 
                                          time_signal: TimeSignal,
-                                         look_ahead_minutes: int) -> DailyRequestsDataFrames:
-        extracted_bp_requests = self._extract_requests_for_time_signal(
+                                         look_ahead_minutes: int,
+                                         all_task_properties: AllTaskProperties
+                                         ) -> RequestsLists:
+        
+        extracted_bp_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.blood_pressure_requests_df,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
-            lookahead_minutes=look_ahead_minutes
-            )
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.blood_pressure.task_type,
+            wait_time_seconds=all_task_properties.blood_pressure.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.blood_pressure.time_for_rejection_minutes)
         
-        extracted_hr_requests = self._extract_requests_for_time_signal(
+        extracted_hr_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.heart_rate_requests_df,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
-            lookahead_minutes=look_ahead_minutes
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.heart_rate.task_type,
+            wait_time_seconds=all_task_properties.heart_rate.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.heart_rate.time_for_rejection_minutes
             )
         
-        extracted_rr_requests = self._extract_requests_for_time_signal(
+        extracted_rr_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.respiratory_rate_requests_df,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
-            lookahead_minutes=look_ahead_minutes
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.respiratory_rate.task_type,
+            wait_time_seconds=all_task_properties.respiratory_rate.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.respiratory_rate.time_for_rejection_minutes
             )
         
-        extracted_temp_requests = self._extract_requests_for_time_signal(
+        extracted_temp_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.temperature_requests_df,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
-            lookahead_minutes=look_ahead_minutes
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.temperature.task_type,
+            wait_time_seconds=all_task_properties.temperature.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.temperature.time_for_rejection_minutes
             )
         
-        extracted_os_requests = self._extract_requests_for_time_signal(
+        extracted_os_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.oxygen_saturation_requests_df,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
-            lookahead_minutes=look_ahead_minutes
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.oxygen_saturation.task_type,
+            wait_time_seconds=all_task_properties.oxygen_saturation.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.oxygen_saturation.time_for_rejection_minutes
             )
         
-        extracted_med_requests = self._extract_requests_for_time_signal(
+        extracted_med_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.medications_requests_df,
             time_signal=time_signal,
             scheduled_time_col="Medication Scheduled DTTM",
             ordered_time_col="Medication Order DTTM",
-            lookahead_minutes=look_ahead_minutes
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.medications.task_type,
+            wait_time_seconds=all_task_properties.medications.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.medications.time_for_rejection_minutes
             )
         
-        extracted_requests_dfs = DailyRequestsDataFrames(
-            blood_pressure_requests_df=extracted_bp_requests,
-            heart_rate_requests_df=extracted_hr_requests,
-            respiratory_rate_requests_df=extracted_rr_requests,
-            temperature_requests_df=extracted_temp_requests,
-            oxygen_saturation_requests_df=extracted_os_requests,
-            medications_requests_df=extracted_med_requests
+        extracted_requests_lists = RequestsLists(
+            blood_pressure_requests=extracted_bp_requests,
+            heart_rate_requests=extracted_hr_requests,
+            respiratory_rate_requests=extracted_rr_requests,
+            temperature_requests=extracted_temp_requests,
+            oxygen_saturation_requests=extracted_os_requests,
+            medications_requests=extracted_med_requests
             )
 
-        return extracted_requests_dfs
+        return extracted_requests_lists
         
 
 
 def main():
     parser = argparse.ArgumentParser(description="Process hospital data and generate daily requests.")
+
+    # date_operational_range parameters
+    parser.add_argument("--year", type=int, dest='year', default=2022, help='Select year of interest.')
+    parser.add_argument("--month", type=int, dest='month', default=10, help='Select month of interest.')
+    parser.add_argument("--day", type=int, dest='day', default=17, help='Select day of interest.')
+    parser.add_argument("--hour", type=int, dest='hour', default=8, help='Select hour of interest.')
+    parser.add_argument("--minute", type=int, dest='minute', default=0, help='Select minute of interest.')
+
+    # file paths
+    parser.add_argument("--request_dir", type=str, default="data/requests", help="Directory to save global requests data.")
+    parser.add_argument("--use_saved_request_data", action='store_true', help="Flag to use previously saved request data.")
     parser.add_argument("--medications_orders_file", type=str, default="data/processed/medication_orders_annotated.csv", help="Path to the medications orders CSV file.")
     parser.add_argument("--blood_pressure_orders_file", type=str, default="data/processed/blood_pressure_orders_annotated.csv", help="Path to the blood pressure orders CSV file.")
     parser.add_argument("--heart_rate_orders_file", type=str, default="data/processed/heart_rate_orders_annotated.csv", help="Path to the heart rate orders CSV file.")
@@ -270,3 +362,67 @@ def main():
         annotated_temperature=args.temperature_orders_file,
         annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
     )
+
+    date_stamp = pd.Timestamp(year=args.year, month=args.month, day=args.day)
+
+    request_handler = DailyRequestHandler(date_stamp=date_stamp,
+                                          annotated_data_files=annotated_data_files,
+                                          request_dir=args.request_dir,
+                                          use_saved_data=args.use_saved_request_data)
+    
+    time_signal = TimeSignal(year=args.year, month=args.month, day=args.day, hour=args.hour, minute=args.minute)
+
+    blood_pressure_properties = TaskProperties(
+        task_type="blood_pressure",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    heart_rate_properties = TaskProperties(
+        task_type="heart_rate",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    respiratory_rate_properties = TaskProperties(
+        task_type="respiratory_rate",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    temperature_properties = TaskProperties(
+        task_type="temperature",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    oxygen_saturation_properties = TaskProperties(
+        task_type="oxygen_saturation",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    medications_properties = TaskProperties(
+        task_type="medication",
+        wait_time_seconds=60.0,
+        time_for_rejection_minutes=60.0
+    )
+
+    all_task_properties = AllTaskProperties(
+        blood_pressure=blood_pressure_properties,
+        heart_rate=heart_rate_properties,
+        respiratory_rate=respiratory_rate_properties,
+        temperature=temperature_properties,
+        oxygen_saturation=oxygen_saturation_properties,
+        medications=medications_properties
+    )
+
+    request_handler.get_all_requests_for_time_signal(
+        time_signal=time_signal,
+        look_ahead_minutes=60,
+        all_task_properties=all_task_properties
+    )
+    
+    
+if __name__ == "__main__":
+    main()
