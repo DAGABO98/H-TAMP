@@ -5,12 +5,14 @@ import random
 from datetime import datetime
 from typing import Optional
 
+from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import DateStamp, FrameData, SimulatorConfig
+from HTAMP.planning.planning_dataclasses import DateStamp, FrameData, SimulatorConfig, TimeSignal
+from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
@@ -86,9 +88,18 @@ class AssignmentEvaluator:
                                        initial_robot_positions={i: self.selected_start_nodes[i].position for i in range(self.args.num_robots)},
                                        horizon=5000.0)
     
-    def evaluate_assignment(self, date_stamp: DateStamp, 
-                            hour_range: Optional[tuple[int, int]] = None,
-                              save_frame_data: bool = False) -> tuple[FrameData, float]:
+    def evaluate_assignment(self, 
+                            date_stamp: DateStamp, 
+                            hour_range: Optional[tuple[int, int]],
+                            annotated_data_files: AnnotatedDataFiles,
+                            request_dir: Optional[str] = None,
+                            use_saved_request_data: bool = False,
+                            save_frame_data: bool = False,
+                            look_ahead_minutes: int = 60) -> tuple[FrameData, float]:
+        request_handler = DailyRequestHandler(date_stamp=date_stamp,
+                                              annotated_data_files=annotated_data_files,
+                                              request_dir=request_dir,
+                                              use_saved_data=use_saved_request_data)
         if save_frame_data:
             frame_data = FrameData()
         else:
@@ -98,17 +109,19 @@ class AssignmentEvaluator:
             start_hour, end_hour = hour_range
         else:
             start_hour, end_hour = 0, 24
-        
-        # extract initial requests for the day
-        # requests must be ordered before the current time signal and must be scheduled to be serviced within 30 minutes of the current time
 
         for hour in range(start_hour, end_hour):
             for minute in range(60):
-                time_signal = (date_stamp.year, date_stamp.month, date_stamp.day, hour, minute)
+                time_signal = TimeSignal(year=date_stamp.year,
+                                         month=date_stamp.month,
+                                         day=date_stamp.day,
+                                         hour=hour,
+                                         minute=minute)
 
                 # extract requests for the current time signal
                 # requests must be ordered before the current time signal and must be scheduled to be serviced within 30 minutes of the current time
-                requests = self.request_handler.extract_requests_for_time_signal(time_signal)
+                requests = request_handler.extract_all_requests_for_time_signal(time_signal=time_signal,
+                                                                               look_ahead_minutes=look_ahead_minutes)
 
                 for second in range(60):
                     for frames in range(self.args.fps):
@@ -137,8 +150,24 @@ def experiment(args, random_seed=None):
         robot_profiles.append(robot_profile)
 
     evaluator = AssignmentEvaluator(args, random_seed=random_seed, robot_profiles=robot_profiles)
-    frame_data, total_cost = evaluator.evaluate_assignment(date_stamp=DateStamp(year=args.year, month=args.month, day=args.day), 
+
+    annotated_data_files = AnnotatedDataFiles(
+        annotated_visits=None,
+        annotated_admissions_discharges=None,
+        annotated_medications=args.medications_orders_file,
+        annotated_blood_pressure=args.blood_pressure_orders_file,
+        annotated_heart_rate=args.heart_rate_orders_file,
+        annotated_respiratory_rate=args.respiratory_rate_orders_file,
+        annotated_temperature=args.temperature_orders_file,
+        annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
+    )
+    date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
+
+    frame_data, total_cost = evaluator.evaluate_assignment(date_stamp=date_stamp, 
                                                            hour_range=(13,14),
+                                                           annotated_data_files=annotated_data_files,
+                                                           request_dir=args.request_dir,
+                                                           use_saved_request_data=args.use_saved_request_data,
                                                            save_frame_data=False)
 
     if frame_data is not None:
@@ -164,6 +193,16 @@ def main():
     parser.add_argument("--year", type=int, dest='year', default=2022, help='Select year of interest.')
     parser.add_argument("--month", type=int, dest='month', default=10, help='Select month of interest.')
     parser.add_argument("--day", type=int, dest='day', default=17, help='Select day of interest.')
+
+    # file parameters
+    parser.add_argument("--request_dir", type=str, default="data/requests", help="Directory to save global requests data.")
+    parser.add_argument("--use_saved_request_data", action='store_true', help="Flag to use previously saved request data.")
+    parser.add_argument("--medications_orders_file", type=str, default="data/processed/medication_orders_annotated.csv", help="Path to the medications orders CSV file.")
+    parser.add_argument("--blood_pressure_orders_file", type=str, default="data/processed/blood_pressure_orders_annotated.csv", help="Path to the blood pressure orders CSV file.")
+    parser.add_argument("--heart_rate_orders_file", type=str, default="data/processed/heart_rate_orders_annotated.csv", help="Path to the heart rate orders CSV file.")
+    parser.add_argument("--respiratory_rate_orders_file", type=str, default="data/processed/respiratory_rate_orders_annotated.csv", help="Path to the respiratory rate orders CSV file.")
+    parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
+    parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
 
     # environment parameters
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")

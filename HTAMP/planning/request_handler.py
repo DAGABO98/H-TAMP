@@ -1,5 +1,7 @@
 import argparse
+from datetime import datetime
 from pathlib import Path
+import traceback
 
 import pandas as pd
 
@@ -152,7 +154,7 @@ class DailyRequestHandler(GlobalRequestHandler):
                  annotated_data_files: AnnotatedDataFiles, 
                  request_dir: str, 
                  use_saved_data: bool = False):
-        super().__init__(annotated_data_files, request_dir, use_saved_data)
+        super().__init__(annotated_data_files, request_dir, start_date=date_stamp, use_saved_data=use_saved_data)
         self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp)
     
     def _process_daily_requests(self, date_stamp: pd.Timestamp) -> DailyRequestsDataFrames:
@@ -417,12 +419,29 @@ def main():
         medications=medications_properties
     )
 
-    request_handler.get_all_requests_for_time_signal(
+    requests_lists = request_handler.get_all_requests_for_time_signal(
         time_signal=time_signal,
         look_ahead_minutes=60,
         all_task_properties=all_task_properties
     )
+
+    print("Extracted Requests:")
+    print(f"Blood Pressure Requests: {len(requests_lists.blood_pressure_requests)}")
+    print(f"Heart Rate Requests: {len(requests_lists.heart_rate_requests)}")
+    print(f"Respiratory Rate Requests: {len(requests_lists.respiratory_rate_requests)}")
+    print(f"Temperature Requests: {len(requests_lists.temperature_requests)}")
+    print(f"Oxygen Saturation Requests: {len(requests_lists.oxygen_saturation_requests)}")
+    print(f"Medications Requests: {len(requests_lists.medications_requests)}")
+
+    print("Request processing completed successfully.")
     
     
 if __name__ == "__main__":
-    main()
+    pStart = datetime.now()
+    try:
+        main()
+    except Exception as errorMainContext:
+        print("Fail End Process: ", errorMainContext)
+        traceback.print_exc()
+    pEnd = datetime.now()
+    print(f"Total Execution Time: {pEnd - pStart}")

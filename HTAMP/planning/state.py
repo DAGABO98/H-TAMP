@@ -346,7 +346,7 @@ def main():
                                                     goal_traversal_node=goal_node,
                                                     robot_profile=robot_profiles[i],
                                                     current_time=current_time,
-                                                    wait_time_at_goal=current_request.wait_times_at_goals[j],
+                                                    wait_time_at_goal=current_request.wait_times_at_goals_seconds[j],
                                                     horizon=simulator_config.horizon)
             if not sub_path:
                 sub_paths = []
