@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 from typing import Optional
 
+import pandas as pd
+
 @dataclass
 class HospitalDataFiles:
     medications_orders: str
@@ -68,3 +70,14 @@ class AnnotatedDataFiles:
     annotated_respiratory_rate: str
     annotated_temperature: str
     annotated_oxygen_saturation: str
+
+@dataclass
+class PreprocessedDataFrames:
+    visits_df: Optional[pd.DataFrame] = None
+    admissions_discharges_df: Optional[pd.DataFrame] = None
+    medications_df: Optional[pd.DataFrame] = None
+    blood_pressure_df: Optional[pd.DataFrame] = None
+    heart_rate_df: Optional[pd.DataFrame] = None
+    respiratory_rate_df: Optional[pd.DataFrame] = None
+    temperature_df: Optional[pd.DataFrame] = None
+    oxygen_saturation_df: Optional[pd.DataFrame] = None
