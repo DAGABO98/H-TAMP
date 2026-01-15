@@ -51,9 +51,9 @@ class PlanningState:
 
         self.robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
 
-        self.assigned_requests: dict[int, list[TaskRequest]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
+        self.requests: dict[int, TaskRequest] = {}
 
-        self.completed_requests: list[TaskRequest] = []
+        self.assigned_requests: dict[int, list[int]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
 
     def _extract_edge_samples_and_cumulative_lengths(self, 
                                                 start_node: TraversalNode, 
@@ -68,6 +68,9 @@ class PlanningState:
         cumulative_lengths = PlanningHelpers.compute_cumulative_path_length(zipped_samples)
 
         return zipped_samples, cumulative_lengths, edge_length
+    
+    def add_request(self, request: TaskRequest) -> None:
+        self.requests[request.request_id] = request
 
     
     def assign_robot_path(self, 
@@ -103,16 +106,17 @@ class PlanningState:
     
     def assign_request_to_robot(self, 
                                 robot_id: int, 
-                                request: TaskRequest, 
+                                request_id: int, 
                                 path: list[tuple[TraversalNode, TimeInterval]],
                                 traversal_graph: TraversalGraph) -> None:
         self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
-        self.assigned_requests[robot_id].append(request)
+        self.assigned_requests[robot_id].append(request_id)
 
     def _check_if_next_node_is_task_start(self, robot_id: int, traversal_node: TraversalNode) -> None:
         assigned_requests = self.assigned_requests[robot_id]
         if assigned_requests:
-            current_request = assigned_requests[0]
+            current_request_id = assigned_requests[0]
+            current_request = self.requests[current_request_id]
             if not current_request.started:
                 if traversal_node.label == current_request.goal_nodes[0]:
                     current_request.mark_started()
@@ -174,7 +178,8 @@ class PlanningState:
             current_node, time_interval = path[current_index]
             assigned_requests = self.assigned_requests[robot_id]
             if assigned_requests:
-                current_request = assigned_requests[0]
+                current_request_id = assigned_requests[0]
+                current_request = self.requests[current_request_id]
                 if current_request.completed_goals < len(current_request.goal_nodes):
                     goal_node_label = current_request.goal_nodes[current_request.completed_goals]
                     if current_node.label == goal_node_label:
@@ -182,9 +187,9 @@ class PlanningState:
                         if current_request.completed_goals >= len(current_request.goal_nodes):
                             assert math.isclose(time_interval.end, self.simulator_time + self.current_wait_times[robot_id]), \
                                 f"Time mismatch at goal for robot {robot_id}: expected {time_interval.end}, got {self.simulator_time + self.current_wait_times[robot_id]}"
-                            completed_request = self.assigned_requests[robot_id].pop(0)
+                            completed_request_id = self.assigned_requests[robot_id].pop(0)
+                            completed_request = self.requests[completed_request_id]
                             completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id])
-                            self.completed_requests.append(completed_request)
 
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
@@ -227,11 +232,22 @@ class PlanningState:
         self.simulator_time += self.simulator_config.time_step
     
     def get_completed_requests(self) -> list[TaskRequest]:
-        return self.completed_requests
+        completed_requests = []
+        for request in self.requests.values():
+            if request.completed:
+                completed_requests.append(request)
+        return completed_requests
+    
+    def get_rejected_requests(self) -> list[TaskRequest]:
+        rejected_requests = []
+        for request in self.requests.values():
+            if request.rejected:
+                rejected_requests.append(request)
+        return rejected_requests
     
     def compute_total_costs_for_completed_requests(self) -> float:
         total_cost = 0.0
-        for request in self.completed_requests:
+        for request in self.get_completed_requests():
             total_cost += request.total_cost
         return total_cost
 
@@ -422,12 +438,14 @@ def main():
         completed_goals_dict: dict[int, int] = {}
         for robot_id, requests in state.assigned_requests.items():
             if requests:
-                planned_goal_indices_dict[robot_id] = state.assigned_requests[robot_id][0].planned_goal_indices
-                completed_goals_dict[robot_id] = state.assigned_requests[robot_id][0].completed_goals
+                current_request_id = requests[0]
+                current_request = state.requests[current_request_id]
+                planned_goal_indices_dict[robot_id] = current_request.planned_goal_indices
+                completed_goals_dict[robot_id] = current_request.completed_goals
         planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
         completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
     
-    print(state.completed_requests)
+    print(state.get_completed_requests())
     
     MotionPlanningPlotter.generate_state_animation(occupancy_map=tg_generator.occupancy_map,
                                             origin_x=tg_generator.origin_x,

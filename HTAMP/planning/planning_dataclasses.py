@@ -1,6 +1,7 @@
 
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 import pandas as pd
 from HTAMP.environment.loc_dataclasses import Coordinate, GridIndex, TimeInterval
@@ -189,7 +190,8 @@ class TaskRequest:
                  started: bool = False,
                  completed_goals: int = 0,
                  completed: bool = False,
-                 rejected: bool = False):
+                 rejected: bool = False,
+                 planned_goal_indices: Optional[list[int]] = None):
         self.request_id = request_id
         self.request_type = request_type
         self.goal_nodes = goal_nodes
@@ -202,7 +204,8 @@ class TaskRequest:
         self.completed = completed
         self.rejected = rejected
         self.total_cost = 0.0
-    
+        self.planned_goal_indices = planned_goal_indices if planned_goal_indices is not None else []
+
     def mark_completed(self, completion_time: pd.Timestamp) -> None:
         self.completed = True
         self.total_cost = (completion_time - self.scheduled_time).total_seconds()
