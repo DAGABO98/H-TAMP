@@ -22,7 +22,7 @@ class GlobalRequestHandler:
             self._extend_dataframes(preprocessed_dfs, start_date=start_date, end_date=end_date)
             self._save_dataframes()
         else:
-            self._load_saved_data(request_dir)
+            self._load_saved_data()
 
     def _make_dirs(self) -> None:
         self.request_dir.mkdir(parents=True, exist_ok=True)
@@ -81,11 +81,17 @@ class GlobalRequestHandler:
                                  start_date=start_date, 
                                  end_date=end_date)
         
+        self.bp_df["Ordered DTTM"] = pd.to_datetime(self.bp_df["Ordered DTTM"])
+        self.bp_df["Administered DTTM"] = pd.to_datetime(self.bp_df["Administered DTTM"])
+        
         self.hr_df = self._prepare_floor_data(original_df=preprocessed_dfs.heart_rate_df, 
                                  time_col="Scheduled DTTM",
                                  room_col="scheduled_room", 
                                  start_date=start_date, 
                                  end_date=end_date)
+        
+        self.hr_df["Ordered DTTM"] = pd.to_datetime(self.hr_df["Ordered DTTM"])
+        self.hr_df["Administered DTTM"] = pd.to_datetime(self.hr_df["Administered DTTM"])
         
         self.rr_df = self._prepare_floor_data(original_df=preprocessed_dfs.respiratory_rate_df, 
                                  time_col="Scheduled DTTM",
@@ -93,11 +99,17 @@ class GlobalRequestHandler:
                                  start_date=start_date, 
                                  end_date=end_date)
         
+        self.rr_df["Ordered DTTM"] = pd.to_datetime(self.rr_df["Ordered DTTM"])
+        self.rr_df["Administered DTTM"] = pd.to_datetime(self.rr_df["Administered DTTM"])
+        
         self.temp_df = self._prepare_floor_data(original_df=preprocessed_dfs.temperature_df, 
                                  time_col="Scheduled DTTM",
                                  room_col="scheduled_room", 
                                  start_date=start_date, 
                                  end_date=end_date)
+        
+        self.temp_df["Ordered DTTM"] = pd.to_datetime(self.temp_df["Ordered DTTM"])
+        self.temp_df["Administered DTTM"] = pd.to_datetime(self.temp_df["Administered DTTM"])
         
         self.os_df = self._prepare_floor_data(original_df=preprocessed_dfs.oxygen_saturation_df, 
                                  time_col="Scheduled DTTM",
@@ -105,11 +117,17 @@ class GlobalRequestHandler:
                                  start_date=start_date, 
                                  end_date=end_date)
         
+        self.os_df["Ordered DTTM"] = pd.to_datetime(self.os_df["Ordered DTTM"])
+        self.os_df["Administered DTTM"] = pd.to_datetime(self.os_df["Administered DTTM"])
+        
         self.med_df = self._prepare_floor_data(original_df=preprocessed_dfs.medications_df, 
                                  time_col="Medication Scheduled DTTM",
                                  room_col="scheduled_room",
                                  start_date=start_date, 
                                  end_date=end_date)
+        
+        self.med_df["Medication Order DTTM"] = pd.to_datetime(self.med_df["Medication Order DTTM"])
+        self.med_df["Administered DTTM"] = pd.to_datetime(self.med_df["Administered DTTM"])
     
     def _prepare_floor_data(self, 
                             original_df: pd.DataFrame, 
@@ -141,20 +159,55 @@ class GlobalRequestHandler:
 
     def _load_saved_data(self) -> None:
         self.bp_df = pd.read_csv(self.request_dir / "blood_pressure_extended.csv")
+        self.bp_df["Scheduled DTTM"] = pd.to_datetime(self.bp_df["Scheduled DTTM"])
+        self.bp_df["Ordered DTTM"] = pd.to_datetime(self.bp_df["Ordered DTTM"])
+        self.bp_df["Administered DTTM"] = pd.to_datetime(self.bp_df["Administered DTTM"])
+        self.bp_df["__day__"] = pd.to_datetime(self.bp_df["__day__"]).dt.date
+
         self.hr_df = pd.read_csv(self.request_dir / "heart_rate_extended.csv")
+        self.hr_df["Scheduled DTTM"] = pd.to_datetime(self.hr_df["Scheduled DTTM"])
+        self.hr_df["Ordered DTTM"] = pd.to_datetime(self.hr_df["Ordered DTTM"])
+        self.hr_df["Administered DTTM"] = pd.to_datetime(self.hr_df["Administered DTTM"])
+        self.hr_df["__day__"] = pd.to_datetime(self.hr_df["__day__"]).dt.date
+
         self.rr_df = pd.read_csv(self.request_dir / "respiratory_rate_extended.csv")
+        self.rr_df["Scheduled DTTM"] = pd.to_datetime(self.rr_df["Scheduled DTTM"])
+        self.rr_df["Ordered DTTM"] = pd.to_datetime(self.rr_df["Ordered DTTM"])
+        self.rr_df["Administered DTTM"] = pd.to_datetime(self.rr_df["Administered DTTM"])
+        self.rr_df["__day__"] = pd.to_datetime(self.rr_df["__day__"]).dt.date
+
         self.temp_df = pd.read_csv(self.request_dir / "temperature_extended.csv")
+        self.temp_df["Scheduled DTTM"] = pd.to_datetime(self.temp_df["Scheduled DTTM"])
+        self.temp_df["Ordered DTTM"] = pd.to_datetime(self.temp_df["Ordered DTTM"])
+        self.temp_df["Administered DTTM"] = pd.to_datetime(self.temp_df["Administered DTTM"])
+        self.temp_df["__day__"] = pd.to_datetime(self.temp_df["__day__"]).dt.date
+
         self.os_df = pd.read_csv(self.request_dir / "oxygen_saturation_extended.csv")
+        self.os_df["Scheduled DTTM"] = pd.to_datetime(self.os_df["Scheduled DTTM"])
+        self.os_df["Ordered DTTM"] = pd.to_datetime(self.os_df["Ordered DTTM"])
+        self.os_df["Administered DTTM"] = pd.to_datetime(self.os_df["Administered DTTM"])
+        self.os_df["__day__"] = pd.to_datetime(self.os_df["__day__"]).dt.date
+
         self.med_df = pd.read_csv(self.request_dir / "medications_extended.csv")
+        self.med_df["Medication Scheduled DTTM"] = pd.to_datetime(self.med_df["Medication Scheduled DTTM"])
+        self.med_df["Medication Order DTTM"] = pd.to_datetime(self.med_df["Medication Order DTTM"])
+        self.med_df["Administered DTTM"] = pd.to_datetime(self.med_df["Administered DTTM"])
+        self.med_df["__day__"] = pd.to_datetime(self.med_df["__day__"]).dt.date
 
 class DailyRequestHandler(GlobalRequestHandler):
     
     def __init__(self, 
+                 start_date: str, 
+                 end_date: str,
                  date_stamp: pd.Timestamp,
                  annotated_data_files: AnnotatedDataFiles, 
                  request_dir: str, 
                  use_saved_data: bool = False):
-        super().__init__(annotated_data_files, request_dir, start_date=date_stamp, use_saved_data=use_saved_data)
+        super().__init__(annotated_data_files=annotated_data_files, 
+                         request_dir=request_dir, 
+                         start_date=start_date, 
+                         end_date=end_date, 
+                         use_saved_data=use_saved_data)
         self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp)
     
     def _process_daily_requests(self, date_stamp: pd.Timestamp) -> DailyRequestsDataFrames:
@@ -337,9 +390,9 @@ def main():
     parser = argparse.ArgumentParser(description="Process hospital data and generate daily requests.")
 
     # date_operational_range parameters
-    parser.add_argument("--year", type=int, dest='year', default=2022, help='Select year of interest.')
-    parser.add_argument("--month", type=int, dest='month', default=10, help='Select month of interest.')
-    parser.add_argument("--day", type=int, dest='day', default=17, help='Select day of interest.')
+    parser.add_argument("--year", type=int, dest='year', default=2024, help='Select year of interest.')
+    parser.add_argument("--month", type=int, dest='month', default=6, help='Select month of interest.')
+    parser.add_argument("--day", type=int, dest='day', default=24, help='Select day of interest.')
     parser.add_argument("--hour", type=int, dest='hour', default=8, help='Select hour of interest.')
     parser.add_argument("--minute", type=int, dest='minute', default=0, help='Select minute of interest.')
 
@@ -366,8 +419,12 @@ def main():
     )
 
     date_stamp = pd.Timestamp(year=args.year, month=args.month, day=args.day)
+    start_date="2024-06-24"
+    end_date="2025-06-29"
 
-    request_handler = DailyRequestHandler(date_stamp=date_stamp,
+    request_handler = DailyRequestHandler(start_date=start_date,
+                                          end_date=end_date,
+                                          date_stamp=date_stamp,
                                           annotated_data_files=annotated_data_files,
                                           request_dir=args.request_dir,
                                           use_saved_data=args.use_saved_request_data)
