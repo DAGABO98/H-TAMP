@@ -6,6 +6,7 @@ import random
 import traceback
 
 import numpy as np
+import pandas as pd
 from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.loc_dataclasses import Coordinate, TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -71,7 +72,6 @@ class PlanningState:
     
     def add_request(self, request: TaskRequest) -> None:
         self.requests[request.request_id] = request
-
     
     def assign_robot_path(self, 
                           robot_id: int, 
@@ -318,10 +318,12 @@ def main():
 
     paths = []
 
+    initial_time = pd.Timestamp(2024, 1, 1, 0, 0, 0)
+
     simulator_config = SimulatorConfig(fps=args.fps,
                                        robot_profiles=robot_profiles,
                                        rejection_penalty=100.0,
-                                       date_range=None,
+                                       initial_time=initial_time,
                                        initial_robot_positions={i: selected_start_nodes[i].position for i in range(args.num_robots)},
                                        horizon=5000.0)
     
@@ -336,16 +338,23 @@ def main():
                                                robot_profile=robot_profiles[i],
                                                current_time=0.0,
                                                horizon=simulator_config.horizon)
+        ordered_timestamp = pd.Timestamp(2024, 1, 1, 0, 0, 0)
+        scheduled_timestamp = ordered_timestamp + pd.Timedelta(minutes=5 * i)
+
+        ordered_time = (ordered_timestamp - initial_time).total_seconds()
+        scheduled_time = (scheduled_timestamp - initial_time).total_seconds()
+
+        print(f"Robot {i} - Ordered Time: {ordered_time}, Scheduled Time: {scheduled_time}")
+        
         current_request = TaskRequest(request_id=i, 
                                       request_type="move", 
                                       goal_nodes=[selected_goal_nodes[i].label, selected_goal_nodes[i + args.num_robots].label], 
-                                      wait_times_at_goals=[10.0, 10.0],
-                                      start_time=0.0,
-                                      end_time=simulator_config.horizon,
-                                      desired_time_for_service=0.0,
-                                      planned_time_for_service=0.0,
-                                      started=False,
-                                      completed=False)
+                                      wait_times_at_goals_seconds=[10.0, 10.0],
+                                      time_for_rejection_minutes=30.0,
+                                      ordered_time=ordered_time,
+                                      scheduled_time=scheduled_time)
+        
+        state.add_request(current_request)
         
         requests.append(current_request)
         
@@ -392,7 +401,7 @@ def main():
                                            wait_time_at_goal=simulator_config.horizon)
                 paths.append(final_path)
                 state.assign_request_to_robot(robot_id=i, 
-                                              request=current_request, 
+                                              request_id=current_request.request_id, 
                                               path=final_path, 
                                               traversal_graph=tg_generator.traversal_graph)
                 

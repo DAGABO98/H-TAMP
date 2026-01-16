@@ -118,12 +118,12 @@ class SimulatorConfig:
                  fps: int,
                  robot_profiles: list[RobotProfile], 
                  rejection_penalty: float, 
-                 date_range: DateOperationalRange,
+                 initial_time: pd.Timestamp,
                  horizon: float,
                  initial_robot_positions: dict[int, Coordinate]):
         self.robot_profiles = robot_profiles
         self.rejection_penalty = rejection_penalty
-        self.date_range = date_range
+        self.initial_time = initial_time
         self.initial_robot_positions = initial_robot_positions
         self.fps = fps
         self.time_step = 1.0 / fps
@@ -191,6 +191,7 @@ class TaskRequest:
                  completed_goals: int = 0,
                  completed: bool = False,
                  rejected: bool = False,
+                 planned_time: Optional[float] = None,
                  planned_goal_indices: Optional[list[int]] = None):
         self.request_id = request_id
         self.request_type = request_type
@@ -198,17 +199,18 @@ class TaskRequest:
         self.wait_times_at_goals_seconds = wait_times_at_goals_seconds
         self.ordered_time = ordered_time
         self.scheduled_time = scheduled_time
-        self.desired_time_for_service = scheduled_time + pd.Timedelta(minutes=time_for_rejection_minutes)
+        self.desired_time_for_service = scheduled_time + (60.0 * time_for_rejection_minutes)
         self.started = started
         self.completed_goals = completed_goals
         self.completed = completed
         self.rejected = rejected
         self.total_cost = 0.0
         self.planned_goal_indices = planned_goal_indices if planned_goal_indices is not None else []
+        self.planned_time = planned_time if planned_time is not None else -1.0
 
-    def mark_completed(self, completion_time: pd.Timestamp) -> None:
+    def mark_completed(self, completion_time: float) -> None:
         self.completed = True
-        self.total_cost = (completion_time - self.scheduled_time).total_seconds()
+        self.total_cost = completion_time - self.scheduled_time
     
     def mark_rejected(self, rejection_penalty: float) -> None:
         self.rejected = True
@@ -217,8 +219,10 @@ class TaskRequest:
     def mark_started(self) -> None:
         self.started = True
 
-    def schedule_task(self) -> None:
+    def schedule_task(self, planned_time: float, planned_goal_indices: list[int]) -> None:
         self.completed_goals = 0
+        self.planned_time = planned_time    
+        self.planned_goal_indices = planned_goal_indices
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"
