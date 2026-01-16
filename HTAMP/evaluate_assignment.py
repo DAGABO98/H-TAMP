@@ -99,7 +99,7 @@ class AssignmentEvaluator:
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
-                            look_ahead_minutes: int = 60) -> tuple[FrameData, float]:
+                            look_ahead_minutes: int = 60) -> tuple[FrameData, float, int, int, int]:
         start_date="2024-06-24"
         end_date="2025-06-29"
         request_handler = DailyRequestHandler(start_date=start_date,
@@ -153,8 +153,14 @@ class AssignmentEvaluator:
                                     completed_goals_dict[robot_id] = self.state.assigned_requests[robot_id][0].completed_goals
                             frame_data.planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
                             frame_data.completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
-
-        return frame_data, 0.0  # Placeholder for actual evaluation metric
+        
+        total_cost = self.state.compute_total_costs_for_completed_requests()
+        rejected_requests = self.state.get_rejected_requests()
+        number_of_rejections = len(rejected_requests)
+        completed_requests = self.state.get_completed_requests()
+        number_of_completed_requests = len(completed_requests)
+        total_number_of_requests = len(list(self.state.requests.keys()))
+        return frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests
 
 
 def experiment(args, random_seed=None):
