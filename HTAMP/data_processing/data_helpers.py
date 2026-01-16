@@ -87,12 +87,12 @@ class DataHelpers:
         return dff
     
     @staticmethod
-    def get_daily_requests(df: pd.DataFrame, date_stamp: pd.Timestamp) -> pd.DataFrame:
+    def get_daily_requests_for_floor(df: pd.DataFrame, date_stamp: pd.Timestamp, floor_number: int) -> pd.DataFrame:
         """
-        Extract all requests for a specific date_stamp (date).
+        Extract all requests for a specific date_stamp (date) and floor number.
         """
         target_date = date_stamp.date()
-        daily_df = df[df["__day__"] == target_date].copy()
+        daily_df = df[(df["__day__"] == target_date) & (df["__floor__"] == floor_number)].copy()
         return daily_df
 
     @staticmethod

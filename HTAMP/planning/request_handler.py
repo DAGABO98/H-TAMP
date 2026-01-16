@@ -199,6 +199,7 @@ class DailyRequestHandler(GlobalRequestHandler):
     def __init__(self, 
                  start_date: str, 
                  end_date: str,
+                 floor_number: int,
                  date_stamp: pd.Timestamp,
                  annotated_data_files: AnnotatedDataFiles, 
                  request_dir: str, 
@@ -208,16 +209,15 @@ class DailyRequestHandler(GlobalRequestHandler):
                          start_date=start_date, 
                          end_date=end_date, 
                          use_saved_data=use_saved_data)
-        self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp)
+        self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp, floor_number=floor_number)
     
-    def _process_daily_requests(self, date_stamp: pd.Timestamp) -> DailyRequestsDataFrames:
-        daily_bp_requests = DataHelpers.get_daily_requests(self.bp_df, date_stamp=date_stamp)
-        daily_hr_requests = DataHelpers.get_daily_requests(self.hr_df, date_stamp=date_stamp)
-        daily_rr_requests = DataHelpers.get_daily_requests(self.rr_df, date_stamp=date_stamp)
-        daily_temp_requests = DataHelpers.get_daily_requests(self.temp_df, date_stamp=date_stamp)
-        daily_os_requests = DataHelpers.get_daily_requests(self.os_df, date_stamp=date_stamp)
-        daily_med_requests = DataHelpers.get_daily_requests(self.med_df, date_stamp=date_stamp)
-
+    def _process_daily_requests(self, date_stamp: pd.Timestamp, floor_number: int) -> DailyRequestsDataFrames:
+        daily_bp_requests = DataHelpers.get_daily_requests_for_floor(self.bp_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_hr_requests = DataHelpers.get_daily_requests_for_floor(self.hr_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_rr_requests = DataHelpers.get_daily_requests_for_floor(self.rr_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_temp_requests = DataHelpers.get_daily_requests_for_floor(self.temp_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_os_requests = DataHelpers.get_daily_requests_for_floor(self.os_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_med_requests = DataHelpers.get_daily_requests_for_floor(self.med_df, date_stamp=date_stamp, floor_number=floor_number)
         daily_requests_dfs = DailyRequestsDataFrames(
             blood_pressure_requests_df=daily_bp_requests,
             heart_rate_requests_df=daily_hr_requests,
@@ -245,6 +245,7 @@ class DailyRequestHandler(GlobalRequestHandler):
     
     def _convert_df_into_requests_list(self, 
                                        df: pd.DataFrame, 
+                                       initial_time: pd.Timestamp,
                                        request_type: str, 
                                        wait_time_seconds: float, 
                                        time_for_rejection_minutes: float) -> list[TaskRequest]:
@@ -253,13 +254,13 @@ class DailyRequestHandler(GlobalRequestHandler):
             if request_type == "medication":
                 goal_nodes = [str(row["scheduled_space_supplies"]), str(row["scheduled_space_id"])]
                 wait_times_at_goals_seconds = [wait_time_seconds, wait_time_seconds]
-                ordered_time = pd.Timestamp(row["Medication Order DTTM"])
-                scheduled_time = pd.Timestamp(row["Medication Scheduled DTTM"])
+                ordered_time = (pd.Timestamp(row["Medication Order DTTM"]) - initial_time).total_seconds()
+                scheduled_time = (pd.Timestamp(row["Medication Scheduled DTTM"]) - initial_time).total_seconds()
             else:
                 goal_nodes = [str(row["scheduled_space_id"])]
                 wait_times_at_goals_seconds = [wait_time_seconds]
-                ordered_time = pd.Timestamp(row["Ordered DTTM"])
-                scheduled_time = pd.Timestamp(row["Scheduled DTTM"])
+                ordered_time = (pd.Timestamp(row["Ordered DTTM"]) - initial_time).total_seconds()
+                scheduled_time = (pd.Timestamp(row["Scheduled DTTM"]) - initial_time).total_seconds()
 
             task_request = TaskRequest(
                 request_id=req_index,
@@ -277,6 +278,7 @@ class DailyRequestHandler(GlobalRequestHandler):
     
     def _get_requests_for_time_signal(self, 
                                      df: pd.DataFrame, 
+                                     initial_time: pd.Timestamp,
                                      time_signal: TimeSignal, 
                                      scheduled_time_col: str, 
                                      ordered_time_col: str,
@@ -293,6 +295,7 @@ class DailyRequestHandler(GlobalRequestHandler):
                                                                     )
         requests_list = self._convert_df_into_requests_list(
             df=extracted_requests_df,
+            initial_time=initial_time,
             request_type=request_type,
             wait_time_seconds=wait_time_seconds,
             time_for_rejection_minutes=time_for_rejection_minutes
@@ -304,12 +307,14 @@ class DailyRequestHandler(GlobalRequestHandler):
     
     def get_all_requests_for_time_signal(self, 
                                          time_signal: TimeSignal,
+                                         initial_time: pd.Timestamp,
                                          look_ahead_minutes: int,
                                          all_task_properties: AllTaskProperties
                                          ) -> RequestsLists:
         
         extracted_bp_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.blood_pressure_requests_df,
+            initial_time=initial_time,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -320,6 +325,7 @@ class DailyRequestHandler(GlobalRequestHandler):
         
         extracted_hr_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.heart_rate_requests_df,
+            initial_time=initial_time,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -331,6 +337,7 @@ class DailyRequestHandler(GlobalRequestHandler):
         
         extracted_rr_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.respiratory_rate_requests_df,
+            initial_time=initial_time,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -342,6 +349,7 @@ class DailyRequestHandler(GlobalRequestHandler):
         
         extracted_temp_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.temperature_requests_df,
+            initial_time=initial_time,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -353,6 +361,7 @@ class DailyRequestHandler(GlobalRequestHandler):
         
         extracted_os_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.oxygen_saturation_requests_df,
+            initial_time=initial_time,
             time_signal=time_signal,
             scheduled_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -364,6 +373,7 @@ class DailyRequestHandler(GlobalRequestHandler):
         
         extracted_med_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.medications_requests_df,
+            initial_time=initial_time,
             time_signal=time_signal,
             scheduled_time_col="Medication Scheduled DTTM",
             ordered_time_col="Medication Order DTTM",
@@ -421,14 +431,17 @@ def main():
     date_stamp = pd.Timestamp(year=args.year, month=args.month, day=args.day)
     start_date="2024-06-24"
     end_date="2025-06-29"
+    floor_number = 9
 
     request_handler = DailyRequestHandler(start_date=start_date,
                                           end_date=end_date,
+                                          floor_number=floor_number,
                                           date_stamp=date_stamp,
                                           annotated_data_files=annotated_data_files,
                                           request_dir=args.request_dir,
                                           use_saved_data=args.use_saved_request_data)
     
+    initial_time = pd.Timestamp(year=args.year, month=args.month, day=args.day, hour=0, minute=0)
     time_signal = TimeSignal(year=args.year, month=args.month, day=args.day, hour=args.hour, minute=args.minute)
 
     blood_pressure_properties = TaskProperties(
@@ -477,6 +490,7 @@ def main():
     )
 
     requests_lists = request_handler.get_all_requests_for_time_signal(
+        initial_time=initial_time,
         time_signal=time_signal,
         look_ahead_minutes=60,
         all_task_properties=all_task_properties
@@ -491,6 +505,8 @@ def main():
     print(f"Medications Requests: {len(requests_lists.medications_requests)}")
 
     print("Request processing completed successfully.")
+
+    print(f"requests_lists.blood_pressure_requests: {requests_lists.blood_pressure_requests}")
     
     
 if __name__ == "__main__":

@@ -72,6 +72,10 @@ class PlanningState:
     
     def add_request(self, request: TaskRequest) -> None:
         self.requests[request.request_id] = request
+
+    def add_new_requests(self, requests: list[TaskRequest]) -> None:
+        for request in requests:
+            self.add_request(request=request)
     
     def assign_robot_path(self, 
                           robot_id: int, 

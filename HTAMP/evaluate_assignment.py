@@ -2,8 +2,10 @@ import argparse
 import copy
 import traceback
 import random
+import pandas as pd
 from datetime import datetime
 from typing import Optional
+
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
@@ -11,7 +13,7 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import DateStamp, FrameData, SimulatorConfig, TimeSignal
+from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, FrameData, SimulatorConfig, TaskProperties, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
@@ -20,6 +22,8 @@ class AssignmentEvaluator:
     def __init__(self, args, random_seed=None, robot_profiles: Optional[list[RobotProfile]] = None):
         self.args = args
         self.random_seed = random_seed
+        self.date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
+        self.floor_number = args.floor_number
         print("Generating Traversal Graph...")
         self._initialize_traversal_graph_generator()
         self._initialize_robots(robot_profiles=robot_profiles)
@@ -84,19 +88,24 @@ class AssignmentEvaluator:
         self.simulator_config = SimulatorConfig(fps=self.args.fps,
                                        robot_profiles=self.robot_profiles,
                                        rejection_penalty=100.0,
-                                       date_range=None,
+                                       initial_time=pd.Timestamp(year=self.date_stamp.year, month=self.date_stamp.month, day=self.date_stamp.day, hour=self.args.hour_start, minute=0),
                                        initial_robot_positions={i: self.selected_start_nodes[i].position for i in range(self.args.num_robots)},
                                        horizon=5000.0)
     
     def evaluate_assignment(self, 
-                            date_stamp: DateStamp, 
                             hour_range: Optional[tuple[int, int]],
                             annotated_data_files: AnnotatedDataFiles,
+                            all_task_properties: AllTaskProperties,
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
                             look_ahead_minutes: int = 60) -> tuple[FrameData, float]:
-        request_handler = DailyRequestHandler(date_stamp=date_stamp,
+        start_date="2024-06-24"
+        end_date="2025-06-29"
+        request_handler = DailyRequestHandler(start_date=start_date,
+                                              end_date=end_date,
+                                              date_stamp=self.date_stamp,
+                                              floor_number=self.floor_number,
                                               annotated_data_files=annotated_data_files,
                                               request_dir=request_dir,
                                               use_saved_data=use_saved_request_data)
@@ -112,16 +121,21 @@ class AssignmentEvaluator:
 
         for hour in range(start_hour, end_hour):
             for minute in range(60):
-                time_signal = TimeSignal(year=date_stamp.year,
-                                         month=date_stamp.month,
-                                         day=date_stamp.day,
+                time_signal = TimeSignal(year=self.date_stamp.year,
+                                         month=self.date_stamp.month,
+                                         day=self.date_stamp.day,
                                          hour=hour,
                                          minute=minute)
 
-                # extract requests for the current time signal
-                # requests must be ordered before the current time signal and must be scheduled to be serviced within 30 minutes of the current time
-                requests = request_handler.extract_all_requests_for_time_signal(time_signal=time_signal,
-                                                                               look_ahead_minutes=look_ahead_minutes)
+                requests = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
+                                                                           all_task_properties=all_task_properties,
+                                                                           look_ahead_minutes=look_ahead_minutes)
+                self.state.add_new_requests(requests=requests)
+
+                # policy.assign_requests_to_robots(state=self.state,
+                #                                  motion_planner=self.motion_planner,
+                #                                  current_time=time_signal.to_seconds_since_start_of_day(),
+                #                                  robot_profiles=self.robot_profiles)
 
                 for second in range(60):
                     for frames in range(self.args.fps):
@@ -149,6 +163,51 @@ def experiment(args, random_seed=None):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
         robot_profiles.append(robot_profile)
 
+    blood_pressure_properties = TaskProperties(
+        task_type="blood_pressure",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    heart_rate_properties = TaskProperties(
+        task_type="heart_rate",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    respiratory_rate_properties = TaskProperties(
+        task_type="respiratory_rate",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    temperature_properties = TaskProperties(
+        task_type="temperature",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    oxygen_saturation_properties = TaskProperties(
+        task_type="oxygen_saturation",
+        wait_time_seconds=30.0,
+        time_for_rejection_minutes=30.0
+    )
+
+    medications_properties = TaskProperties(
+        task_type="medication",
+        wait_time_seconds=60.0,
+        time_for_rejection_minutes=60.0
+    )
+
+    all_task_properties = AllTaskProperties(
+        blood_pressure=blood_pressure_properties,
+        heart_rate=heart_rate_properties,
+        respiratory_rate=respiratory_rate_properties,
+        temperature=temperature_properties,
+        oxygen_saturation=oxygen_saturation_properties,
+        medications=medications_properties
+    )
+
     evaluator = AssignmentEvaluator(args, random_seed=random_seed, robot_profiles=robot_profiles)
 
     annotated_data_files = AnnotatedDataFiles(
@@ -161,11 +220,10 @@ def experiment(args, random_seed=None):
         annotated_temperature=args.temperature_orders_file,
         annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
     )
-    date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
 
-    frame_data, total_cost = evaluator.evaluate_assignment(date_stamp=date_stamp, 
-                                                           hour_range=(13,14),
+    frame_data, total_cost = evaluator.evaluate_assignment(hour_range=(args.hour_start,args.hour_end),
                                                            annotated_data_files=annotated_data_files,
+                                                           all_task_properties=all_task_properties,
                                                            request_dir=args.request_dir,
                                                            use_saved_request_data=args.use_saved_request_data,
                                                            save_frame_data=False)
@@ -193,6 +251,9 @@ def main():
     parser.add_argument("--year", type=int, dest='year', default=2022, help='Select year of interest.')
     parser.add_argument("--month", type=int, dest='month', default=10, help='Select month of interest.')
     parser.add_argument("--day", type=int, dest='day', default=17, help='Select day of interest.')
+    parser.add_argument("--hour_start", type=int, dest='hour_start', default=0, help='Select starting hour of operational range.')
+    parser.add_argument("--hour_end", type=int, dest='hour_end', default=24, help='Select ending hour of operational range.')
+    parser.add_argument("--floor_number", type=int, dest='floor_number', default=9, help='Select floor number of interest.')
 
     # file parameters
     parser.add_argument("--request_dir", type=str, default="data/requests", help="Directory to save global requests data.")

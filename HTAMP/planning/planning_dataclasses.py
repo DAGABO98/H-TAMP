@@ -185,8 +185,8 @@ class TaskRequest:
                  goal_nodes: list[str], 
                  wait_times_at_goals_seconds: list[float],
                  time_for_rejection_minutes: float,
-                 ordered_time: pd.Timestamp,
-                 scheduled_time: pd.Timestamp,
+                 ordered_time: float,
+                 scheduled_time: float,
                  started: bool = False,
                  completed_goals: int = 0,
                  completed: bool = False,
@@ -225,7 +225,7 @@ class TaskRequest:
         self.planned_goal_indices = planned_goal_indices
 
     def __repr__(self):
-        return f"Request(request_id={self.request_id}, request_type='{self.request_type}')"
+        return f"Request(request_id={self.request_id}, request_type='{self.request_type}', ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time})"
     
 @dataclass
 class RequestsLists:
