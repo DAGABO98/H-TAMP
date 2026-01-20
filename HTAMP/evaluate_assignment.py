@@ -6,7 +6,6 @@ import pandas as pd
 from datetime import datetime
 from typing import Optional
 
-
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -19,12 +18,19 @@ from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class AssignmentEvaluator:
-    def __init__(self, args, robot_profiles: list[RobotProfile], random_seed=None):
+    def __init__(self, 
+                 args, 
+                 robot_profiles: list[RobotProfile], 
+                 annotated_data_files: AnnotatedDataFiles, 
+                 all_task_properties: AllTaskProperties, 
+                 random_seed=None):
         self.args = args
         self.random_seed = random_seed
         self.date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
         self.floor_number = args.floor_number
         self.robot_profiles = robot_profiles
+        self.annotated_data_files = annotated_data_files
+        self.all_task_properties = all_task_properties
         print("Generating Traversal Graph...")
         self._initialize_traversal_graph_generator()
         self._initialize_grid_world()
@@ -113,15 +119,13 @@ class AssignmentEvaluator:
                             start_date: str,
                             end_date: str,
                             hour_range: Optional[tuple[int, int]],
-                            annotated_data_files: AnnotatedDataFiles,
-                            all_task_properties: AllTaskProperties,
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
                             look_ahead_minutes: int = 60) -> tuple[FrameData, float, int, int, int]:
         request_handler = self._get_request_handler(start_date=start_date,
                                                     end_date=end_date,
-                                                    annotated_data_files=annotated_data_files,
+                                                    annotated_data_files=self.annotated_data_files,
                                                     request_dir=request_dir,
                                                     use_saved_request_data=use_saved_request_data)
         if save_frame_data:
@@ -143,7 +147,7 @@ class AssignmentEvaluator:
                                          minute=minute)
 
                 requests_lists: RequestsLists = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
-                                                                           all_task_properties=all_task_properties,
+                                                                           all_task_properties=self.all_task_properties,
                                                                            look_ahead_minutes=look_ahead_minutes)
                 
                 self._add_requests_to_state(requests_lists=requests_lists)
@@ -181,18 +185,28 @@ class AssignmentEvaluator:
 class Experiment():
 
     def __init__(self,
+                 args,
                  start_date: str,
                  end_date: str,
-                 num_type_1_robots: int,
-                 num_type_2_robots: int,
-                 num_type_3_robots: int,
-                 num_type_4_robots: int):
+                 random_seed: Optional[int] = None):
         self.start_date = start_date
         self.end_date = end_date
-        self.robot_profiles = self._generate_robot_profiles(num_type_1_robots=num_type_1_robots,
-                                                            num_type_2_robots=num_type_2_robots,
-                                                            num_type_3_robots=num_type_3_robots,
-                                                            num_type_4_robots=num_type_4_robots)
+        robot_profiles = self._generate_robot_profiles(num_type_1_robots=args.num_type_1_robots,
+                                                       num_type_2_robots=args.num_type_2_robots,
+                                                       num_type_3_robots=args.num_type_3_robots,
+                                                       num_type_4_robots=args.num_type_4_robots)
+        self.all_task_properties = self._generate_task_properties()
+        self.evaluator = AssignmentEvaluator(args, random_seed=random_seed, robot_profiles=robot_profiles)
+        annotated_data_files = AnnotatedDataFiles(
+            annotated_visits=None,
+            annotated_admissions_discharges=None,
+            annotated_medications=args.medications_orders_file,
+            annotated_blood_pressure=args.blood_pressure_orders_file,
+            annotated_heart_rate=args.heart_rate_orders_file,
+            annotated_respiratory_rate=args.respiratory_rate_orders_file,
+            annotated_temperature=args.temperature_orders_file,
+            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
+        )
     
     def _generate_robot_profiles(self,
                                  num_type_1_robots: int,
@@ -218,75 +232,67 @@ class Experiment():
             robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + num_type_3_robots + i, robot_type="type_4")
             robot_profiles.append(robot_profile)
         return robot_profiles
+    
+    def _generate_task_properties(self) -> AllTaskProperties:
+        blood_pressure_properties = TaskProperties(
+            task_type="blood_pressure",
+            wait_time_seconds=30.0,
+            time_for_rejection_minutes=30.0
+        )
+
+        heart_rate_properties = TaskProperties(
+            task_type="heart_rate",
+            wait_time_seconds=30.0,
+            time_for_rejection_minutes=30.0
+        )
+
+        respiratory_rate_properties = TaskProperties(
+            task_type="respiratory_rate",
+            wait_time_seconds=30.0,
+            time_for_rejection_minutes=30.0
+        )
+
+        temperature_properties = TaskProperties(
+            task_type="temperature",
+            wait_time_seconds=30.0,
+            time_for_rejection_minutes=30.0
+        )
+
+        oxygen_saturation_properties = TaskProperties(
+            task_type="oxygen_saturation",
+            wait_time_seconds=30.0,
+            time_for_rejection_minutes=30.0
+        )
+
+        medications_properties = TaskProperties(
+            task_type="medication",
+            wait_time_seconds=60.0,
+            time_for_rejection_minutes=60.0
+        )
+
+        all_task_properties = AllTaskProperties(
+            blood_pressure=blood_pressure_properties,
+            heart_rate=heart_rate_properties,
+            respiratory_rate=respiratory_rate_properties,
+            temperature=temperature_properties,
+            oxygen_saturation=oxygen_saturation_properties,
+            medications=medications_properties
+        )
+
+        return all_task_properties
 
 
-def experiment(args, random_seed=None):
+def run_experiment(args):
     start_date="2024-06-24"
     end_date="2025-06-29"
 
-    blood_pressure_properties = TaskProperties(
-        task_type="blood_pressure",
-        wait_time_seconds=30.0,
-        time_for_rejection_minutes=30.0
-    )
+    experiment = Experiment(args,
+                            start_date=start_date,
+                            end_date=end_date)
 
-    heart_rate_properties = TaskProperties(
-        task_type="heart_rate",
-        wait_time_seconds=30.0,
-        time_for_rejection_minutes=30.0
-    )
-
-    respiratory_rate_properties = TaskProperties(
-        task_type="respiratory_rate",
-        wait_time_seconds=30.0,
-        time_for_rejection_minutes=30.0
-    )
-
-    temperature_properties = TaskProperties(
-        task_type="temperature",
-        wait_time_seconds=30.0,
-        time_for_rejection_minutes=30.0
-    )
-
-    oxygen_saturation_properties = TaskProperties(
-        task_type="oxygen_saturation",
-        wait_time_seconds=30.0,
-        time_for_rejection_minutes=30.0
-    )
-
-    medications_properties = TaskProperties(
-        task_type="medication",
-        wait_time_seconds=60.0,
-        time_for_rejection_minutes=60.0
-    )
-
-    all_task_properties = AllTaskProperties(
-        blood_pressure=blood_pressure_properties,
-        heart_rate=heart_rate_properties,
-        respiratory_rate=respiratory_rate_properties,
-        temperature=temperature_properties,
-        oxygen_saturation=oxygen_saturation_properties,
-        medications=medications_properties
-    )
-
-    evaluator = AssignmentEvaluator(args, random_seed=random_seed, robot_profiles=robot_profiles)
-
-    annotated_data_files = AnnotatedDataFiles(
-        annotated_visits=None,
-        annotated_admissions_discharges=None,
-        annotated_medications=args.medications_orders_file,
-        annotated_blood_pressure=args.blood_pressure_orders_file,
-        annotated_heart_rate=args.heart_rate_orders_file,
-        annotated_respiratory_rate=args.respiratory_rate_orders_file,
-        annotated_temperature=args.temperature_orders_file,
-        annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
-    )
-
-    evaluate_results = evaluator.evaluate_assignment(start_date=start_date,
+    evaluate_results = experiment.evaluator.evaluate_assignment(start_date=start_date,
                                                      end_date=end_date,
                                                      hour_range=(args.hour_start,args.hour_end),
-                                                     annotated_data_files=annotated_data_files,
-                                                     all_task_properties=all_task_properties,
                                                      request_dir=args.request_dir,
                                                      use_saved_request_data=args.use_saved_request_data,
                                                      save_frame_data=False)
@@ -294,18 +300,18 @@ def experiment(args, random_seed=None):
     frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests = evaluate_results
 
     if frame_data is not None:
-        MotionPlanningPlotter.generate_state_animation(occupancy_map=evaluator.tg_generator.occupancy_map,
-                                            origin_x=evaluator.tg_generator.origin_x,
-                                            origin_y=evaluator.tg_generator.origin_y,
-                                            resolution=evaluator.tg_generator.meters_per_cell,
+        MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
+                                            origin_x=experiment.evaluator.tg_generator.origin_x,
+                                            origin_y=experiment.evaluator.tg_generator.origin_y,
+                                            resolution=experiment.evaluator.tg_generator.meters_per_cell,
                                             robot_positions_seq=frame_data.robot_positions_seq,
                                             robots_current_node_index_seq=frame_data.robots_current_node_index_seq,
                                             point_indices_on_edge_seq=frame_data.point_indices_on_edge_seq,
                                             robot_paths_seq=frame_data.robot_paths_seq,
                                             planned_goal_indices_seq=frame_data.planned_goal_indices_seq,
                                             completed_goals_seq=frame_data.completed_goals_seq,
-                                            traversal_graph=evaluator.tg_generator.traversal_graph,
-                                            robot_profiles=robot_profiles,
+                                            traversal_graph=experiment.evaluator.tg_generator.traversal_graph,
+                                            robot_profiles=experiment.evaluator.robot_profiles,
                                             fps_sim=args.fps,
                                             num_sim_frames=1000)
 
@@ -341,14 +347,15 @@ def main():
 
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
-    parser.add_argument("--num_robots", type=int, default=1, help="Number of robots used in the team")
+    parser.add_argument("--num_type_1_robots", type=int, default=1, help="Number of robots of type 1 to be used in the team")
+    parser.add_argument("--num_type_2_robots", type=int, default=1, help="Number of robots of type 2 to be used in the team")
+    parser.add_argument("--num_type_3_robots", type=int, default=1, help="Number of robots of type 3 to be used in the team")
+    parser.add_argument("--num_type_4_robots", type=int, default=1, help="Number of robots of type 4 to be used in the team")
     parser.add_argument("--rejection_penalty", type=int, dest='rejection_penalty', default=28800, help='Penalty for rejecting a request. Default value set to the number of seconds in 8 hours.')
 
     args = parser.parse_args()
 
-    random_seed = 42
-
-    experiment(args, random_seed)
+    run_experiment(args)
     
 
 if __name__ == "__main__":

@@ -115,6 +115,14 @@ class PlanningState:
                                 traversal_graph: TraversalGraph) -> None:
         self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
         self.assigned_requests[robot_id].append(request_id)
+    
+    def reassign_requests_to_robot(self, 
+                                 robot_id: int, 
+                                 request_ids: list[int],
+                                 path: list[tuple[TraversalNode, TimeInterval]],
+                                 traversal_graph: TraversalGraph) -> None:
+        self.assigned_requests[robot_id] = request_ids
+        self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
 
     def _check_if_next_node_is_task_start(self, robot_id: int, traversal_node: TraversalNode) -> None:
         assigned_requests = self.assigned_requests[robot_id]
@@ -228,7 +236,15 @@ class PlanningState:
             self._move_to_next_node(robot_id, traversal_graph)
             remaining_time = remaining_distance / self.simulator_config.robot_profiles[robot_id].speed
             self._update_robot_location(robot_id, traversal_graph, remaining_time)
-        
+    
+    def get_available_robots(self, robot_type: str) -> list[int]:
+        available_robots = []
+        for robot_id in self.robots_positions:
+            if not self.assigned_requests[robot_id]:
+                profile = self.simulator_config.robot_profiles[robot_id]
+                if profile.robot_type == robot_type:
+                    available_robots.append(robot_id)
+        return available_robots
 
     def step(self, traversal_graph: TraversalGraph) -> None:
         for robot_id in self.robots_positions:
