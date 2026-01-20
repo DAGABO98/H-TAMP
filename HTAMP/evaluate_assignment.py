@@ -18,7 +18,6 @@ from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
-from HTAMP.planning import state
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, FrameData, RequestsLists, SimulatorConfig, TaskProperties, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
@@ -152,6 +151,81 @@ class AssignmentEvaluator:
             requests.extend(request_list)
         self.state.add_new_requests(requests=requests)
     
+    def _step_simulation(self, frame_data: Optional[FrameData] = None, save_frame_data: bool = False):
+        for second in range(60):
+            for frames in range(self.args.fps):
+                self.state.step(self.tg_generator.traversal_graph)
+                if save_frame_data and frame_data is not None:
+                    frame_data.robot_positions_seq.append(copy.deepcopy(self.state.robots_positions))
+                    frame_data.robots_current_node_index_seq.append(copy.deepcopy(self.state.robots_current_node_index))
+                    frame_data.point_indices_on_edge_seq.append(copy.deepcopy(self.state.point_indices_on_edge))
+                    frame_data.robot_paths_seq.append(copy.deepcopy(self.state.robot_paths))
+                    planned_goal_indices_dict: dict[int, list[int]] = {}
+                    completed_goals_dict: dict[int, int] = {}
+                    for robot_id, requests in self.state.assigned_requests.items():
+                        if requests:
+                            current_request_id = requests[0]
+                            current_request = self.state.requests[current_request_id]
+                            planned_goal_indices_dict[robot_id] = current_request.planned_goal_indices
+                            completed_goals_dict[robot_id] = current_request.completed_goals
+                    frame_data.planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
+                    frame_data.completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
+
+    def _plot_state_debug(self):
+        planned_goal_indices_dict: dict[int, list[int]] = {}
+        for robot_id, requests in self.state.assigned_requests.items():
+            if requests:
+                current_request_id = requests[0]
+                current_request = self.state.requests[current_request_id]
+                planned_goal_indices_dict[robot_id] = current_request.planned_goal_indices
+                
+        MotionPlanningPlotter.plot_state_debug(
+            occupancy_map=self.tg_generator.occupancy_map,
+            origin_x=self.tg_generator.origin_x,
+            origin_y=self.tg_generator.origin_y,
+            resolution=self.tg_generator.meters_per_cell,
+            robot_positions=self.state.robots_positions,
+            robots_current_node_index=self.state.robots_current_node_index,
+            point_indices_on_edge=self.state.point_indices_on_edge,
+            robot_paths=self.state.robot_paths,
+            planned_goal_indices=planned_goal_indices_dict,
+            traversal_graph=self.tg_generator.traversal_graph,
+            robot_profiles=self.simulator_config.robot_profiles,
+            step_number=self.state.simulator_time+1)
+    
+    def _generate_assignment_for_minute(self, 
+                                        hour, 
+                                        minute, 
+                                        request_handler: DailyRequestHandler,
+                                        frame_data: Optional[FrameData] = None,
+                                        save_frame_data: bool = False,
+                                        look_ahead_minutes: int = 60,
+                                        plot_before_assignment: bool = False,
+                                        plot_after_assignment: bool = False):
+        time_signal = TimeSignal(year=self.date_stamp.year,
+                                 month=self.date_stamp.month,
+                                 day=self.date_stamp.day,
+                                 hour=hour,
+                                 minute=minute)
+
+        requests_lists: RequestsLists = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
+                                                                    all_task_properties=self.all_task_properties,
+                                                                    look_ahead_minutes=look_ahead_minutes)
+        
+        self._add_requests_to_state(requests_lists=requests_lists)
+
+        if plot_before_assignment:
+            self._plot_state_debug()
+
+        self.policy.assign_requests_to_robots(state=self.state,
+                                                requests_lists=requests_lists,
+                                                motion_planner=self.motion_planner)
+
+        if plot_after_assignment:
+            self._plot_state_debug()
+
+        self._step_simulation(frame_data=frame_data, save_frame_data=save_frame_data)
+    
     def evaluate_assignment(self, 
                             start_date: str,
                             end_date: str,
@@ -177,40 +251,15 @@ class AssignmentEvaluator:
 
         for hour in range(start_hour, end_hour):
             for minute in range(60):
-                time_signal = TimeSignal(year=self.date_stamp.year,
-                                         month=self.date_stamp.month,
-                                         day=self.date_stamp.day,
-                                         hour=hour,
-                                         minute=minute)
-
-                requests_lists: RequestsLists = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
-                                                                           all_task_properties=self.all_task_properties,
-                                                                           look_ahead_minutes=look_ahead_minutes)
+                self._generate_assignment_for_minute(hour=hour,
+                                                     minute=minute,
+                                                     request_handler=request_handler,
+                                                     frame_data=frame_data,
+                                                     save_frame_data=save_frame_data,
+                                                     look_ahead_minutes=look_ahead_minutes)
                 
-                self._add_requests_to_state(requests_lists=requests_lists)
-
-                self.policy.assign_requests_to_robots(state=self.state,
-                                                      requests_lists=requests_lists,
-                                                      motion_planner=self.motion_planner)
-
-                for second in range(60):
-                    for frames in range(self.args.fps):
-                        self.state.step(self.tg_generator.traversal_graph)
-                        if save_frame_data and frame_data is not None:
-                            frame_data.robot_positions_seq.append(copy.deepcopy(self.state.robots_positions))
-                            frame_data.robots_current_node_index_seq.append(copy.deepcopy(self.state.robots_current_node_index))
-                            frame_data.point_indices_on_edge_seq.append(copy.deepcopy(self.state.point_indices_on_edge))
-                            frame_data.robot_paths_seq.append(copy.deepcopy(self.state.robot_paths))
-                            planned_goal_indices_dict: dict[int, list[int]] = {}
-                            completed_goals_dict: dict[int, int] = {}
-                            for robot_id, requests in self.state.assigned_requests.items():
-                                if requests:
-                                    current_request_id = requests[0]
-                                    current_request = self.state.requests[current_request_id]
-                                    planned_goal_indices_dict[robot_id] = current_request.planned_goal_indices
-                                    completed_goals_dict[robot_id] = current_request.completed_goals
-                            frame_data.planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
-                            frame_data.completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
+        for minute in range(60):
+            self._step_simulation(frame_data=frame_data, save_frame_data=save_frame_data)
         
         total_cost = self.state.compute_total_costs_for_completed_requests()
         rejected_requests = self.state.get_rejected_requests()

@@ -225,7 +225,7 @@ class TaskRequest:
         self.planned_goal_indices = planned_goal_indices
     
     def is_expired(self, current_time: float) -> bool:
-        return current_time > self.time_for_service
+        return current_time >= self.time_for_service
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}', ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time})"

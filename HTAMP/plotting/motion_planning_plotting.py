@@ -128,6 +128,7 @@ class MotionPlanningPlotter:
                    robots_current_node_index: dict[int, int], 
                    point_indices_on_edge: dict[int, int], 
                    robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]], 
+                   planned_goal_indices: dict[int, list[int]],
                    traversal_graph: TraversalGraph, 
                    robot_profiles: List[RobotProfile], 
                    step_number: int) -> None: 
@@ -142,13 +143,31 @@ class MotionPlanningPlotter:
                        aspect="equal" ) 
         colors = plt.get_cmap('hsv', len(robot_paths) + 1) 
         for robot_id in robot_paths.keys(): 
-            path = robot_paths[robot_id] 
-            robot_position = robot_positions[robot_id] 
-            current_node_index = robots_current_node_index[robot_id] 
-            print(current_node_index) 
-            point_index_on_edge = point_indices_on_edge[robot_id] 
-            print(point_index_on_edge) 
-            truncated_path = path[current_node_index:] 
+            path = robot_paths[robot_id]
+            robot_position = robot_positions[robot_id]
+            current_node_index = robots_current_node_index[robot_id]
+            planned_goal_indices_robot = planned_goal_indices.get(robot_id, [])
+            # TODO: We can change this to plot the entire route for the task starting from the first goal instead of just up to the current goal
+            current_goal_index = planned_goal_indices_robot[-1]
+            initial_goal_index = planned_goal_indices_robot[0]
+            point_index_on_edge = point_indices_on_edge[robot_id]
+            
+            if initial_goal_index < current_node_index:
+                traversered_path = path[initial_goal_index:current_node_index + 1]
+                for j in range(len(traversered_path) - 1):
+                    start_node, start_interval = traversered_path[j] 
+                    end_node, end_interval = traversered_path[j + 1] 
+                    edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
+                    samples_x = edge.edge_connector.connector_dict['X'] 
+                    samples_y = edge.edge_connector.connector_dict['Y'] 
+                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=1.0, alpha=0.5)
+
+            truncated_path = path[current_node_index:current_goal_index + 1]
+
+            if len(truncated_path) < 2: 
+                circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id), alpha=0.3) 
+                ax.add_patch(circle)
+                continue
             for j in range(len(truncated_path) - 1): 
                 start_node, start_interval = truncated_path[j] 
                 end_node, end_interval = truncated_path[j + 1] 
