@@ -1,2 +1,14 @@
+from HTAMP.planning.motion_planner import MotionPlanner
+from HTAMP.planning.planning_dataclasses import RequestsLists
+from HTAMP.planning.state import PlanningState
+
+
 class TokenPassingWithDeadlines:
-    pass
+    def __init__(self):
+        pass
+
+    def assign_requests_to_robots(self, 
+                                  state: PlanningState, 
+                                  requests_lists: RequestsLists, 
+                                  motion_planner: MotionPlanner):
+        pass

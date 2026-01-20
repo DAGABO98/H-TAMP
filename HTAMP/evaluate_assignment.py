@@ -6,6 +6,13 @@ import pandas as pd
 from datetime import datetime
 from typing import Optional
 
+from HTAMP.assignment.baselines.D_TPTS import DeadlineAwareTokenPassingwithTaskSwaps
+from HTAMP.assignment.baselines.TP_D import TokenPassingWithDeadlines
+from HTAMP.assignment.baselines.idle_pred import IdleTaskPrediction
+from HTAMP.assignment.policies.adaptive_rollout import AdaptiveRollout
+from HTAMP.assignment.policies.greedy_reopt import GreedyPolicyWithReoptimization
+from HTAMP.assignment.policies.vanilla_rollout import VanillaRollout
+from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -16,6 +23,7 @@ from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, Fr
 from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
+from HTAMP.assignment.baselines.fleet_manager import FleetManager
 
 class AssignmentEvaluator:
     def __init__(self, 
@@ -37,6 +45,10 @@ class AssignmentEvaluator:
         self._initialize_motion_planner()
         self._initialize_simulator_config()
         self.state = PlanningState(simulator_config=self.simulator_config)
+        self.policy: FleetManager | TokenPassingWithDeadlines | \
+                     DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
+                     SequentialGreedy | GreedyPolicyWithReoptimization | \
+                     VanillaRollout | AdaptiveRollout = self._initialize_policy(args.mode)
     
     def _initialize_traversal_graph_generator(self):
         print("Generating Traversal Graph...")
@@ -104,6 +116,30 @@ class AssignmentEvaluator:
                                               use_saved_data=use_saved_request_data)
         return request_handler
     
+    def _initialize_policy(self, mode: int) -> FleetManager | TokenPassingWithDeadlines | \
+                                                DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
+                                                    SequentialGreedy | GreedyPolicyWithReoptimization | \
+                                                        VanillaRollout | AdaptiveRollout:
+        if mode == 0:
+            policy = FleetManager()
+        elif mode == 1:
+            policy = TokenPassingWithDeadlines()
+        elif mode == 2:
+            policy = DeadlineAwareTokenPassingwithTaskSwaps()
+        elif mode == 3:
+            policy = IdleTaskPrediction()
+        elif mode == 4:
+            policy = SequentialGreedy()
+        elif mode == 5:
+            policy = GreedyPolicyWithReoptimization()
+        elif mode == 6:
+            policy = VanillaRollout()
+        elif mode == 7:
+            policy = AdaptiveRollout()
+        else:
+            raise ValueError(f"Invalid mode {mode} selected for policy initialization.")
+        return policy
+    
     def _add_requests_to_state(self, requests_lists: RequestsLists):
         requests: list[TaskRequest] = []
         for request_list in [requests_lists.blood_pressure_requests,
@@ -152,10 +188,9 @@ class AssignmentEvaluator:
                 
                 self._add_requests_to_state(requests_lists=requests_lists)
 
-                # policy.assign_requests_to_robots(state=self.state,
-                #                                  motion_planner=self.motion_planner,
-                #                                  current_time=time_signal.to_seconds_since_start_of_day(),
-                #                                  robot_profiles=self.robot_profiles)
+                self.policy.assign_requests_to_robots(state=self.state,
+                                                      requests_lists=requests_lists,
+                                                      motion_planner=self.motion_planner)
 
                 for second in range(60):
                     for frames in range(self.args.fps):

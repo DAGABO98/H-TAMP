@@ -2,12 +2,9 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import RequestsLists
 from HTAMP.planning.state import PlanningState
 
-
-class DeadlineAwareTokenPassingwithTaskSwaps():
-    
+class AdaptiveRollout:
     def __init__(self):
         pass
 
     def assign_requests_to_robots(self, state: PlanningState, requests_lists: RequestsLists, motion_planner: MotionPlanner):
-        # Implement the Deadline-Aware Token Passing with Task Swaps assignment logic here
         pass
