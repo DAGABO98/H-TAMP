@@ -18,6 +18,7 @@ from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
+from HTAMP.planning import state
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, FrameData, RequestsLists, SimulatorConfig, TaskProperties, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
@@ -204,8 +205,10 @@ class AssignmentEvaluator:
                             completed_goals_dict: dict[int, int] = {}
                             for robot_id, requests in self.state.assigned_requests.items():
                                 if requests:
-                                    planned_goal_indices_dict[robot_id] = self.state.assigned_requests[robot_id][0].planned_goal_indices
-                                    completed_goals_dict[robot_id] = self.state.assigned_requests[robot_id][0].completed_goals
+                                    current_request_id = requests[0]
+                                    current_request = self.state.requests[current_request_id]
+                                    planned_goal_indices_dict[robot_id] = current_request.planned_goal_indices
+                                    completed_goals_dict[robot_id] = current_request.completed_goals
                             frame_data.planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
                             frame_data.completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
         

@@ -199,7 +199,7 @@ class TaskRequest:
         self.wait_times_at_goals_seconds = wait_times_at_goals_seconds
         self.ordered_time = ordered_time
         self.scheduled_time = scheduled_time
-        self.desired_time_for_service = scheduled_time + (60.0 * time_for_rejection_minutes)
+        self.time_for_service = scheduled_time + (60.0 * time_for_rejection_minutes)
         self.started = started
         self.completed_goals = completed_goals
         self.completed = completed
@@ -223,6 +223,9 @@ class TaskRequest:
         self.completed_goals = 0
         self.planned_time = planned_time    
         self.planned_goal_indices = planned_goal_indices
+    
+    def is_expired(self, current_time: float) -> bool:
+        return current_time > self.time_for_service
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}', ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time})"
