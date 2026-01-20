@@ -13,20 +13,20 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, FrameData, SimulatorConfig, TaskProperties, TimeSignal
+from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, FrameData, RequestsLists, SimulatorConfig, TaskProperties, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class AssignmentEvaluator:
-    def __init__(self, args, random_seed=None, robot_profiles: Optional[list[RobotProfile]] = None):
+    def __init__(self, args, robot_profiles: list[RobotProfile], random_seed=None):
         self.args = args
         self.random_seed = random_seed
         self.date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
         self.floor_number = args.floor_number
+        self.robot_profiles = robot_profiles
         print("Generating Traversal Graph...")
         self._initialize_traversal_graph_generator()
-        self._initialize_robots(robot_profiles=robot_profiles)
         self._initialize_grid_world()
         self._initialize_motion_planner()
         self._initialize_simulator_config()
@@ -38,15 +38,6 @@ class AssignmentEvaluator:
                                             config_path=self.args.config_path,
                                             meters_per_pixel=self.args.meters_per_pixel,
                                             factor=self.args.factor)
-    
-    def _initialize_robots(self, robot_profiles: Optional[list[RobotProfile]] = None):
-        if robot_profiles is not None:
-            self.robot_profiles = robot_profiles
-        else:
-            self.robot_profiles = []
-            for i in range(self.args.num_robots):
-                robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
-                self.robot_profiles.append(robot_profile)
     
     def _initialize_grid_world(self):
         print("Creating Grid World...")
@@ -92,16 +83,12 @@ class AssignmentEvaluator:
                                        initial_robot_positions={i: self.selected_start_nodes[i].position for i in range(self.args.num_robots)},
                                        horizon=5000.0)
     
-    def evaluate_assignment(self, 
-                            hour_range: Optional[tuple[int, int]],
-                            annotated_data_files: AnnotatedDataFiles,
-                            all_task_properties: AllTaskProperties,
-                            request_dir: Optional[str] = None,
-                            use_saved_request_data: bool = False,
-                            save_frame_data: bool = False,
-                            look_ahead_minutes: int = 60) -> tuple[FrameData, float, int, int, int]:
-        start_date="2024-06-24"
-        end_date="2025-06-29"
+    def _get_request_handler(self,
+                             start_date: str,
+                             end_date: str,
+                             annotated_data_files: AnnotatedDataFiles,
+                             request_dir: Optional[str] = None,
+                             use_saved_request_data: bool = False) -> DailyRequestHandler:
         request_handler = DailyRequestHandler(start_date=start_date,
                                               end_date=end_date,
                                               date_stamp=self.date_stamp,
@@ -109,6 +96,34 @@ class AssignmentEvaluator:
                                               annotated_data_files=annotated_data_files,
                                               request_dir=request_dir,
                                               use_saved_data=use_saved_request_data)
+        return request_handler
+    
+    def _add_requests_to_state(self, requests_lists: RequestsLists):
+        requests: list[TaskRequest] = []
+        for request_list in [requests_lists.blood_pressure_requests,
+                             requests_lists.heart_rate_requests,
+                             requests_lists.respiratory_rate_requests,
+                             requests_lists.temperature_requests,
+                             requests_lists.oxygen_saturation_requests,
+                             requests_lists.medications_requests]:
+            requests.extend(request_list)
+        self.state.add_new_requests(requests=requests)
+    
+    def evaluate_assignment(self, 
+                            start_date: str,
+                            end_date: str,
+                            hour_range: Optional[tuple[int, int]],
+                            annotated_data_files: AnnotatedDataFiles,
+                            all_task_properties: AllTaskProperties,
+                            request_dir: Optional[str] = None,
+                            use_saved_request_data: bool = False,
+                            save_frame_data: bool = False,
+                            look_ahead_minutes: int = 60) -> tuple[FrameData, float, int, int, int]:
+        request_handler = self._get_request_handler(start_date=start_date,
+                                                    end_date=end_date,
+                                                    annotated_data_files=annotated_data_files,
+                                                    request_dir=request_dir,
+                                                    use_saved_request_data=use_saved_request_data)
         if save_frame_data:
             frame_data = FrameData()
         else:
@@ -127,10 +142,11 @@ class AssignmentEvaluator:
                                          hour=hour,
                                          minute=minute)
 
-                requests = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
+                requests_lists: RequestsLists = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
                                                                            all_task_properties=all_task_properties,
                                                                            look_ahead_minutes=look_ahead_minutes)
-                self.state.add_new_requests(requests=requests)
+                
+                self._add_requests_to_state(requests_lists=requests_lists)
 
                 # policy.assign_requests_to_robots(state=self.state,
                 #                                  motion_planner=self.motion_planner,
@@ -162,12 +178,51 @@ class AssignmentEvaluator:
         total_number_of_requests = len(list(self.state.requests.keys()))
         return frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests
 
+class Experiment():
+
+    def __init__(self,
+                 start_date: str,
+                 end_date: str,
+                 num_type_1_robots: int,
+                 num_type_2_robots: int,
+                 num_type_3_robots: int,
+                 num_type_4_robots: int):
+        self.start_date = start_date
+        self.end_date = end_date
+        self.robot_profiles = self._generate_robot_profiles(num_type_1_robots=num_type_1_robots,
+                                                            num_type_2_robots=num_type_2_robots,
+                                                            num_type_3_robots=num_type_3_robots,
+                                                            num_type_4_robots=num_type_4_robots)
+    
+    def _generate_robot_profiles(self,
+                                 num_type_1_robots: int,
+                                 num_type_2_robots: int,
+                                 num_type_3_robots: int,
+                                 num_type_4_robots: int) -> list[RobotProfile]:
+        # type 1 robots: heart rate + SPO2
+        # type 2 robots: blood pressure + heart rate
+        # type 3 robots: respiratory rate + temperature
+        # type 4 robots: medications
+
+        robot_profiles = []
+        for i in range(num_type_1_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i, robot_type="type_1")
+            robot_profiles.append(robot_profile)
+        for i in range(num_type_2_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + i, robot_type="type_2")
+            robot_profiles.append(robot_profile)
+        for i in range(num_type_3_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + i, robot_type="type_3")
+            robot_profiles.append(robot_profile)
+        for i in range(num_type_4_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + num_type_3_robots + i, robot_type="type_4")
+            robot_profiles.append(robot_profile)
+        return robot_profiles
+
 
 def experiment(args, random_seed=None):
-    robot_profiles = []
-    for i in range(args.num_robots):
-        robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
-        robot_profiles.append(robot_profile)
+    start_date="2024-06-24"
+    end_date="2025-06-29"
 
     blood_pressure_properties = TaskProperties(
         task_type="blood_pressure",
@@ -227,12 +282,16 @@ def experiment(args, random_seed=None):
         annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
     )
 
-    frame_data, total_cost = evaluator.evaluate_assignment(hour_range=(args.hour_start,args.hour_end),
-                                                           annotated_data_files=annotated_data_files,
-                                                           all_task_properties=all_task_properties,
-                                                           request_dir=args.request_dir,
-                                                           use_saved_request_data=args.use_saved_request_data,
-                                                           save_frame_data=False)
+    evaluate_results = evaluator.evaluate_assignment(start_date=start_date,
+                                                     end_date=end_date,
+                                                     hour_range=(args.hour_start,args.hour_end),
+                                                     annotated_data_files=annotated_data_files,
+                                                     all_task_properties=all_task_properties,
+                                                     request_dir=args.request_dir,
+                                                     use_saved_request_data=args.use_saved_request_data,
+                                                     save_frame_data=False)
+    
+    frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests = evaluate_results
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=evaluator.tg_generator.occupancy_map,

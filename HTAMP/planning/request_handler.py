@@ -263,7 +263,7 @@ class DailyRequestHandler(GlobalRequestHandler):
                 scheduled_time = (pd.Timestamp(row["Scheduled DTTM"]) - initial_time).total_seconds()
 
             task_request = TaskRequest(
-                request_id=req_index,
+                request_id=request_type+"."+str(req_index),
                 request_type=request_type,
                 goal_nodes=goal_nodes,
                 wait_times_at_goals_seconds=wait_times_at_goals_seconds,
