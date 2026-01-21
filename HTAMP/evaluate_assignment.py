@@ -33,17 +33,17 @@ class AssignmentEvaluator:
                  all_task_properties: AllTaskProperties, 
                  random_seed=None):
         self.args = args
+        self.team_size = args.num_type_1_robots + args.num_type_2_robots + args.num_type_3_robots + args.num_type_4_robots
         self.random_seed = random_seed
         self.date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
         self.floor_number = args.floor_number
         self.robot_profiles = robot_profiles
         self.annotated_data_files = annotated_data_files
         self.all_task_properties = all_task_properties
-        print("Generating Traversal Graph...")
         self._initialize_traversal_graph_generator()
         self._initialize_grid_world()
-        self._initialize_motion_planner()
         self._initialize_simulator_config()
+        self._initialize_motion_planner()
         self.state = PlanningState(simulator_config=self.simulator_config)
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
@@ -56,6 +56,7 @@ class AssignmentEvaluator:
                                             config_path=self.args.config_path,
                                             meters_per_pixel=self.args.meters_per_pixel,
                                             factor=self.args.factor)
+        print("Traversal Graph generated.")
     
     def _initialize_grid_world(self):
         print("Creating Grid World...")
@@ -72,7 +73,7 @@ class AssignmentEvaluator:
     def _initialize_motion_planner(self):
         print("Initializing Motion Planner...")
         self.motion_planner = MotionPlanner(grid=self.world, weight_factor=1.0)
-        for i in range(self.args.num_robots):
+        for i in range(self.team_size):
             self.motion_planner._initialize_robot_reservations(initial_node=self.selected_start_nodes[i],
                                                robot_profile=self.robot_profiles[i],
                                                current_time=0.0,
@@ -90,16 +91,18 @@ class AssignmentEvaluator:
         if self.random_seed is not None:
             random.seed(self.random_seed)
         
-        self.selected_start_nodes: list[TraversalNode] = random.sample(potential_start_nodes, self.args.num_robots)
+        self.selected_start_nodes: list[TraversalNode] = random.sample(potential_start_nodes, self.team_size)
     
     def _initialize_simulator_config(self):
+        print("Initializing Simulator Config...")
         self._generate_parking_positions()
         self.simulator_config = SimulatorConfig(fps=self.args.fps,
                                        robot_profiles=self.robot_profiles,
                                        rejection_penalty=100.0,
                                        initial_time=pd.Timestamp(year=self.date_stamp.year, month=self.date_stamp.month, day=self.date_stamp.day, hour=self.args.hour_start, minute=0),
-                                       initial_robot_positions={i: self.selected_start_nodes[i].position for i in range(self.args.num_robots)},
+                                       initial_robot_positions={i: self.selected_start_nodes[i].position for i in range(self.team_size)},
                                        horizon=5000.0)
+        print("Simulator Config initialized.")
     
     def _get_request_handler(self,
                              start_date: str,
@@ -109,7 +112,7 @@ class AssignmentEvaluator:
                              use_saved_request_data: bool = False) -> DailyRequestHandler:
         request_handler = DailyRequestHandler(start_date=start_date,
                                               end_date=end_date,
-                                              date_stamp=self.date_stamp,
+                                              date_stamp=self.date_stamp.time_stamp,
                                               floor_number=self.floor_number,
                                               annotated_data_files=annotated_data_files,
                                               request_dir=request_dir,
@@ -120,24 +123,24 @@ class AssignmentEvaluator:
                                                 DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
                                                     SequentialGreedy | GreedyPolicyWithReoptimization | \
                                                         VanillaRollout | AdaptiveRollout:
-        if mode == 0:
-            policy = FleetManager()
-        elif mode == 1:
-            policy = TokenPassingWithDeadlines()
-        elif mode == 2:
-            policy = DeadlineAwareTokenPassingwithTaskSwaps()
-        elif mode == 3:
-            policy = IdleTaskPrediction()
-        elif mode == 4:
-            policy = SequentialGreedy()
-        elif mode == 5:
-            policy = GreedyPolicyWithReoptimization()
-        elif mode == 6:
-            policy = VanillaRollout()
-        elif mode == 7:
-            policy = AdaptiveRollout()
-        else:
+        print("Initializing Policy...")
+        print(f"Selected mode: {mode}")
+        policy_dict = {
+            0: FleetManager,
+            1: TokenPassingWithDeadlines,
+            2: DeadlineAwareTokenPassingwithTaskSwaps,
+            3: IdleTaskPrediction,
+            4: SequentialGreedy,
+            5: GreedyPolicyWithReoptimization,
+            6: VanillaRollout,
+            7: AdaptiveRollout
+        }
+        
+        if mode not in policy_dict:
             raise ValueError(f"Invalid mode {mode} selected for policy initialization.")
+        
+        policy = policy_dict[mode]()
+        print("Policy initialized.")
         return policy
     
     def _add_requests_to_state(self, requests_lists: RequestsLists):
@@ -191,7 +194,9 @@ class AssignmentEvaluator:
             planned_goal_indices=planned_goal_indices_dict,
             traversal_graph=self.tg_generator.traversal_graph,
             robot_profiles=self.simulator_config.robot_profiles,
-            step_number=self.state.simulator_time+1)
+            step_number=self.state.simulator_time+1,
+            debug_folder="results/motion_planning/debug"
+        )
     
     def _generate_assignment_for_minute(self, 
                                         hour, 
@@ -200,8 +205,8 @@ class AssignmentEvaluator:
                                         frame_data: Optional[FrameData] = None,
                                         save_frame_data: bool = False,
                                         look_ahead_minutes: int = 60,
-                                        plot_before_assignment: bool = False,
-                                        plot_after_assignment: bool = False):
+                                        plot_before_assignment: bool = True,
+                                        plot_after_assignment: bool = True):
         time_signal = TimeSignal(year=self.date_stamp.year,
                                  month=self.date_stamp.month,
                                  day=self.date_stamp.day,
@@ -209,8 +214,9 @@ class AssignmentEvaluator:
                                  minute=minute)
 
         requests_lists: RequestsLists = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
-                                                                    all_task_properties=self.all_task_properties,
-                                                                    look_ahead_minutes=look_ahead_minutes)
+                                                                                         initial_time=self.simulator_config.initial_time,
+                                                                                         all_task_properties=self.all_task_properties,
+                                                                                         look_ahead_minutes=look_ahead_minutes)
         
         self._add_requests_to_state(requests_lists=requests_lists)
 
@@ -218,8 +224,9 @@ class AssignmentEvaluator:
             self._plot_state_debug()
 
         self.policy.assign_requests_to_robots(state=self.state,
-                                                requests_lists=requests_lists,
-                                                motion_planner=self.motion_planner)
+                                              requests_lists=requests_lists,
+                                              motion_planner=self.motion_planner,
+                                              traversal_graph_generator=self.tg_generator)
 
         if plot_after_assignment:
             self._plot_state_debug()
@@ -282,8 +289,7 @@ class Experiment():
                                                        num_type_2_robots=args.num_type_2_robots,
                                                        num_type_3_robots=args.num_type_3_robots,
                                                        num_type_4_robots=args.num_type_4_robots)
-        self.all_task_properties = self._generate_task_properties()
-        self.evaluator = AssignmentEvaluator(args, random_seed=random_seed, robot_profiles=robot_profiles)
+        all_task_properties = self._generate_task_properties()
         annotated_data_files = AnnotatedDataFiles(
             annotated_visits=None,
             annotated_admissions_discharges=None,
@@ -294,6 +300,11 @@ class Experiment():
             annotated_temperature=args.temperature_orders_file,
             annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
         )
+        self.evaluator = AssignmentEvaluator(args=args, 
+                                             robot_profiles=robot_profiles,
+                                             annotated_data_files=annotated_data_files,
+                                             all_task_properties=all_task_properties,
+                                             random_seed=random_seed)
     
     def _generate_robot_profiles(self,
                                  num_type_1_robots: int,
@@ -373,9 +384,12 @@ def run_experiment(args):
     start_date="2024-06-24"
     end_date="2025-06-29"
 
+    random_seed = 42
+
     experiment = Experiment(args,
                             start_date=start_date,
-                            end_date=end_date)
+                            end_date=end_date,
+                            random_seed=random_seed)
 
     evaluate_results = experiment.evaluator.evaluate_assignment(start_date=start_date,
                                                      end_date=end_date,
@@ -385,6 +399,11 @@ def run_experiment(args):
                                                      save_frame_data=False)
     
     frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests = evaluate_results
+
+    print(f"Total Cost: {total_cost}")
+    print(f"Number of Completed Requests: {number_of_completed_requests}")
+    print(f"Number of Rejected Requests: {number_of_rejections}")
+    print(f"Total Number of Requests: {total_number_of_requests}")
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
@@ -406,11 +425,11 @@ def main():
     parser = argparse.ArgumentParser(prog='evaluate_assignment.py',
                                      description='Evaluate assignment algorithms in a hospital floor environment.')
     # date_operational_range parameters
-    parser.add_argument("--year", type=int, dest='year', default=2022, help='Select year of interest.')
-    parser.add_argument("--month", type=int, dest='month', default=10, help='Select month of interest.')
-    parser.add_argument("--day", type=int, dest='day', default=17, help='Select day of interest.')
-    parser.add_argument("--hour_start", type=int, dest='hour_start', default=0, help='Select starting hour of operational range.')
-    parser.add_argument("--hour_end", type=int, dest='hour_end', default=24, help='Select ending hour of operational range.')
+    parser.add_argument("--year", type=int, dest='year', default=2024, help='Select year of interest.')
+    parser.add_argument("--month", type=int, dest='month', default=6, help='Select month of interest.')
+    parser.add_argument("--day", type=int, dest='day', default=24, help='Select day of interest.')
+    parser.add_argument("--hour_start", type=int, dest='hour_start', default=8, help='Select starting hour of operational range.')
+    parser.add_argument("--hour_end", type=int, dest='hour_end', default=9, help='Select ending hour of operational range.')
     parser.add_argument("--floor_number", type=int, dest='floor_number', default=9, help='Select floor number of interest.')
 
     # file parameters
@@ -432,12 +451,13 @@ def main():
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
 
+
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
-    parser.add_argument("--num_type_1_robots", type=int, default=1, help="Number of robots of type 1 to be used in the team")
-    parser.add_argument("--num_type_2_robots", type=int, default=1, help="Number of robots of type 2 to be used in the team")
-    parser.add_argument("--num_type_3_robots", type=int, default=1, help="Number of robots of type 3 to be used in the team")
-    parser.add_argument("--num_type_4_robots", type=int, default=1, help="Number of robots of type 4 to be used in the team")
+    parser.add_argument("--num_type_1_robots", type=int, default=3, help="Number of robots of type 1 to be used in the team")
+    parser.add_argument("--num_type_2_robots", type=int, default=3, help="Number of robots of type 2 to be used in the team")
+    parser.add_argument("--num_type_3_robots", type=int, default=4, help="Number of robots of type 3 to be used in the team")
+    parser.add_argument("--num_type_4_robots", type=int, default=2, help="Number of robots of type 4 to be used in the team")
     parser.add_argument("--rejection_penalty", type=int, dest='rejection_penalty', default=28800, help='Penalty for rejecting a request. Default value set to the number of seconds in 8 hours.')
 
     args = parser.parse_args()

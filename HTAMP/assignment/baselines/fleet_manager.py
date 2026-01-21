@@ -85,6 +85,7 @@ class FleetManager:
         planned_goal_indices: list[int] = []
         planned_time_to_service_request: float = float('inf')
         for j, goal_node_label in enumerate(current_request.goal_nodes):
+            print(traversal_graph_generator.traversal_graph.nodes_dict)
             goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
             current_time = 0.0 if not sub_paths else sub_paths[-1][-1][1].end
             sub_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,

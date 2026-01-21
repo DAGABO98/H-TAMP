@@ -251,26 +251,32 @@ class PlanningState:
             self._update_robot_location(robot_id, traversal_graph, self.simulator_config.time_step)
         self.simulator_time += self.simulator_config.time_step
     
-    def get_completed_requests(self) -> list[TaskRequest]:
-        completed_requests = []
+    def get_completed_requests(self) -> dict[str, list[TaskRequest]]:
+        completed_requests = {}
         for request in self.requests.values():
             if request.completed:
-                completed_requests.append(request)
+                if request.request_type not in completed_requests:
+                    completed_requests[request.request_type] = []
+                completed_requests[request.request_type].append(request)
         return completed_requests
     
-    def get_rejected_requests(self) -> list[TaskRequest]:
-        rejected_requests = []
+    def get_rejected_requests(self) -> dict[str, list[TaskRequest]]:
+        rejected_requests = {}
         for request in self.requests.values():
             if request.rejected:
-                rejected_requests.append(request)
+                if request.request_type not in rejected_requests:
+                    rejected_requests[request.request_type] = []
+                rejected_requests[request.request_type].append(request)
         return rejected_requests
     
-    def compute_total_costs_for_completed_requests(self) -> float:
-        total_cost = 0.0
-        for request in self.get_completed_requests():
-            total_cost += request.total_cost
-        return total_cost
-
+    def compute_total_costs_for_completed_requests(self) -> dict[str, float]:
+        total_costs = {}
+        for request_type, request_list in self.get_completed_requests().items():
+            total_cost = 0.0
+            for request in request_list:
+                total_cost += request.total_cost
+            total_costs[request_type] = total_cost
+        return total_costs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")

@@ -212,6 +212,7 @@ class DailyRequestHandler(GlobalRequestHandler):
         self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp, floor_number=floor_number)
     
     def _process_daily_requests(self, date_stamp: pd.Timestamp, floor_number: int) -> DailyRequestsDataFrames:
+        print(f"Processing daily requests for date: {date_stamp.date()} and floor: {floor_number}")
         daily_bp_requests = DataHelpers.get_daily_requests_for_floor(self.bp_df, date_stamp=date_stamp, floor_number=floor_number)
         daily_hr_requests = DataHelpers.get_daily_requests_for_floor(self.hr_df, date_stamp=date_stamp, floor_number=floor_number)
         daily_rr_requests = DataHelpers.get_daily_requests_for_floor(self.rr_df, date_stamp=date_stamp, floor_number=floor_number)
@@ -405,6 +406,7 @@ def main():
     parser.add_argument("--day", type=int, dest='day', default=24, help='Select day of interest.')
     parser.add_argument("--hour", type=int, dest='hour', default=8, help='Select hour of interest.')
     parser.add_argument("--minute", type=int, dest='minute', default=0, help='Select minute of interest.')
+    parser.add_argument("--floor_number", type=int, dest='floor_number', default=9, help='Select floor number of interest.')
 
     # file paths
     parser.add_argument("--request_dir", type=str, default="data/requests", help="Directory to save global requests data.")
@@ -431,11 +433,10 @@ def main():
     date_stamp = pd.Timestamp(year=args.year, month=args.month, day=args.day)
     start_date="2024-06-24"
     end_date="2025-06-29"
-    floor_number = 9
 
     request_handler = DailyRequestHandler(start_date=start_date,
                                           end_date=end_date,
-                                          floor_number=floor_number,
+                                          floor_number=args.floor_number,
                                           date_stamp=date_stamp,
                                           annotated_data_files=annotated_data_files,
                                           request_dir=args.request_dir,

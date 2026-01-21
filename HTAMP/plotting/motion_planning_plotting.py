@@ -131,7 +131,8 @@ class MotionPlanningPlotter:
                    planned_goal_indices: dict[int, list[int]],
                    traversal_graph: TraversalGraph, 
                    robot_profiles: List[RobotProfile], 
-                   step_number: int) -> None: 
+                   step_number: int,
+                   debug_folder: str) -> None: 
         rows, cols = occupancy_map.shape 
         xmin, xmax = origin_x, origin_x + cols * resolution 
         ymin, ymax = origin_y, origin_y + rows * resolution 
@@ -148,8 +149,8 @@ class MotionPlanningPlotter:
             current_node_index = robots_current_node_index[robot_id]
             planned_goal_indices_robot = planned_goal_indices.get(robot_id, [])
             # TODO: We can change this to plot the entire route for the task starting from the first goal instead of just up to the current goal
-            current_goal_index = planned_goal_indices_robot[-1]
-            initial_goal_index = planned_goal_indices_robot[0]
+            current_goal_index = (planned_goal_indices_robot[-1] if len(planned_goal_indices_robot) > 0 else len(path) - 1)
+            initial_goal_index = (planned_goal_indices_robot[0] if len(planned_goal_indices_robot) > 0 else 0)
             point_index_on_edge = point_indices_on_edge[robot_id]
             
             if initial_goal_index < current_node_index:
@@ -181,8 +182,8 @@ class MotionPlanningPlotter:
                     circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id)) 
                     ax.add_patch(circle) 
                 else:
-                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=2.0, alpha=0.7) 
-        plt.savefig(f"results/motion_planning/state/state_step_{step_number}.svg") 
+                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=2.0, alpha=0.7)
+        plt.savefig(f"{debug_folder}/state_step_{step_number}.svg")
         plt.close()
     
     @staticmethod

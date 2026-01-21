@@ -134,10 +134,10 @@ class DateStamp:
         self.year = year
         self.month = month
         self.day = day
-        time_stamp = pd.Timestamp(year=year,
+        self.time_stamp = pd.Timestamp(year=year,
                                   month=month,
                                   day=day)
-        self.weekday = time_stamp.weekday()
+        self.weekday = self.time_stamp.weekday()
     
     def __repr__(self):
         date_stamp_str = str(self.year) + "-" + str(self.month) + "-" + str(self.day)
