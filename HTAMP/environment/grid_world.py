@@ -326,7 +326,7 @@ if __name__ == "__main__":
                       occupancy_map=tg_generator.occupancy_map,
                       traversal_graph=tg_generator.traversal_graph,
                       shortest_paths=tg_generator.shortest_paths,
-                      robot_profiles=[robot_profile],
+                      robot_profiles={robot_profile.robot_id: robot_profile},
                       use_saved_data=args.use_saved_data,
                       occupancy_reservations_file=args.occupancy_reservations_file)
 
@@ -344,11 +344,11 @@ if __name__ == "__main__":
     print(len(occupancy_reservations))
 
     MotionPlanningPlotter.plot_motion_reservations(occupancy_map=world.occupancy_map,
-                                                          origin_x=tg_generator.origin_x,
-                                                          origin_y=tg_generator.origin_y,
-                                                          resolution=tg_generator.resolution,
-                                                          motion_reservations=occupancy_reservations,
-                                                          filename="results/motion_planning/robot_motion_reservations.svg")
+                                                   origin_x=tg_generator.origin_x,
+                                                   origin_y=tg_generator.origin_y,
+                                                   resolution=tg_generator.resolution,
+                                                   motion_reservations=occupancy_reservations,
+                                                   filename="results/motion_planning/robot_motion_reservations.svg")
     pEnd = datetime.datetime.now()
     print(f"Total generation time: {pEnd - pStart}")
 
