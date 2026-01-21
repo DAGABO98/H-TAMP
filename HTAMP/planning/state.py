@@ -37,10 +37,11 @@ class PlanningState:
     def __init__(self, simulator_config: SimulatorConfig):
         self.simulator_config = simulator_config
         self.simulator_time = 0.0
-        self.robot_depots = copy.deepcopy(simulator_config.initial_robot_positions)
+        self.robot_depots = copy.deepcopy(simulator_config.initial_nodes)
         self.robots_positions = copy.deepcopy(simulator_config.initial_robot_positions)
+        self.robots_current_time: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
         self.robots_current_node_index: dict[int, int] = {robot_id: 0 for robot_id in simulator_config.initial_robot_positions.keys()}
-        self.robots_current_nodes: dict[int, TraversalNode | None] = {robot_id: None for robot_id in simulator_config.initial_robot_positions.keys()}
+        self.robots_current_nodes: dict[int, TraversalNode] = copy.deepcopy(simulator_config.initial_nodes)
         self.robots_next_nodes: dict[int, TraversalNode | None] = {robot_id: None for robot_id in simulator_config.initial_robot_positions.keys()}
         self.edge_samples: dict[int, np.ndarray] = {robot_id: np.array([]) for robot_id in simulator_config.initial_robot_positions.keys()}
         self.edge_lengths: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
@@ -50,12 +51,12 @@ class PlanningState:
 
         self.current_wait_times: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
 
-        self.robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
+        self.robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]] = {key: [] for key in simulator_config.robot_profiles.keys()}
 
         self.requests: dict[int, TaskRequest] = {}
 
-        self.assigned_requests: dict[int, list[int]] = {profile.robot_id: [] for profile in simulator_config.robot_profiles}
-
+        self.assigned_requests: dict[int, list[int]] = {key: [] for key in simulator_config.robot_profiles.keys()}
+        
     def _extract_edge_samples_and_cumulative_lengths(self, 
                                                 start_node: TraversalNode, 
                                                 end_node: TraversalNode, 
@@ -99,7 +100,6 @@ class PlanningState:
             self.robots_current_node_index[robot_id] = 0
             self.point_indices_on_edge[robot_id] = 0
         else:
-            self.robots_current_nodes[robot_id] = None
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
             self.cumulative_path_lengths[robot_id] = np.array([])
@@ -168,7 +168,6 @@ class PlanningState:
                 self.robots_current_node_index[robot_id] = current_index
                 self.point_indices_on_edge[robot_id] = 0
         else:
-            self.robots_current_nodes[robot_id] = None
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
             self.cumulative_path_lengths[robot_id] = np.array([])
@@ -205,8 +204,7 @@ class PlanningState:
 
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
-            if self.robots_current_nodes[robot_id] is not None:
-                self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
+            self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
             return
 
         if self.current_wait_times[robot_id] > time_step:
@@ -313,7 +311,7 @@ def main():
             entry_node = tg_generator.traversal_graph.nodes_dict[entry_node_label]
             potential_start_nodes.append(entry_node)
             
-    robot_profiles = []
+    robot_profiles = {}
 
     # randomly select start and goal nodes for each robot
     random.seed(11)
@@ -325,7 +323,7 @@ def main():
 
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
-        robot_profiles.append(robot_profile)
+        robot_profiles[i] = robot_profile
 
     print("Creating Grid World...")
 

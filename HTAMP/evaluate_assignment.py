@@ -28,7 +28,7 @@ from HTAMP.assignment.baselines.fleet_manager import FleetManager
 class AssignmentEvaluator:
     def __init__(self, 
                  args, 
-                 robot_profiles: list[RobotProfile], 
+                 robot_profiles: dict[int, RobotProfile], 
                  annotated_data_files: AnnotatedDataFiles, 
                  all_task_properties: AllTaskProperties, 
                  random_seed=None):
@@ -74,7 +74,7 @@ class AssignmentEvaluator:
         print("Initializing Motion Planner...")
         self.motion_planner = MotionPlanner(grid=self.world, weight_factor=1.0)
         for i in range(self.team_size):
-            self.motion_planner._initialize_robot_reservations(initial_node=self.selected_start_nodes[i],
+            self.motion_planner._initialize_robot_reservations(initial_node=self.simulator_config.initial_nodes[i],
                                                robot_profile=self.robot_profiles[i],
                                                current_time=0.0,
                                                horizon=self.simulator_config.horizon)
@@ -100,8 +100,9 @@ class AssignmentEvaluator:
                                        robot_profiles=self.robot_profiles,
                                        rejection_penalty=100.0,
                                        initial_time=pd.Timestamp(year=self.date_stamp.year, month=self.date_stamp.month, day=self.date_stamp.day, hour=self.args.hour_start, minute=0),
-                                       initial_robot_positions={i: self.selected_start_nodes[i].position for i in range(self.team_size)},
-                                       horizon=5000.0)
+                                       initial_robot_positions={i: copy.deepcopy(self.selected_start_nodes[i].position) for i in range(self.team_size)},
+                                       initial_nodes={i: copy.deepcopy(self.selected_start_nodes[i]) for i in range(self.team_size)},
+                                       horizon=(self.args.hour_end * 3600.0) - (self.args.hour_start * 3600.0))
         print("Simulator Config initialized.")
     
     def _get_request_handler(self,
@@ -220,6 +221,16 @@ class AssignmentEvaluator:
         
         self._add_requests_to_state(requests_lists=requests_lists)
 
+        print("Extracted Requests:")
+        print(f"Blood Pressure Requests: {len(requests_lists.blood_pressure_requests)}")
+        print(f"Heart Rate Requests: {len(requests_lists.heart_rate_requests)}")
+        print(f"Respiratory Rate Requests: {len(requests_lists.respiratory_rate_requests)}")
+        print(f"Temperature Requests: {len(requests_lists.temperature_requests)}")
+        print(f"Oxygen Saturation Requests: {len(requests_lists.oxygen_saturation_requests)}")
+        print(f"Medications Requests: {len(requests_lists.medications_requests)}")
+
+        print(f"requests_lists.heart_rate_requests: {requests_lists.heart_rate_requests}")
+
         if plot_before_assignment:
             self._plot_state_debug()
 
@@ -289,6 +300,7 @@ class Experiment():
                                                        num_type_2_robots=args.num_type_2_robots,
                                                        num_type_3_robots=args.num_type_3_robots,
                                                        num_type_4_robots=args.num_type_4_robots)
+        print(f"Generated Robot Profiles: {robot_profiles}")
         all_task_properties = self._generate_task_properties()
         annotated_data_files = AnnotatedDataFiles(
             annotated_visits=None,
@@ -310,25 +322,25 @@ class Experiment():
                                  num_type_1_robots: int,
                                  num_type_2_robots: int,
                                  num_type_3_robots: int,
-                                 num_type_4_robots: int) -> list[RobotProfile]:
+                                 num_type_4_robots: int) -> dict[int, RobotProfile]:
         # type 1 robots: heart rate + SPO2
         # type 2 robots: blood pressure + heart rate
         # type 3 robots: respiratory rate + temperature
         # type 4 robots: medications
 
-        robot_profiles = []
+        robot_profiles = {}
         for i in range(num_type_1_robots):
             robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i, robot_type="type_1")
-            robot_profiles.append(robot_profile)
-        for i in range(num_type_2_robots):
-            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + i, robot_type="type_2")
-            robot_profiles.append(robot_profile)
-        for i in range(num_type_3_robots):
-            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + i, robot_type="type_3")
-            robot_profiles.append(robot_profile)
-        for i in range(num_type_4_robots):
-            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + num_type_3_robots + i, robot_type="type_4")
-            robot_profiles.append(robot_profile)
+            robot_profiles[i] = robot_profile
+        for j in range(num_type_2_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + j, robot_type="type_2")
+            robot_profiles[num_type_1_robots + j] = robot_profile
+        for m in range(num_type_3_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + m, robot_type="type_3")
+            robot_profiles[num_type_1_robots + num_type_2_robots + m] = robot_profile
+        for n in range(num_type_4_robots):
+            robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_type_1_robots + num_type_2_robots + num_type_3_robots + n, robot_type="type_4")
+            robot_profiles[num_type_1_robots + num_type_2_robots + num_type_3_robots + n] = robot_profile
         return robot_profiles
     
     def _generate_task_properties(self) -> AllTaskProperties:

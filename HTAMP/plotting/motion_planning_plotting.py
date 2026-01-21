@@ -142,7 +142,11 @@ class MotionPlanningPlotter:
                        origin="upper", # flip so (0,0) is top-left 
                        extent=[xmin, xmax, ymax, ymin], # still in meters 
                        aspect="equal" ) 
-        colors = plt.get_cmap('hsv', len(robot_paths) + 1) 
+        cell_x = [1037*resolution]
+        cell_y = [926*resolution]
+        ax.scatter(cell_x, cell_y, s=10, color='black')
+
+        colors = plt.get_cmap('hsv', len(robot_paths) + 1)
         for robot_id in robot_paths.keys(): 
             path = robot_paths[robot_id]
             robot_position = robot_positions[robot_id]
@@ -153,20 +157,27 @@ class MotionPlanningPlotter:
             initial_goal_index = (planned_goal_indices_robot[0] if len(planned_goal_indices_robot) > 0 else 0)
             point_index_on_edge = point_indices_on_edge[robot_id]
             
-            if initial_goal_index < current_node_index:
-                traversered_path = path[initial_goal_index:current_node_index + 1]
-                for j in range(len(traversered_path) - 1):
-                    start_node, start_interval = traversered_path[j] 
-                    end_node, end_interval = traversered_path[j + 1] 
-                    edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
-                    samples_x = edge.edge_connector.connector_dict['X'] 
-                    samples_y = edge.edge_connector.connector_dict['Y'] 
-                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=1.0, alpha=0.5)
+            # if initial_goal_index < current_node_index:
+            #     traversered_path = path[initial_goal_index:current_node_index + 1]
+            #     for j in range(len(traversered_path) - 1):
+            #         start_node, start_interval = traversered_path[j] 
+            #         end_node, end_interval = traversered_path[j + 1] 
+            #         edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
+            #         samples_x = edge.edge_connector.connector_dict['X'] 
+            #         samples_y = edge.edge_connector.connector_dict['Y'] 
+            #         ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=1.0, alpha=0.5)
 
-            truncated_path = path[current_node_index:current_goal_index + 1]
+            # truncated_path = path[current_node_index:current_goal_index + 1]
+            truncated_path = path[current_node_index:]
 
             if len(truncated_path) < 2: 
-                circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id), alpha=0.3) 
+                if robot_id == 11:
+                    color = 'red'
+                    alpha = 0.8
+                else:
+                    color = colors(robot_id)
+                    alpha = 0.3
+                circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=color, alpha=alpha) 
                 ax.add_patch(circle)
                 continue
             for j in range(len(truncated_path) - 1): 
@@ -175,14 +186,20 @@ class MotionPlanningPlotter:
                 edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
                 samples_x = edge.edge_connector.connector_dict['X'] 
                 samples_y = edge.edge_connector.connector_dict['Y'] 
+                if robot_id == 2:
+                    color = 'blue'
+                    alpha = 0.8
+                else:
+                    color = colors(robot_id)
+                    alpha = 0.7
                 if j == 0: 
                     full_samples_x = samples_x[point_index_on_edge:] 
                     full_samples_y = samples_y[point_index_on_edge:] 
-                    ax.plot(full_samples_x, full_samples_y, color=colors(robot_id), linewidth=2.0, alpha=0.7) 
-                    circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id)) 
+                    ax.plot(full_samples_x, full_samples_y, color=color, linewidth=2.0, alpha=alpha) 
+                    circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=color, alpha=alpha) 
                     ax.add_patch(circle) 
                 else:
-                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=2.0, alpha=0.7)
+                    ax.plot(samples_x, samples_y, color=color, linewidth=2.0, alpha=alpha)
         plt.savefig(f"{debug_folder}/state_step_{step_number}.svg")
         plt.close()
     

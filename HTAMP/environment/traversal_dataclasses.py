@@ -30,6 +30,7 @@ class DriveThrough:
 
 @dataclass
 class Doorway:
+    room_id: str
     start: Coordinate
     end: Coordinate
     lanes: List[Lane]

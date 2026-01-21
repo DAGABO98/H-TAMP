@@ -41,6 +41,7 @@ class TraversalGraphGenerator:
         self.drive_throughs = self._extract_drive_throughs_from_config()
         self.doorways = self._extract_doorways_from_config()
         self.parking_spaces = self._extract_parking_spaces_from_config()
+        self.doorway_to_node_dict = {}
         self.corridor_intersection_subgraphs, self.corridor_intersection_subgraph_indices = self._generate_corridor_intersection_traversal_subgraphs()
         self.doorway_subgraphs, self.doorway_subgraph_indices = self._generate_doorway_traversal_subgraphs()
         self.drive_through_subgraphs, self.drive_through_subgraph_indices = self._generate_drive_through_traversal_subgraphs()
@@ -175,6 +176,7 @@ class TraversalGraphGenerator:
         if 'doorways' in self.config:
             for dw in self.config['doorways']:
                 doorway_lanes = []
+                doorway_id = dw.get('id', 'unknown')
                 doorway_corridor_id = dw.get('corridor_id', None)
                 doorway_direction = None
 
@@ -229,7 +231,8 @@ class TraversalGraphGenerator:
                                     y=(dw['start_point'][1]*self.meters_per_cell))
                 end = Coordinate(x=(dw['end_point'][0]*self.meters_per_cell), 
                                     y=(dw['end_point'][1]*self.meters_per_cell))
-                current_doorway = Doorway(start=start,
+                current_doorway = Doorway(room_id=doorway_id,
+                                          start=start,
                                           end=end,
                                           lanes=doorway_lanes,
                                           corridor_id=doorway_corridor_id)
@@ -1063,6 +1066,7 @@ class TraversalGraphGenerator:
         current_index = 0
         for doorway in self.doorways:
             edges = []
+            room_id = doorway.room_id
             corridor = self._get_corridor_by_id(doorway.corridor_id)
             if corridor is None:
                 print(f"Warning: Doorway corridor ID '{doorway.corridor_id}' not found among corridors.")
@@ -1089,6 +1093,7 @@ class TraversalGraphGenerator:
             subgraphs.append(current_subgraph)
             subgraph_indices.setdefault(doorway.corridor_id, []).append(current_index)
             current_index += 1
+            self.doorway_to_node_dict[doorway.room_id] = room_nodes[0]  # Map doorway room ID to one of its room nodes
         return subgraphs, subgraph_indices
     
     def _extract_drive_through_intersection_nodes(self,

@@ -116,15 +116,17 @@ class DateOperationalRange:
 class SimulatorConfig:
     def __init__(self, 
                  fps: int,
-                 robot_profiles: list[RobotProfile], 
+                 robot_profiles: dict[int, RobotProfile], 
                  rejection_penalty: float, 
                  initial_time: pd.Timestamp,
                  horizon: float,
-                 initial_robot_positions: dict[int, Coordinate]):
+                 initial_robot_positions: dict[int, Coordinate],
+                 initial_nodes: dict[int, TraversalNode]):
         self.robot_profiles = robot_profiles
         self.rejection_penalty = rejection_penalty
         self.initial_time = initial_time
         self.initial_robot_positions = initial_robot_positions
+        self.initial_nodes = initial_nodes
         self.fps = fps
         self.time_step = 1.0 / fps
         self.horizon = horizon
@@ -228,7 +230,8 @@ class TaskRequest:
         return current_time >= self.time_for_service
 
     def __repr__(self):
-        return f"Request(request_id={self.request_id}, request_type='{self.request_type}', ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time})"
+        return f"Request(request_id={self.request_id}, request_type='{self.request_type}'," + \
+            f"ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time}, time_for_service={self.time_for_service})"
     
 @dataclass
 class RequestsLists:

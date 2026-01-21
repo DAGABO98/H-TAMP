@@ -22,8 +22,8 @@ class GridWorld:
                  fps: float, 
                  occupancy_map: np.ndarray, 
                  traversal_graph: TraversalGraph,
-                 shortest_paths: Dict[str, Dict[str, Tuple[List[str], float]]],
-                 robot_profiles: List[RobotProfile],
+                 shortest_paths: dict[str, dict[str, tuple[list[str], float]]],
+                 robot_profiles: dict[int, RobotProfile],
                  use_saved_data: bool,
                  occupancy_reservations_file: str) -> None:
         self.cell_size = cell_size  # meters per cell
@@ -253,7 +253,7 @@ class GridWorld:
 
     def _create_occupancy_reservations(self) -> Dict[str, Dict[str, Dict[str, List[MotionReservation]]]]:
         occupancy_reservations: Dict[str, Dict[str, Dict[str, List[MotionReservation]]]] = {}
-        for robot_profile in self.robot_profiles:
+        for robot_id, robot_profile in self.robot_profiles.items():
             robot_id_str = self._robot_key(robot_profile)
             occupancy_reservations[robot_id_str] = self._create_robot_occupancy_reservations(robot_profile)
 
