@@ -56,7 +56,7 @@ class PlanningState:
         self.requests: dict[int, TaskRequest] = {}
 
         self.assigned_requests: dict[int, list[int]] = {key: [] for key in simulator_config.robot_profiles.keys()}
-        
+
     def _extract_edge_samples_and_cumulative_lengths(self, 
                                                 start_node: TraversalNode, 
                                                 end_node: TraversalNode, 
@@ -149,8 +149,9 @@ class PlanningState:
                 self.current_wait_times[robot_id] = 0.0
                 self.robots_current_node_index[robot_id] = current_index
                 self.point_indices_on_edge[robot_id] = 0
+                self.robots_current_time[robot_id] = self.simulator_time
             else:
-                end_node, _ = path[next_index]
+                end_node, end_time_interval = path[next_index]
                 self.robots_next_nodes[robot_id] = end_node
 
                 self._check_if_next_node_is_task_start(robot_id=robot_id,
@@ -167,6 +168,10 @@ class PlanningState:
                 self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
                 self.robots_current_node_index[robot_id] = current_index
                 self.point_indices_on_edge[robot_id] = 0
+                if next_index == len(path) - 1:
+                    self.robots_current_time[robot_id] = end_time_interval.start
+                else:
+                    self.robots_current_time[robot_id] = end_time_interval.end
         else:
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
@@ -176,7 +181,8 @@ class PlanningState:
             self.current_wait_times[robot_id] = 0.0
             self.robots_current_node_index[robot_id] = 0
             self.point_indices_on_edge[robot_id] = 0
-    
+            self.robots_current_time[robot_id] = self.simulator_time
+
     def _calculate_traversed_distance(self, robot_id: int, time_step: float) -> float:
         traversed_distance = self.previous_traversed_distances[robot_id] \
             + self.simulator_config.robot_profiles[robot_id].speed * time_step
@@ -205,6 +211,7 @@ class PlanningState:
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
+            self.robots_current_time[robot_id] = self.simulator_time + time_step
             return
 
         if self.current_wait_times[robot_id] > time_step:
