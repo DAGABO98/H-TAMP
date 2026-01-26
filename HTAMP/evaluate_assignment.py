@@ -79,7 +79,7 @@ class AssignmentEvaluator:
                                        initial_time=pd.Timestamp(year=self.date_stamp.year, month=self.date_stamp.month, day=self.date_stamp.day, hour=self.args.hour_start, minute=0),
                                        initial_robot_positions={i: copy.deepcopy(self.selected_start_nodes[i].position) for i in range(self.team_size)},
                                        initial_nodes={i: copy.deepcopy(self.selected_start_nodes[i]) for i in range(self.team_size)},
-                                       horizon=(self.args.hour_end * 3600.0) - (self.args.hour_start * 3600.0))
+                                       horizon=((self.args.hour_end+1) * 3600.0) - (self.args.hour_start * 3600.0))
         print("Simulator Config initialized.")
     
     def _initialize_motion_planner(self):
@@ -207,9 +207,9 @@ class AssignmentEvaluator:
                                         frame_data: Optional[FrameData] = None,
                                         save_frame_data: bool = False,
                                         look_ahead_minutes: int = 60,
-                                        plot_before_assignment: bool = True,
-                                        plot_after_assignment: bool = True,
-                                        debug: bool = True):
+                                        plot_before_assignment: bool = False,
+                                        plot_after_assignment: bool = False,
+                                        debug: bool = False):
         time_signal = TimeSignal(year=self.date_stamp.year,
                                  month=self.date_stamp.month,
                                  day=self.date_stamp.day,
@@ -232,8 +232,6 @@ class AssignmentEvaluator:
         print(f"Oxygen Saturation Requests: {len(requests_lists.oxygen_saturation_requests)}")
         print(f"Medications Requests: {len(requests_lists.medications_requests)}")
 
-        print(f"requests_lists.heart_rate_requests: {requests_lists.heart_rate_requests}")
-
         if plot_before_assignment:
             self._plot_state_debug(before_assignment=True)
 
@@ -255,7 +253,8 @@ class AssignmentEvaluator:
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
-                            look_ahead_minutes: int = 60) -> tuple[FrameData, float, int, int, int]:
+                            look_ahead_minutes: int = 60,
+                            debug = False) -> tuple[FrameData, float, int, int, int]:
         request_handler = self._get_request_handler(start_date=start_date,
                                                     end_date=end_date,
                                                     annotated_data_files=self.annotated_data_files,
@@ -278,9 +277,15 @@ class AssignmentEvaluator:
                                                      request_handler=request_handler,
                                                      frame_data=frame_data,
                                                      save_frame_data=save_frame_data,
-                                                     look_ahead_minutes=look_ahead_minutes)
+                                                     look_ahead_minutes=look_ahead_minutes, 
+                                                     debug=debug)
                 
         for minute in range(60):
+            self.policy.assign_requests_to_robots(state=self.state,
+                                              requests_lists=None,
+                                              motion_planner=self.motion_planner,
+                                              traversal_graph_generator=self.tg_generator,
+                                              debug=debug)
             self._step_simulation(frame_data=frame_data, save_frame_data=save_frame_data)
         
         total_cost = self.state.compute_total_costs_for_completed_requests()
@@ -288,7 +293,6 @@ class AssignmentEvaluator:
         print(f"Rejected Requests: {rejected_requests}")
         number_of_rejections = len(rejected_requests)
         completed_requests = self.state.get_completed_requests()
-        print(f"Completed Requests: {completed_requests}")
         number_of_completed_requests = len(completed_requests)
         total_number_of_requests = len(list(self.state.requests.keys()))
         return frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests

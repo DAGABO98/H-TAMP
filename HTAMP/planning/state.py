@@ -105,7 +105,8 @@ class PlanningState:
                     f"Path start node {path[0][0].label} does not match robot {robot_id} current or next node."
                 assert path[0][1].start == self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start, \
                     f"Path start time {path[0][1].start} does not match robot {robot_id} next node start time {self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start}."
-                self.robot_paths[robot_id] = self.robot_paths[robot_id][self.robots_current_node_index[robot_id]:self.robots_current_node_index[robot_id]+1] + path
+                self.robot_paths[robot_id] = [self.robot_paths[robot_id][self.robots_current_node_index[robot_id]]] + path
+                self.robots_current_node_index[robot_id] = 0
         else:
             self.robot_paths[robot_id] = path
             self.robots_next_nodes[robot_id] = None
@@ -157,7 +158,7 @@ class PlanningState:
                 self.current_wait_times[robot_id] = 0.0
                 self.robots_current_node_index[robot_id] = current_index
                 self.point_indices_on_edge[robot_id] = 0
-                self.robots_current_time[robot_id] = self.simulator_time
+                self.robots_current_time[robot_id] = copy.deepcopy(self.simulator_time)
             else:
                 end_node, end_time_interval = path[next_index]
                 self.robots_next_nodes[robot_id] = end_node
@@ -176,7 +177,7 @@ class PlanningState:
                 self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
                 self.robots_current_node_index[robot_id] = current_index
                 self.point_indices_on_edge[robot_id] = 0
-                self.robots_current_time[robot_id] = end_time_interval.start
+                self.robots_current_time[robot_id] = copy.deepcopy(end_time_interval.start)
         else:
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
@@ -186,7 +187,7 @@ class PlanningState:
             self.current_wait_times[robot_id] = 0.0
             self.robots_current_node_index[robot_id] = 0
             self.point_indices_on_edge[robot_id] = 0
-            self.robots_current_time[robot_id] = self.simulator_time
+            self.robots_current_time[robot_id] = copy.deepcopy(self.simulator_time)
 
     def _calculate_traversed_distance(self, robot_id: int, time_step: float) -> float:
         traversed_distance = self.previous_traversed_distances[robot_id] \
@@ -217,7 +218,7 @@ class PlanningState:
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
-            self.robots_current_time[robot_id] = self.simulator_time + time_step
+            self.robots_current_time[robot_id] = copy.deepcopy(self.simulator_time) + time_step
             return
 
         if self.current_wait_times[robot_id] > time_step:

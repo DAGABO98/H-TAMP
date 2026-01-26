@@ -4,6 +4,7 @@
 # Requests are assigned when they reach the front of the queue and there is at least one available robot.
 
 import heapq
+from typing import Optional
 from HTAMP.assignment.assignment_helpers import TaskQueue
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.traversal_dataclasses import TraversalNode
@@ -28,6 +29,7 @@ class FleetManager:
                     if not request.is_expired(state.simulator_time):
                         heapq.heappush(temp_heap, (priority, request_id))
                     else:
+                        print(f"Request {request_id} has expired and is being removed from the queue.")
                         request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
             queue.heap = temp_heap
 
@@ -40,7 +42,9 @@ class FleetManager:
     def _add_request_to_queue(self, request: TaskRequest, queue: TaskQueue):
         queue.add_task(request.scheduled_time, request.request_id)
     
-    def _add_all_requests_to_queues(self, requests_lists: RequestsLists):
+    def _add_all_requests_to_queues(self, requests_lists: Optional[RequestsLists]):
+        if requests_lists is None:
+            return
         for request in requests_lists.blood_pressure_requests + requests_lists.heart_rate_requests + \
                        requests_lists.respiratory_rate_requests + requests_lists.temperature_requests + \
                        requests_lists.oxygen_saturation_requests:
@@ -246,7 +250,7 @@ class FleetManager:
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState, 
-                                  requests_lists: RequestsLists, 
+                                  requests_lists: Optional[RequestsLists], 
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
                                   debug: bool):
