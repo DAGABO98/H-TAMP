@@ -16,12 +16,8 @@ from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class FleetManager:
     def __init__(self):
-        self.blood_pressure_requests_queue = TaskQueue()
-        self.heart_rate_requests_queue = TaskQueue()
-        self.respiratory_rate_requests_queue = TaskQueue()
-        self.temperature_requests_queue = TaskQueue()
-        self.oxygen_saturation_requests_queue = TaskQueue()
-        self.medications_requests_queue = TaskQueue()
+        self.monitoring_requests_queue = TaskQueue()
+        self.delivery_requests_queue = TaskQueue()
     
     def _remove_expired_requests_from_queue(self, queue: TaskQueue, state: PlanningState):
             temp_heap = []
@@ -36,35 +32,21 @@ class FleetManager:
             queue.heap = temp_heap
 
     def _check_if_requests_in_queues_expired(self, state: PlanningState):
-        self._remove_expired_requests_from_queue(queue=self.blood_pressure_requests_queue, 
+        self._remove_expired_requests_from_queue(queue=self.monitoring_requests_queue, 
                                                  state=state)
-        self._remove_expired_requests_from_queue(queue=self.heart_rate_requests_queue, 
-                                                 state=state)
-        self._remove_expired_requests_from_queue(queue=self.respiratory_rate_requests_queue, 
-                                                 state=state)
-        self._remove_expired_requests_from_queue(queue=self.temperature_requests_queue, 
-                                                 state=state)
-        self._remove_expired_requests_from_queue(queue=self.oxygen_saturation_requests_queue, 
-                                                 state=state)
-        self._remove_expired_requests_from_queue(queue=self.medications_requests_queue, 
+        self._remove_expired_requests_from_queue(queue=self.delivery_requests_queue, 
                                                  state=state)
     
     def _add_request_to_queue(self, request: TaskRequest, queue: TaskQueue):
         queue.add_task(request.scheduled_time, request.request_id)
     
     def _add_all_requests_to_queues(self, requests_lists: RequestsLists):
-        for request in requests_lists.blood_pressure_requests:
-            self._add_request_to_queue(request, self.blood_pressure_requests_queue)
-        for request in requests_lists.heart_rate_requests:
-            self._add_request_to_queue(request, self.heart_rate_requests_queue)
-        for request in requests_lists.respiratory_rate_requests:
-            self._add_request_to_queue(request, self.respiratory_rate_requests_queue)
-        for request in requests_lists.temperature_requests:
-            self._add_request_to_queue(request, self.temperature_requests_queue)
-        for request in requests_lists.oxygen_saturation_requests:
-            self._add_request_to_queue(request, self.oxygen_saturation_requests_queue)
+        for request in requests_lists.blood_pressure_requests + requests_lists.heart_rate_requests + \
+                       requests_lists.respiratory_rate_requests + requests_lists.temperature_requests + \
+                       requests_lists.oxygen_saturation_requests:
+            self._add_request_to_queue(request, self.monitoring_requests_queue)
         for request in requests_lists.medications_requests:
-            self._add_request_to_queue(request, self.medications_requests_queue)
+            self._add_request_to_queue(request, self.delivery_requests_queue)
     
     def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
         if state.robots_next_nodes[robot_id] is None:
@@ -112,7 +94,7 @@ class FleetManager:
                                                        goal_traversal_node=state.robot_depots[robot_id],
                                                        robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                        current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=state.simulator_config.horizon,
+                                                       wait_time_at_goal=120.0,
                                                        horizon=state.simulator_config.horizon)
             if return_path is not None:
                 sub_paths.append(return_path)
@@ -167,295 +149,120 @@ class FleetManager:
                                  planned_goal_indices: list[int],
                                  motion_planner: MotionPlanner,
                                  traversal_graph_generator: TraversalGraphGenerator,
-                                 request_num: int):
+                                 debug: bool):
             state.requests[request_id].schedule_task(planned_time=planned_time,
                                                     planned_goal_indices=planned_goal_indices)
-            state.assign_request_to_robot(request_id=request_id, 
-                                        robot_id=robot_id, 
-                                        path=planned_path, 
-                                        traversal_graph=traversal_graph_generator.traversal_graph)
-            
-            planned_goal_indices_dict: dict[int, list[int]] = {}
-            for rid, requests in state.assigned_requests.items():
-                if requests:
-                    current_request_id = requests[0]
-                    current_request = state.requests[current_request_id]
-                    planned_goal_indices_dict[rid] = current_request.planned_goal_indices
 
-            MotionPlanningPlotter.plot_state_debug(
-                occupancy_map=traversal_graph_generator.occupancy_map,
-                origin_x=traversal_graph_generator.origin_x,
-                origin_y=traversal_graph_generator.origin_y,
-                resolution=traversal_graph_generator.meters_per_cell,
-                robot_positions=state.robots_positions,
-                robots_current_node_index=state.robots_current_node_index,
-                point_indices_on_edge=state.point_indices_on_edge,
-                robot_paths=state.robot_paths,
-                planned_goal_indices=planned_goal_indices_dict,
-                traversal_graph=traversal_graph_generator.traversal_graph,
-                robot_profiles=state.simulator_config.robot_profiles,
-                step_number=state.simulator_time+request_num,
-                debug_folder="results/motion_planning/debug"
-            )
+            if debug:
+                MotionPlanningPlotter.plot_assigned_path(
+                    occupancy_map=traversal_graph_generator.occupancy_map,
+                    origin_x=traversal_graph_generator.origin_x,
+                    origin_y=traversal_graph_generator.origin_y,
+                    resolution=traversal_graph_generator.resolution,
+                    request_id=request_id,
+                    results_folder="results/motion_planning/debug",
+                    planned_path=planned_path,
+                    traversal_graph=traversal_graph_generator.traversal_graph,
+                    robot_profile=state.simulator_config.robot_profiles[robot_id]
+                )
+                
             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
             motion_planner.reserve_path_for_agent(path=planned_path,
                                                  robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                  wait_time_at_goal=state.simulator_config.horizon)
             
-            # state.assign_request_to_robot(request_id=request_id, 
-            #                             robot_id=robot_id, 
-            #                             path=planned_path, 
-            #                             traversal_graph=traversal_graph_generator.traversal_graph)
+            state.assign_request_to_robot(request_id=request_id, 
+                                        robot_id=robot_id, 
+                                        path=planned_path, 
+                                        traversal_graph=traversal_graph_generator.traversal_graph)
+    
+    def _assign_requests_to_available_robots(self,
+                                            state: PlanningState,
+                                            motion_planner: MotionPlanner,
+                                            traversal_graph_generator: TraversalGraphGenerator,
+                                            robot_type: str,
+                                            requests_queue: TaskQueue,
+                                            debug: bool):
+        available_robots = state.get_available_robots(robot_type=robot_type)
+        requests_to_add_back = []
+        print(f"Available robots for {robot_type}: {available_robots}")
+        while available_robots:
+            if not requests_queue.heap:
+                break  # No more requests to assign
+
+            # Get the next request from the highest priority queue
+            next_request_id = requests_queue.pop_task()
+            print(f"Assigning request {next_request_id} to {robot_type} robot")
+            closest_robot_results = self._determine_closest_robot(request_id=next_request_id, 
+                                                                  available_robots=available_robots, 
+                                                                  state=state, 
+                                                                  motion_planner=motion_planner,
+                                                                  traversal_graph_generator=traversal_graph_generator)
             
-    
-    def _assign_requests_for_robot_type_1(self, 
-                                          state: PlanningState, 
-                                          motion_planner: MotionPlanner, 
-                                          traversal_graph_generator: TraversalGraphGenerator):
-        available_robots = state.get_available_robots(robot_type="type_1")
-        requests_to_add_back_heart_rate = []
-        requests_to_add_back_oxygen_saturation = []
-        request_num = 1
-        print(f"Available robots for type 1: {available_robots}")
-        while available_robots:
-            if not self.heart_rate_requests_queue.heap and not self.oxygen_saturation_requests_queue.heap:
-                break  # No more requests to assign
+            closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
 
-            # Get the next request from the highest priority queue
-            next_request_id = None
-            if (self.heart_rate_requests_queue.heap and 
-                (not self.oxygen_saturation_requests_queue.heap or 
-                 self.heart_rate_requests_queue.heap[0] < self.oxygen_saturation_requests_queue.heap[0])):
-                next_request_id = self.heart_rate_requests_queue.pop_task()
+            print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
+            
+            if closest_robot is not None:
+                self._assign_request_to_robot(state=state,
+                                              request_id=next_request_id,
+                                              robot_id=closest_robot,
+                                              planned_path=closest_path,
+                                              planned_time=shortest_time,
+                                              planned_goal_indices=closest_planned_goal_indices,
+                                              motion_planner=motion_planner,
+                                              traversal_graph_generator=traversal_graph_generator,
+                                              debug=debug)
+                available_robots.remove(closest_robot)
             else:
-                next_request_id = self.oxygen_saturation_requests_queue.pop_task()
-
-            if next_request_id is not None:
-                print(f"Assigning request {next_request_id} for robot type 1")
-                closest_robot_results = self._determine_closest_robot(request_id=next_request_id, 
-                                                                      available_robots=available_robots, 
-                                                                      state=state, 
-                                                                      motion_planner=motion_planner,
-                                                                      traversal_graph_generator=traversal_graph_generator)
-                
-                closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
-
-                print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
-                
-                if closest_robot is not None:
-                    self._assign_request_to_robot(state=state,
-                                                 request_id=next_request_id,
-                                                 robot_id=closest_robot,
-                                                 planned_path=closest_path,
-                                                 planned_time=shortest_time,
-                                                 planned_goal_indices=closest_planned_goal_indices,
-                                                 motion_planner=motion_planner,
-                                                 traversal_graph_generator=traversal_graph_generator,
-                                                 request_num=request_num)
-                    available_robots.remove(closest_robot)
-                    request_num += 1
-                else:
-                    # No feasible robot found for this request, re-add it to the queue
-                    if next_request_id in state.requests:
-                        request = state.requests[next_request_id]
-                        if request.request_type == "heart_rate":
-                            requests_to_add_back_heart_rate.append(request)
-                        elif request.request_type == "oxygen_saturation":
-                            requests_to_add_back_oxygen_saturation.append(request)
-                            
-        for request in requests_to_add_back_heart_rate:
-            self._add_request_to_queue(request, self.heart_rate_requests_queue)
-        for request in requests_to_add_back_oxygen_saturation:
-            self._add_request_to_queue(request, self.oxygen_saturation_requests_queue)
+                # No feasible robot found for this request, re-add it to the queue
+                request = state.requests[next_request_id]
+                requests_to_add_back.append(request)
+        for request in requests_to_add_back:
+            self._add_request_to_queue(request, requests_queue)
     
-    def _assign_requests_for_robot_type_2(self, 
+    def _assign_requests_for_monitoring_robots(self, 
                                           state: PlanningState, 
                                           motion_planner: MotionPlanner, 
-                                          traversal_graph_generator: TraversalGraphGenerator):
-        available_robots = state.get_available_robots(robot_type="type_2")
-        requests_to_add_back_blood_pressure = []
-        requests_to_add_back_heart_rate = []
-        request_num = 1
-        print(f"Available robots for type 2: {available_robots}")
-        while available_robots:
-            if not self.blood_pressure_requests_queue.heap and not self.heart_rate_requests_queue.heap:
-                break  # No more requests to assign
-
-            # Get the next request from the highest priority queue
-            next_request_id = None
-            if (self.blood_pressure_requests_queue.heap and 
-                (not self.heart_rate_requests_queue.heap or 
-                 self.blood_pressure_requests_queue.heap[0] < self.heart_rate_requests_queue.heap[0])):
-                next_request_id = self.blood_pressure_requests_queue.pop_task()
-            else:
-                next_request_id = self.heart_rate_requests_queue.pop_task()
-            if next_request_id is not None:
-                print(f"Assigning request {next_request_id} for robot type 2")
-                closest_robot_results = self._determine_closest_robot(request_id=next_request_id, 
-                                                                      available_robots=available_robots, 
-                                                                      state=state, 
-                                                                      motion_planner=motion_planner,
-                                                                      traversal_graph_generator=traversal_graph_generator)
-                
-                closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
-                print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
-                
-                if closest_robot is not None:
-                    self._assign_request_to_robot(state=state,
-                                                 request_id=next_request_id,
-                                                 robot_id=closest_robot,
-                                                 planned_path=closest_path,
-                                                 planned_time=shortest_time,
-                                                 planned_goal_indices=closest_planned_goal_indices,
+                                          traversal_graph_generator: TraversalGraphGenerator,
+                                          debug: bool):
+        self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
-                                                 request_num=request_num)
-                    available_robots.remove(closest_robot)
-                    request_num += 1
-                else:
-                    # No feasible robot found for this request, re-add it to the queue
-                    if next_request_id in state.requests:
-                        request = state.requests[next_request_id]
-                        if request.request_type == "blood_pressure":
-                            requests_to_add_back_blood_pressure.append(request)
-                        elif request.request_type == "heart_rate":
-                            requests_to_add_back_heart_rate.append(request)
-                            
-        for request in requests_to_add_back_blood_pressure:
-            self._add_request_to_queue(request, self.blood_pressure_requests_queue)
-        for request in requests_to_add_back_heart_rate:
-            self._add_request_to_queue(request, self.heart_rate_requests_queue)
+                                                 robot_type="monitoring",
+                                                 requests_queue=self.monitoring_requests_queue,
+                                                 debug=debug)
     
-    def _assign_requests_for_robot_type_3(self, 
+    def _assign_requests_for_delivery_robots(self, 
                                           state: PlanningState, 
                                           motion_planner: MotionPlanner, 
-                                          traversal_graph_generator: TraversalGraphGenerator):
-        available_robots = state.get_available_robots(robot_type="type_3")
-        requests_to_add_back_temperature = []
-        requests_to_add_back_respiratory_rate = []
-        request_num = 1
-        print(f"Available robots for type 3: {available_robots}")
-        while available_robots:
-            if not self.temperature_requests_queue.heap and not self.respiratory_rate_requests_queue.heap:
-                break  # No more requests to assign
-
-            # Get the next request from the highest priority queue
-            next_request_id = None
-            if (self.temperature_requests_queue.heap and 
-                (not self.respiratory_rate_requests_queue.heap or 
-                 self.temperature_requests_queue.heap[0] < self.respiratory_rate_requests_queue.heap[0])):
-                next_request_id = self.temperature_requests_queue.pop_task()
-            else:
-                next_request_id = self.respiratory_rate_requests_queue.pop_task()
-            if next_request_id is not None:
-                print(f"Assigning request {next_request_id} for robot type 3")
-                closest_robot_results = self._determine_closest_robot(request_id=next_request_id, 
-                                                                      available_robots=available_robots, 
-                                                                      state=state, 
-                                                                      motion_planner=motion_planner,
-                                                                      traversal_graph_generator=traversal_graph_generator)
-                
-                closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
-                print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
-                
-                if closest_robot is not None:
-                    self._assign_request_to_robot(state=state,
-                                                 request_id=next_request_id,
-                                                 robot_id=closest_robot,
-                                                 planned_path=closest_path,
-                                                 planned_time=shortest_time,
-                                                 planned_goal_indices=closest_planned_goal_indices,
+                                          traversal_graph_generator: TraversalGraphGenerator,
+                                          debug: bool):
+        self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
-                                                 request_num=request_num)
-                    available_robots.remove(closest_robot)
-                    request_num += 1
-                else:
-                    # No feasible robot found for this request, re-add it to the queue
-                    if next_request_id in state.requests:
-                        request = state.requests[next_request_id]
-                        if request.request_type == "temperature":
-                            requests_to_add_back_temperature.append(request)
-                        elif request.request_type == "respiratory_rate":
-                            requests_to_add_back_respiratory_rate.append(request)
-                            
-        for request in requests_to_add_back_temperature:
-            self._add_request_to_queue(request, self.temperature_requests_queue)
-        for request in requests_to_add_back_respiratory_rate:
-            self._add_request_to_queue(request, self.respiratory_rate_requests_queue)
-    
-    def _assign_requests_for_robot_type_4(self, 
-                                          state: PlanningState, 
-                                          motion_planner: MotionPlanner, 
-                                          traversal_graph_generator: TraversalGraphGenerator):
-        available_robots = state.get_available_robots(robot_type="type_4")
-        requests_to_add_back_medications = []
-        print(f"Available robots for type 4: {available_robots}")
-        request_num = 1
-        while available_robots:
-            if not self.medications_requests_queue.heap:
-                break  # No more requests to assign
-
-            # Get the next request from the highest priority queue
-            next_request_id = self.medications_requests_queue.pop_task()
-            if next_request_id is not None:
-                print(f"Assigning request {next_request_id} for robot type 4")
-                closest_robot_results = self._determine_closest_robot(request_id=next_request_id, 
-                                                                      available_robots=available_robots, 
-                                                                      state=state, 
-                                                                      motion_planner=motion_planner,
-                                                                      traversal_graph_generator=traversal_graph_generator)
-                
-                closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
-                print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
-                
-                if closest_robot is not None:
-                    self._assign_request_to_robot(state=state,
-                                                 request_id=next_request_id,
-                                                 robot_id=closest_robot,
-                                                 planned_path=closest_path,
-                                                 planned_time=shortest_time,
-                                                 planned_goal_indices=closest_planned_goal_indices,
-                                                 motion_planner=motion_planner,
-                                                 traversal_graph_generator=traversal_graph_generator,
-                                                 request_num=request_num)
-                    available_robots.remove(closest_robot)
-                    request_num += 1
-                else:
-                    # No feasible robot found for this request, re-add it to the queue
-                    if next_request_id in state.requests:
-                        request = state.requests[next_request_id]
-                        if request.request_type == "medications":
-                            requests_to_add_back_medications.append(request)
-                            
-        for request in requests_to_add_back_medications:
-            self._add_request_to_queue(request, self.medications_requests_queue)
+                                                 robot_type="delivery",
+                                                 requests_queue=self.delivery_requests_queue,
+                                                 debug=debug)
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState, 
                                   requests_lists: RequestsLists, 
                                   motion_planner: MotionPlanner,
-                                  traversal_graph_generator: TraversalGraphGenerator):
+                                  traversal_graph_generator: TraversalGraphGenerator,
+                                  debug: bool):
         # Add new requests to the appropriate queues
         self._check_if_requests_in_queues_expired(state)
         self._add_all_requests_to_queues(requests_lists)
 
-        # Assignment logic for robot type 1
-        self._assign_requests_for_robot_type_1(state, 
-                                               motion_planner, 
-                                               traversal_graph_generator)
+        # Assignment logic for monitoring robots
+        self._assign_requests_for_monitoring_robots(state, 
+                                                   motion_planner, 
+                                                   traversal_graph_generator,
+                                                   debug=debug)
         
-        # Assignment logic for robot type 2
-        self._assign_requests_for_robot_type_2(state, 
-                                               motion_planner, 
-                                               traversal_graph_generator)
-        
-        # Assignment logic for robot type 3
-        self._assign_requests_for_robot_type_3(state, 
-                                               motion_planner, 
-                                               traversal_graph_generator)
-        
-        # Assignment logic for robot type 4
-        self._assign_requests_for_robot_type_4(state, 
-                                               motion_planner, 
-                                               traversal_graph_generator)
+        # Assignment logic for delivery robots
+        self._assign_requests_for_delivery_robots(state, 
+                                                 motion_planner, 
+                                                 traversal_graph_generator,
+                                                 debug=debug)
