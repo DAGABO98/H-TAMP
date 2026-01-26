@@ -82,24 +82,32 @@ class PlanningState:
                           robot_id: int, 
                           path: list[tuple[TraversalNode, TimeInterval]], 
                           traversal_graph: TraversalGraph) -> None:
-        self.robot_paths[robot_id] = path
         if len(path) >= 2:
-            start_node, start_time_interval = path[0]
-            end_node, _ = path[1]
-            self.robots_current_nodes[robot_id] = start_node
-            self.robots_next_nodes[robot_id] = end_node
+            if path[0][0].label == self.robots_current_nodes[robot_id].label:
+                self.robot_paths[robot_id] = path
+                start_node, start_time_interval = path[0]
+                end_node, _ = path[1]
+                self.robots_current_nodes[robot_id] = start_node
+                self.robots_next_nodes[robot_id] = end_node
 
-            extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
-                                                                                   end_node, 
-                                                                                   traversal_graph)
-            zipped_samples, cumulative_lengths, edge_length = extraction_results
-            self.edge_samples[robot_id] = zipped_samples
-            self.cumulative_path_lengths[robot_id] = cumulative_lengths
-            self.edge_lengths[robot_id] = edge_length
-            self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
-            self.robots_current_node_index[robot_id] = 0
-            self.point_indices_on_edge[robot_id] = 0
+                extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
+                                                                                    end_node, 
+                                                                                    traversal_graph)
+                zipped_samples, cumulative_lengths, edge_length = extraction_results
+                self.edge_samples[robot_id] = zipped_samples
+                self.cumulative_path_lengths[robot_id] = cumulative_lengths
+                self.edge_lengths[robot_id] = edge_length
+                self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
+                self.robots_current_node_index[robot_id] = 0
+                self.point_indices_on_edge[robot_id] = 0
+            else:
+                assert path[0][0].label == self.robots_next_nodes[robot_id].label, \
+                    f"Path start node {path[0][0].label} does not match robot {robot_id} current or next node."
+                assert path[0][1].start == self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start, \
+                    f"Path start time {path[0][1].start} does not match robot {robot_id} next node start time {self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start}."
+                self.robot_paths[robot_id] = self.robot_paths[robot_id][self.robots_current_node_index[robot_id]:self.robots_current_node_index[robot_id]+1] + path
         else:
+            self.robot_paths[robot_id] = path
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
             self.cumulative_path_lengths[robot_id] = np.array([])
@@ -168,10 +176,7 @@ class PlanningState:
                 self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
                 self.robots_current_node_index[robot_id] = current_index
                 self.point_indices_on_edge[robot_id] = 0
-                if next_index == len(path) - 1:
-                    self.robots_current_time[robot_id] = end_time_interval.start
-                else:
-                    self.robots_current_time[robot_id] = end_time_interval.end
+                self.robots_current_time[robot_id] = end_time_interval.start
         else:
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
@@ -201,13 +206,14 @@ class PlanningState:
                     goal_node_label = current_request.goal_nodes[current_request.completed_goals]
                     if current_node.label == goal_node_label:
                         current_request.completed_goals += 1
+                        print(f"Robot {robot_id} reached goal {goal_node_label} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} for task {current_request_id}")
                         if current_request.completed_goals >= len(current_request.goal_nodes):
                             assert math.isclose(time_interval.end, self.simulator_time + self.current_wait_times[robot_id]), \
                                 f"Time mismatch at goal for robot {robot_id}: expected {time_interval.end}, got {self.simulator_time + self.current_wait_times[robot_id]}"
                             completed_request_id = self.assigned_requests[robot_id].pop(0)
                             completed_request = self.requests[completed_request_id]
                             completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id])
-
+                            print(f"Request {completed_request_id} completed at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
@@ -245,7 +251,7 @@ class PlanningState:
     def get_available_robots(self, robot_type: str) -> list[int]:
         available_robots = []
         for robot_id in self.robots_positions:
-            if not self.assigned_requests[robot_id]:
+            if len(self.assigned_requests[robot_id]) == 0:
                 profile = self.simulator_config.robot_profiles[robot_id]
                 if profile.robot_type == robot_type:
                     available_robots.append(robot_id)
