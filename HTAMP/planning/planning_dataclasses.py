@@ -231,7 +231,10 @@ class TaskRequest:
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}'," + \
-            f"ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time}, time_for_service={self.time_for_service})"
+            f"ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time}, time_for_service={self.time_for_service}, " + \
+            f"goal_nodes={self.goal_nodes}, wait_times_at_goals_seconds={self.wait_times_at_goals_seconds}, " + \
+            f"started={self.started}, completed_goals={self.completed_goals}, completed={self.completed}, rejected={self.rejected}, " + \
+            f"planned_time={self.planned_time}, planned_goal_indices={self.planned_goal_indices}, total_cost={self.total_cost})"
     
 @dataclass
 class RequestsLists:

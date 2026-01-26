@@ -7,6 +7,7 @@ import pandas as pd
 
 from HTAMP.data_processing.data_helpers import DataHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles, DailyRequestsDataFrames, PreprocessedDataFrames
+from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskProperties, TaskRequest, TimeSignal
 
 class GlobalRequestHandler:
@@ -249,20 +250,24 @@ class DailyRequestHandler(GlobalRequestHandler):
                                        initial_time: pd.Timestamp,
                                        request_type: str, 
                                        wait_time_seconds: float, 
-                                       time_for_rejection_minutes: float) -> list[TaskRequest]:
+                                       time_for_rejection_minutes: float,
+                                       traversal_graph_generator: TraversalGraphGenerator) -> list[TaskRequest]:
         task_requets_list = []
         for req_index, row in df.iterrows():
             if request_type == "medication":
-                goal_nodes = [str(row["scheduled_space_supplies"]), str(row["scheduled_space_id"])]
+                supplies_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_supplies"])]
+                room_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_id"])]
+                goal_nodes = [supplies_node_label, room_node_label]
                 wait_times_at_goals_seconds = [wait_time_seconds, wait_time_seconds]
                 ordered_time = (pd.Timestamp(row["Medication Order DTTM"]) - initial_time).total_seconds()
                 scheduled_time = (pd.Timestamp(row["Medication Scheduled DTTM"]) - initial_time).total_seconds()
             else:
-                goal_nodes = [str(row["scheduled_space_id"])]
+                room_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_id"])]
+                goal_nodes = [room_node_label]
                 wait_times_at_goals_seconds = [wait_time_seconds]
                 ordered_time = (pd.Timestamp(row["Ordered DTTM"]) - initial_time).total_seconds()
                 scheduled_time = (pd.Timestamp(row["Scheduled DTTM"]) - initial_time).total_seconds()
-
+            
             task_request = TaskRequest(
                 request_id=request_type+"."+str(req_index),
                 request_type=request_type,
@@ -286,7 +291,8 @@ class DailyRequestHandler(GlobalRequestHandler):
                                      lookahead_minutes: int,
                                      request_type: str,
                                      wait_time_seconds: float,
-                                     time_for_rejection_minutes: float) -> list[TaskRequest]:
+                                     time_for_rejection_minutes: float,
+                                     traversal_graph_generator: TraversalGraphGenerator) -> list[TaskRequest]:
         extracted_requests_df = self._extract_requests_df_for_time_signal(
                                                                     df=df,
                                                                     time_signal=time_signal,
@@ -299,7 +305,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             initial_time=initial_time,
             request_type=request_type,
             wait_time_seconds=wait_time_seconds,
-            time_for_rejection_minutes=time_for_rejection_minutes
+            time_for_rejection_minutes=time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
             )
 
         return requests_list
@@ -310,7 +317,8 @@ class DailyRequestHandler(GlobalRequestHandler):
                                          time_signal: TimeSignal,
                                          initial_time: pd.Timestamp,
                                          look_ahead_minutes: int,
-                                         all_task_properties: AllTaskProperties
+                                         all_task_properties: AllTaskProperties,
+                                         traversal_graph_generator: TraversalGraphGenerator
                                          ) -> RequestsLists:
         
         extracted_bp_requests = self._get_requests_for_time_signal(
@@ -322,7 +330,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             lookahead_minutes=look_ahead_minutes,
             request_type=all_task_properties.blood_pressure.task_type,
             wait_time_seconds=all_task_properties.blood_pressure.wait_time_seconds,
-            time_for_rejection_minutes=all_task_properties.blood_pressure.time_for_rejection_minutes)
+            time_for_rejection_minutes=all_task_properties.blood_pressure.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator)
         
         extracted_hr_requests = self._get_requests_for_time_signal(
             df=self.daily_requests_dfs.heart_rate_requests_df,
@@ -333,7 +342,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             lookahead_minutes=look_ahead_minutes,
             request_type=all_task_properties.heart_rate.task_type,
             wait_time_seconds=all_task_properties.heart_rate.wait_time_seconds,
-            time_for_rejection_minutes=all_task_properties.heart_rate.time_for_rejection_minutes
+            time_for_rejection_minutes=all_task_properties.heart_rate.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
             )
         
         extracted_rr_requests = self._get_requests_for_time_signal(
@@ -345,7 +355,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             lookahead_minutes=look_ahead_minutes,
             request_type=all_task_properties.respiratory_rate.task_type,
             wait_time_seconds=all_task_properties.respiratory_rate.wait_time_seconds,
-            time_for_rejection_minutes=all_task_properties.respiratory_rate.time_for_rejection_minutes
+            time_for_rejection_minutes=all_task_properties.respiratory_rate.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
             )
         
         extracted_temp_requests = self._get_requests_for_time_signal(
@@ -357,7 +368,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             lookahead_minutes=look_ahead_minutes,
             request_type=all_task_properties.temperature.task_type,
             wait_time_seconds=all_task_properties.temperature.wait_time_seconds,
-            time_for_rejection_minutes=all_task_properties.temperature.time_for_rejection_minutes
+            time_for_rejection_minutes=all_task_properties.temperature.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
             )
         
         extracted_os_requests = self._get_requests_for_time_signal(
@@ -369,7 +381,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             lookahead_minutes=look_ahead_minutes,
             request_type=all_task_properties.oxygen_saturation.task_type,
             wait_time_seconds=all_task_properties.oxygen_saturation.wait_time_seconds,
-            time_for_rejection_minutes=all_task_properties.oxygen_saturation.time_for_rejection_minutes
+            time_for_rejection_minutes=all_task_properties.oxygen_saturation.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
             )
         
         extracted_med_requests = self._get_requests_for_time_signal(
@@ -381,7 +394,8 @@ class DailyRequestHandler(GlobalRequestHandler):
             lookahead_minutes=look_ahead_minutes,
             request_type=all_task_properties.medications.task_type,
             wait_time_seconds=all_task_properties.medications.wait_time_seconds,
-            time_for_rejection_minutes=all_task_properties.medications.time_for_rejection_minutes
+            time_for_rejection_minutes=all_task_properties.medications.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
             )
         
         extracted_requests_lists = RequestsLists(
@@ -417,6 +431,12 @@ def main():
     parser.add_argument("--respiratory_rate_orders_file", type=str, default="data/processed/respiratory_rate_orders_annotated.csv", help="Path to the respiratory rate orders CSV file.")
     parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
+
+    # traversal graph parameters
+    parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")
+    parser.add_argument("--occupancy_map_path", type=str, default="maps/hospital_floor/occupancy_map.npy", help="Path to the input occupancy map")
+    parser.add_argument("--factor", type=int, default=1, help="Downsampling factor")
+    parser.add_argument("--meters_per_pixel", type=float, default=0.036, help="Meters per pixel in the original image")
     args = parser.parse_args()
 
     annotated_data_files = AnnotatedDataFiles(
@@ -490,11 +510,17 @@ def main():
         medications=medications_properties
     )
 
+    tg_generator = TraversalGraphGenerator(occupancy_map_path=args.occupancy_map_path,
+                                           config_path=args.config_path,
+                                           meters_per_pixel=args.meters_per_pixel,
+                                           factor=args.factor)
+
     requests_lists = request_handler.get_all_requests_for_time_signal(
         initial_time=initial_time,
         time_signal=time_signal,
         look_ahead_minutes=60,
-        all_task_properties=all_task_properties
+        all_task_properties=all_task_properties,
+        traversal_graph_generator=tg_generator
     )
 
     print("Extracted Requests:")
