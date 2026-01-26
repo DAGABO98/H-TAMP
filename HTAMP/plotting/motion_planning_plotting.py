@@ -59,6 +59,50 @@ class MotionPlanningPlotter:
         plt.savefig("results/motion_planning/planned_paths.svg")
         plt.close()
     
+    def plot_assigned_path(occupancy_map: np.ndarray, 
+                            origin_x: float, 
+                            origin_y: float, 
+                            resolution: float, 
+                            request_id: str,
+                            results_folder: str,
+                            planned_path: List[Tuple[TraversalNode, TimeInterval]], 
+                            traversal_graph: TraversalGraph,
+                            robot_profile: RobotProfile) -> None:
+        
+        rows, cols = occupancy_map.shape
+        xmin, xmax = origin_x, origin_x + cols * resolution
+        ymin, ymax = origin_y, origin_y + rows * resolution
+
+        fig, ax = plt.subplots(figsize=(16, 16), dpi=150)
+        im = ax.imshow(
+            occupancy_map,
+            cmap="gray_r",
+            origin="upper",              # flip so (0,0) is top-left
+            extent=[xmin, xmax, ymax, ymin],  # still in meters
+            aspect="equal"
+        )
+
+        # Plot each path
+        colors = plt.get_cmap('hsv', 2)
+        for j in range(len(planned_path) - 1):
+            start_node, start_interval = planned_path[j]
+            end_node, end_interval = planned_path[j + 1]
+            edge = traversal_graph.edge_dict.get((start_node.label, end_node.label))
+            if edge is None:
+                continue
+            samples_x = edge.edge_connector.connector_dict['X']
+            samples_y = edge.edge_connector.connector_dict['Y']
+            ax.plot(samples_x, samples_y, color=colors(1), linewidth=2.0, alpha=0.7)
+            circle = Circle((start_node.position.x, start_node.position.y), robot_profile.radius, color=colors(1), alpha=0.3)
+            ax.add_patch(circle)
+        # Draw the last position
+        end_node, end_interval = planned_path[-1]
+        circle = Circle((end_node.position.x, end_node.position.y), robot_profile.radius, color=colors(1), alpha=0.3)
+        ax.add_patch(circle)
+
+        plt.savefig(f"{results_folder}/planned_paths_{request_id}.svg")
+        plt.close()
+
     @staticmethod
     def plot_motion_reservations(occupancy_map: np.ndarray,
                                     origin_x: float,
@@ -132,7 +176,8 @@ class MotionPlanningPlotter:
                    traversal_graph: TraversalGraph, 
                    robot_profiles: List[RobotProfile], 
                    step_number: int,
-                   debug_folder: str) -> None: 
+                   debug_folder: str,
+                   before_assignment: bool) -> None: 
         rows, cols = occupancy_map.shape 
         xmin, xmax = origin_x, origin_x + cols * resolution 
         ymin, ymax = origin_y, origin_y + rows * resolution 
@@ -141,10 +186,7 @@ class MotionPlanningPlotter:
                        cmap="gray_r", 
                        origin="upper", # flip so (0,0) is top-left 
                        extent=[xmin, xmax, ymax, ymin], # still in meters 
-                       aspect="equal" ) 
-        cell_x = [1037*resolution]
-        cell_y = [926*resolution]
-        ax.scatter(cell_x, cell_y, s=10, color='black')
+                       aspect="equal" )
 
         colors = plt.get_cmap('hsv', len(robot_paths) + 1)
         for robot_id in robot_paths.keys(): 
@@ -157,27 +199,21 @@ class MotionPlanningPlotter:
             initial_goal_index = (planned_goal_indices_robot[0] if len(planned_goal_indices_robot) > 0 else 0)
             point_index_on_edge = point_indices_on_edge[robot_id]
             
-            # if initial_goal_index < current_node_index:
-            #     traversered_path = path[initial_goal_index:current_node_index + 1]
-            #     for j in range(len(traversered_path) - 1):
-            #         start_node, start_interval = traversered_path[j] 
-            #         end_node, end_interval = traversered_path[j + 1] 
-            #         edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
-            #         samples_x = edge.edge_connector.connector_dict['X'] 
-            #         samples_y = edge.edge_connector.connector_dict['Y'] 
-            #         ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=1.0, alpha=0.5)
+            if initial_goal_index < current_node_index:
+                traversered_path = path[initial_goal_index:current_node_index + 1]
+                for j in range(len(traversered_path) - 1):
+                    start_node, start_interval = traversered_path[j] 
+                    end_node, end_interval = traversered_path[j + 1] 
+                    edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
+                    samples_x = edge.edge_connector.connector_dict['X']
+                    samples_y = edge.edge_connector.connector_dict['Y']
+                    ax.plot(samples_x, samples_y, color=colors(robot_id), linewidth=1.0, alpha=0.5)
 
-            # truncated_path = path[current_node_index:current_goal_index + 1]
+            truncated_path = path[current_node_index:current_goal_index + 1]
             truncated_path = path[current_node_index:]
 
-            if len(truncated_path) < 2: 
-                if robot_id == 11:
-                    color = 'red'
-                    alpha = 0.8
-                else:
-                    color = colors(robot_id)
-                    alpha = 0.3
-                circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=color, alpha=alpha) 
+            if len(truncated_path) < 2:
+                circle = Circle((robot_position.x, robot_position.y), robot_profiles[robot_id].radius, color=colors(robot_id), alpha=0.4) 
                 ax.add_patch(circle)
                 continue
             for j in range(len(truncated_path) - 1): 
@@ -186,12 +222,8 @@ class MotionPlanningPlotter:
                 edge = traversal_graph.edge_dict.get((start_node.label, end_node.label)) 
                 samples_x = edge.edge_connector.connector_dict['X'] 
                 samples_y = edge.edge_connector.connector_dict['Y'] 
-                if robot_id == 2:
-                    color = 'blue'
-                    alpha = 0.8
-                else:
-                    color = colors(robot_id)
-                    alpha = 0.7
+                color = colors(robot_id)
+                alpha = 0.8
                 if j == 0: 
                     full_samples_x = samples_x[point_index_on_edge:] 
                     full_samples_y = samples_y[point_index_on_edge:] 
@@ -200,7 +232,10 @@ class MotionPlanningPlotter:
                     ax.add_patch(circle) 
                 else:
                     ax.plot(samples_x, samples_y, color=color, linewidth=2.0, alpha=alpha)
-        plt.savefig(f"{debug_folder}/state_step_{step_number}.svg")
+        if before_assignment:
+            plt.savefig(f"{debug_folder}/state_step_{step_number}_before_assignment.svg")
+        else:
+            plt.savefig(f"{debug_folder}/state_step_{step_number}_after_assignment.svg")
         plt.close()
     
     @staticmethod
