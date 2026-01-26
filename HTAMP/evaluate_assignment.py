@@ -73,7 +73,7 @@ class AssignmentEvaluator:
     def _initialize_simulator_config(self):
         print("Initializing Simulator Config...")
         self._generate_parking_positions()
-        self.simulator_config = SimulatorConfig(fps=self.args.fps,
+        self.simulator_config = SimulatorConfig(fps=int(self.args.fps),
                                        robot_profiles=self.robot_profiles,
                                        rejection_penalty=100.0,
                                        initial_time=pd.Timestamp(year=self.date_stamp.year, month=self.date_stamp.month, day=self.date_stamp.day, hour=self.args.hour_start, minute=0),
@@ -157,7 +157,7 @@ class AssignmentEvaluator:
     
     def _step_simulation(self, frame_data: Optional[FrameData] = None, save_frame_data: bool = False):
         for second in range(60):
-            for frames in range(self.args.fps):
+            for frames in range(int(self.args.fps)):
                 self.state.step(self.tg_generator.traversal_graph)
                 if save_frame_data and frame_data is not None:
                     frame_data.robot_positions_seq.append(copy.deepcopy(self.state.robots_positions))
@@ -175,7 +175,7 @@ class AssignmentEvaluator:
                     frame_data.planned_goal_indices_seq.append(copy.deepcopy(planned_goal_indices_dict))
                     frame_data.completed_goals_seq.append(copy.deepcopy(completed_goals_dict))
 
-    def _plot_state_debug(self):
+    def _plot_state_debug(self, before_assignment: bool = False):
         planned_goal_indices_dict: dict[int, list[int]] = {}
         for robot_id, requests in self.state.assigned_requests.items():
             if requests:
@@ -195,8 +195,9 @@ class AssignmentEvaluator:
             planned_goal_indices=planned_goal_indices_dict,
             traversal_graph=self.tg_generator.traversal_graph,
             robot_profiles=self.simulator_config.robot_profiles,
-            step_number=self.state.simulator_time+1,
-            debug_folder="results/motion_planning/steps"
+            step_number=self.state.simulator_time,
+            debug_folder="results/motion_planning/steps",
+            before_assignment=before_assignment
         )
     
     def _generate_assignment_for_minute(self, 
@@ -218,7 +219,8 @@ class AssignmentEvaluator:
         requests_lists: RequestsLists = request_handler.get_all_requests_for_time_signal(time_signal=time_signal,
                                                                                          initial_time=self.simulator_config.initial_time,
                                                                                          all_task_properties=self.all_task_properties,
-                                                                                         look_ahead_minutes=look_ahead_minutes)
+                                                                                         look_ahead_minutes=look_ahead_minutes,
+                                                                                         traversal_graph_generator=self.tg_generator)
         
         self._add_requests_to_state(requests_lists=requests_lists)
 
@@ -233,7 +235,7 @@ class AssignmentEvaluator:
         print(f"requests_lists.heart_rate_requests: {requests_lists.heart_rate_requests}")
 
         if plot_before_assignment:
-            self._plot_state_debug()
+            self._plot_state_debug(before_assignment=True)
 
         self.policy.assign_requests_to_robots(state=self.state,
                                               requests_lists=requests_lists,
@@ -242,7 +244,7 @@ class AssignmentEvaluator:
                                               debug=debug)
 
         if plot_after_assignment:
-            self._plot_state_debug()
+            self._plot_state_debug(before_assignment=False)
 
         self._step_simulation(frame_data=frame_data, save_frame_data=save_frame_data)
     
@@ -283,8 +285,10 @@ class AssignmentEvaluator:
         
         total_cost = self.state.compute_total_costs_for_completed_requests()
         rejected_requests = self.state.get_rejected_requests()
+        print(f"Rejected Requests: {rejected_requests}")
         number_of_rejections = len(rejected_requests)
         completed_requests = self.state.get_completed_requests()
+        print(f"Completed Requests: {completed_requests}")
         number_of_completed_requests = len(completed_requests)
         total_number_of_requests = len(list(self.state.requests.keys()))
         return frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests
@@ -420,7 +424,7 @@ def run_experiment(args):
                                             completed_goals_seq=frame_data.completed_goals_seq,
                                             traversal_graph=experiment.evaluator.tg_generator.traversal_graph,
                                             robot_profiles=experiment.evaluator.robot_profiles,
-                                            fps_sim=args.fps,
+                                            fps_sim=int(args.fps),
                                             num_sim_frames=1000)
 
 def main():
@@ -456,7 +460,7 @@ def main():
 
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
-    parser.add_argument("--num_monitoring_robots", type=int, default=3, help="Number of monitoring robots to be used in the team")
+    parser.add_argument("--num_monitoring_robots", type=int, default=6, help="Number of monitoring robots to be used in the team")
     parser.add_argument("--num_delivery_robots", type=int, default=3, help="Number of delivery robots to be used in the team")
     parser.add_argument("--rejection_penalty", type=int, dest='rejection_penalty', default=28800, help='Penalty for rejecting a request. Default value set to the number of seconds in 8 hours.')
 
