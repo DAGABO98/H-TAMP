@@ -300,9 +300,10 @@ class SIPPwRT:
 
             if current_sipp_node.traversal_node.label == goal_traversal_node.label:
                 if current_sipp_node.interval.start <= current_sipp_node.arrival <= current_sipp_node.interval.end:
-                    return self._reconstruct_path(sipp_node=current_sipp_node, 
-                                                robot_profile=robot_profile,
-                                                wait_time_at_goal=wait_time_at_goal)
+                    if current_sipp_node.arrival + wait_time_at_goal <= current_sipp_node.interval.end:
+                        return self._reconstruct_path(sipp_node=current_sipp_node, 
+                                                    robot_profile=robot_profile,
+                                                    wait_time_at_goal=wait_time_at_goal)
 
             for next_traversal_node_label in current_sipp_node.traversal_node.connections:
                 potential_next_move = self.grid.traversal_graph.nodes_dict[next_traversal_node_label]
@@ -492,7 +493,7 @@ def main():
     # randomly select start and goal nodes for each robot
     random.seed(11)
     selected_start_nodes = random.sample(potential_start_nodes, args.num_robots)
-    selected_goal_nodes = random.sample(potential_target_nodes, args.num_robots)
+    selected_goal_nodes = random.sample(potential_target_nodes, 1)
 
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
@@ -525,7 +526,7 @@ def main():
 
     for i in range(args.num_robots):
         path = planner.obtain_path_for_agent(start_traversal_node=selected_start_nodes[i],
-                                            goal_traversal_node=selected_goal_nodes[i],
+                                            goal_traversal_node=selected_goal_nodes[0],
                                             robot_profile=robot_profiles[i],
                                             current_time=0.0,
                                             wait_time_at_goal=10.0,
@@ -538,7 +539,7 @@ def main():
             planner.reserve_path_for_agent(path=path,
                                            robot_profile=robot_profiles[i], 
                                            wait_time_at_goal=10.0)
-            return_path = planner.obtain_path_for_agent(start_traversal_node=selected_goal_nodes[i],
+            return_path = planner.obtain_path_for_agent(start_traversal_node=selected_goal_nodes[0],
                                             goal_traversal_node=selected_start_nodes[i],
                                             robot_profile=robot_profiles[i],
                                             current_time=path[-1][1].end,
@@ -552,11 +553,11 @@ def main():
                                                robot_profile=robot_profiles[i],
                                                wait_time_at_goal=100.0)
             else:
-                print(f"No return path found for Robot {i} from {selected_goal_nodes[i].label} to {selected_start_nodes[i].label}")
+                print(f"No return path found for Robot {i} from {selected_goal_nodes[0].label} to {selected_start_nodes[i].label}")
             final_path = planner.combine_paths([path, return_path]) if return_path else path
             paths.append(final_path)
         else:
-            print(f"No path found for Robot {i} from {selected_start_nodes[i].label} to {selected_goal_nodes[i].label}")
+            print(f"No path found for Robot {i} from {selected_start_nodes[i].label} to {selected_goal_nodes[0].label}")
     
     for i in range(args.num_robots):
         planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])

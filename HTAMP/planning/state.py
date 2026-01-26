@@ -326,7 +326,7 @@ def main():
     selected_goal_nodes = random.sample(potential_target_nodes, 2*args.num_robots)
 
     selected_start_nodes.reverse()
-    selected_goal_nodes.reverse()  # to avoid selecting the same node as start and goal
+    selected_goal_nodes.reverse()
 
     for i in range(args.num_robots):
         robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=i)
@@ -355,6 +355,7 @@ def main():
                                        robot_profiles=robot_profiles,
                                        rejection_penalty=100.0,
                                        initial_time=initial_time,
+                                       initial_nodes={i: selected_start_nodes[i] for i in range(args.num_robots)},
                                        initial_robot_positions={i: selected_start_nodes[i].position for i in range(args.num_robots)},
                                        horizon=5000.0)
     
@@ -364,13 +365,19 @@ def main():
 
     requests: list[TaskRequest] = []
 
+    print("Initializing robot reservations and creating requests...")
+    print("Selected Start Nodes:")
+    print([node.label for node in selected_start_nodes])
+    print("Selected Goal Nodes:")
+    print([node.label for node in selected_goal_nodes])
+
     for i in range(args.num_robots):
         planner._initialize_robot_reservations(initial_node=selected_start_nodes[i],
                                                robot_profile=robot_profiles[i],
                                                current_time=0.0,
                                                horizon=simulator_config.horizon)
         ordered_timestamp = pd.Timestamp(2024, 1, 1, 0, 0, 0)
-        scheduled_timestamp = ordered_timestamp + pd.Timedelta(minutes=5 * i)
+        scheduled_timestamp = ordered_timestamp + pd.Timedelta(minutes=5)
 
         ordered_time = (ordered_timestamp - initial_time).total_seconds()
         scheduled_time = (scheduled_timestamp - initial_time).total_seconds()
@@ -419,7 +426,7 @@ def main():
                                                        goal_traversal_node=selected_start_nodes[i],
                                                        robot_profile=robot_profiles[i],
                                                        current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=simulator_config.horizon,
+                                                       wait_time_at_goal=100.0,
                                                        horizon=simulator_config.horizon)
             if return_path:
                 sub_paths.append(return_path)
@@ -429,7 +436,7 @@ def main():
                 final_path = planner.combine_paths(sub_paths)
                 planner.reserve_path_for_agent(path=final_path, 
                                            robot_profile=robot_profiles[i], 
-                                           wait_time_at_goal=simulator_config.horizon)
+                                           wait_time_at_goal=100.0)
                 paths.append(final_path)
                 state.assign_request_to_robot(robot_id=i, 
                                               request_id=current_request.request_id, 
