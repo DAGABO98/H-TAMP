@@ -38,6 +38,9 @@ class DataStatistics:
         self.heatmap_outdir = self.outdir / "heatmaps"
         self.heatmap_outdir.mkdir(parents=True, exist_ok=True)
 
+        self.wass_outdir = self.outdir / "wasserstein_distances"
+        self.wass_outdir.mkdir(parents=True, exist_ok=True)
+
         self.dist_data_dir = Path(dist_data_dir)
         self.dist_data_dir.mkdir(parents=True, exist_ok=True)
     
@@ -481,7 +484,7 @@ class DataStatistics:
           # Take top-K weeks
         top = results_df.head(top_k)
         # Optional: bar chart of top-K distances
-        out_png = self.outdir / f"{label}_wasserstein_distances.png"
+        out_png = self.wass_outdir / f"{label}_wasserstein_distances.png"
         if not top.empty:
             DataStatisticsPlottingHelper.plot_wasserstein_distance(top, out_png)
 
