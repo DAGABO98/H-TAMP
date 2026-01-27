@@ -136,6 +136,7 @@ class AssignmentEvaluator:
             6: VanillaRollout,
             7: AdaptiveRollout
         }
+        print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
         if mode not in policy_dict:
             raise ValueError(f"Invalid mode {mode} selected for policy initialization.")
@@ -291,15 +292,19 @@ class AssignmentEvaluator:
         total_cost = self.state.compute_total_costs_for_completed_requests()
         rejected_requests = self.state.get_rejected_requests()
         number_of_rejected_requests = 0
+        number_rejected_requests_dict = {}
         for request_type, request_list in rejected_requests.items():
             number_of_rejected_requests += len(request_list)
+            number_rejected_requests_dict[request_type] = len(request_list)
         print(f"Rejected Requests: {rejected_requests}")
         completed_requests = self.state.get_completed_requests()
         number_of_completed_requests = 0
+        number_completed_requests_dict = {}
         for request_type, request_list in completed_requests.items():
             number_of_completed_requests += len(request_list)
+            number_completed_requests_dict[request_type] = len(request_list)
         total_number_of_requests = len(list(self.state.requests.keys()))
-        return frame_data, total_cost, number_of_completed_requests, number_of_rejected_requests, total_number_of_requests
+        return frame_data, total_cost, number_of_completed_requests, number_of_rejected_requests, total_number_of_requests, number_rejected_requests_dict, number_completed_requests_dict
     
 class Experiment():
 
@@ -412,12 +417,14 @@ def run_experiment(args):
                                                      use_saved_request_data=args.use_saved_request_data,
                                                      save_frame_data=False)
     
-    frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests = evaluate_results
+    frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests, number_rejected_requests_dict, number_completed_requests_dict = evaluate_results
 
-    print(f"Total Cost: {total_cost}")
     print(f"Number of Completed Requests: {number_of_completed_requests}")
     print(f"Number of Rejected Requests: {number_of_rejections}")
     print(f"Total Number of Requests: {total_number_of_requests}")
+    print(f"Number of Rejected Requests by Type: {number_rejected_requests_dict}")
+    print(f"Number of Completed Requests by Type: {number_completed_requests_dict}")
+    print(f"Total Cost: {total_cost}")
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,

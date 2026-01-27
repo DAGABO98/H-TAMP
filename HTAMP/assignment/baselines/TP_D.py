@@ -20,13 +20,16 @@ class TokenPassingWithDeadlines:
                              request: TaskRequest, 
                              task_dict: dict[int, float],
                              state: PlanningState,
-                             motion_planner: MotionPlanner):
-        if request.request_type == "monitoring":
+                             motion_planner: MotionPlanner,
+                             traversal_graph_generator: TraversalGraphGenerator):
+        if request.request_type != "medication":
             pickup_deadline = request.time_for_service - request.wait_times_at_goals_seconds[0]
         else:
             start_time = request.time_for_service - (10 * 60) + request.wait_times_at_goals_seconds[0]  # Assume a fixed 10-minute delivery time for medications
-            start_node = request.goal_nodes[0]
-            end_node = request.goal_nodes[1]
+            start_node_label = request.goal_nodes[0]
+            start_node = traversal_graph_generator.traversal_graph.nodes_dict[start_node_label]
+            end_node_label = request.goal_nodes[1]
+            end_node = traversal_graph_generator.traversal_graph.nodes_dict[end_node_label]
             sub_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                     goal_traversal_node=end_node,
                                                     robot_profile=self.dummy_delivery_robot_profile,
@@ -42,39 +45,47 @@ class TokenPassingWithDeadlines:
     def _remove_expired_requests_from_dict(self, 
                                            task_dict: dict[int, float], 
                                            state: PlanningState,
-                                           motion_planner: MotionPlanner):
+                                           motion_planner: MotionPlanner,
+                                           traversal_graph_generator: TraversalGraphGenerator):
             for request_id, deadline in task_dict.items():
                 request = state.requests[request_id]
                 if not request.is_expired(state.simulator_time):
                     self._add_request_to_dict(request, 
                                                 task_dict=task_dict, 
                                                 state=state, 
-                                                motion_planner=motion_planner)
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
                 else:
                     print(f"Request {request_id} has expired and is being removed from the list.")
                     task_dict.pop(request_id)
                     request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
 
-    def _check_if_requests_in_dicts_expired(self, state: PlanningState, motion_planner: MotionPlanner):
+    def _check_if_requests_in_dicts_expired(self, 
+                                            state: PlanningState, 
+                                            motion_planner: MotionPlanner, 
+                                            traversal_graph_generator: TraversalGraphGenerator):
         self._remove_expired_requests_from_dict(task_dict=self.monitoring_requests_dict, 
                                                 state=state,
-                                                motion_planner=motion_planner)
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
         self._remove_expired_requests_from_dict(task_dict=self.delivery_requests_dict, 
                                                 state=state,
-                                                motion_planner=motion_planner)
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
     
     def _add_all_requests_to_dicts(self, 
                                    requests_lists: Optional[RequestsLists], 
                                    state: PlanningState, 
-                                   motion_planner: MotionPlanner):
+                                   motion_planner: MotionPlanner,
+                                   traversal_graph_generator: TraversalGraphGenerator):
         if requests_lists is None:
             return
         for request in requests_lists.blood_pressure_requests + requests_lists.heart_rate_requests + \
                        requests_lists.respiratory_rate_requests + requests_lists.temperature_requests + \
                        requests_lists.oxygen_saturation_requests:
-            self._add_request_to_dict(request, self.monitoring_requests_dict, state, motion_planner)
+            self._add_request_to_dict(request, self.monitoring_requests_dict, state, motion_planner, traversal_graph_generator)
         for request in requests_lists.medications_requests:
-            self._add_request_to_dict(request, self.delivery_requests_dict, state, motion_planner)
+            self._add_request_to_dict(request, self.delivery_requests_dict, state, motion_planner, traversal_graph_generator)
     
     def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
         if state.robots_next_nodes[robot_id] is None:
@@ -274,10 +285,12 @@ class TokenPassingWithDeadlines:
                                   debug: bool):
         # Add new requests to the appropriate dicts
         self._check_if_requests_in_dicts_expired(state=state, 
-                                                 motion_planner=motion_planner)
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator)
         self._add_all_requests_to_dicts(requests_lists=requests_lists, 
                                         state=state, 
-                                        motion_planner=motion_planner)
+                                        motion_planner=motion_planner,
+                                        traversal_graph_generator=traversal_graph_generator)
 
         # Assignment logic for monitoring robots
         self._assign_requests_for_monitoring_robots(state=state, 
