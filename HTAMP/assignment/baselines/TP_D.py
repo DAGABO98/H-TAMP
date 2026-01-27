@@ -170,7 +170,7 @@ class TokenPassingWithDeadlines:
             subpath_length = motion_planner.planner.heuristic(start_traversal_node=start_node,
                                                               goal_traversal_node=goal_node,
                                                               robot_profile=state.simulator_config.robot_profiles[robot_id])
-            trip_time += subpath_length
+            trip_time += subpath_length + current_request.wait_times_at_goals_seconds[j]
             start_node = goal_node
 
         return trip_time
