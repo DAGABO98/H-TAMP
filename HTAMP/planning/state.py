@@ -124,6 +124,12 @@ class PlanningState:
                                 traversal_graph: TraversalGraph) -> None:
         self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
         self.assigned_requests[robot_id].append(request_id)
+
+    def remove_request_from_robot(self, 
+                                  robot_id: int, 
+                                  request_id: str) -> None:
+        if request_id in self.assigned_requests[robot_id]:
+            self.assigned_requests[robot_id].remove(request_id)
     
     def reassign_requests_to_robot(self, 
                                  robot_id: int, 

@@ -231,11 +231,37 @@ class TaskRequest:
         if assigned_robot_id is not None:
             self.assigned_robot_id = assigned_robot_id
     
+    def reset_assignment(self) -> None:
+        self.planned_time = -1.0
+        self.planned_goal_indices = []
+        self.assigned_robot_id = None
+        self.completed_goals = 0
+        self.started = False
+    
     def is_expired(self, current_time: float) -> bool:
         return current_time >= self.time_for_service
     
     def is_started(self) -> bool:
         return self.started
+    
+    def to_dict(self) -> dict:
+        return {
+            "request_id": self.request_id,
+            "request_type": self.request_type,
+            "goal_nodes": self.goal_nodes,
+            "wait_times_at_goals_seconds": self.wait_times_at_goals_seconds,
+            "ordered_time": self.ordered_time,
+            "scheduled_time": self.scheduled_time,
+            "time_for_service": self.time_for_service,
+            "started": self.started,
+            "completed_goals": self.completed_goals,
+            "completed": self.completed,
+            "rejected": self.rejected,
+            "total_cost": self.total_cost,
+            "planned_time": self.planned_time,
+            "planned_goal_indices": self.planned_goal_indices,
+            "assigned_robot_id": self.assigned_robot_id,
+        }
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}'," + \
