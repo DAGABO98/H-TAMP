@@ -182,7 +182,7 @@ class AllTaskProperties:
 
 class TaskRequest:
     def __init__(self, 
-                 request_id: int, 
+                 request_id: str, 
                  request_type: str, 
                  goal_nodes: list[str], 
                  wait_times_at_goals_seconds: list[float],

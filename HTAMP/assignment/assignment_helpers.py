@@ -4,7 +4,7 @@ class TaskQueue:
     def __init__(self):
         self.heap = []
 
-    def add_task(self, priority, task_id):
+    def add_task(self, priority: float, task_id: str):
         heapq.heappush(self.heap, (priority, task_id))
 
     def pop_task(self):

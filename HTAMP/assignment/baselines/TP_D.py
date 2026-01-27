@@ -12,13 +12,13 @@ from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 class TokenPassingWithDeadlines:
     def __init__(self):
         self.alpha: float = 0.1  # Weighting factor between urgency and travel time
-        self.monitoring_requests_dict: dict[int, float] = {}
-        self.delivery_requests_dict: dict[int, float] = {}
+        self.monitoring_requests_dict: dict[str, float] = {}
+        self.delivery_requests_dict: dict[str, float] = {}
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
     
     def _add_request_to_dict(self, 
                              request: TaskRequest, 
-                             task_dict: dict[int, float],
+                             task_dict: dict[str, float],
                              state: PlanningState,
                              motion_planner: MotionPlanner,
                              traversal_graph_generator: TraversalGraphGenerator):
@@ -43,7 +43,7 @@ class TokenPassingWithDeadlines:
         task_dict[request.request_id] = pickup_deadline
     
     def _remove_expired_requests_from_dict(self, 
-                                           task_dict: dict[int, float], 
+                                           task_dict: dict[str, float], 
                                            state: PlanningState,
                                            motion_planner: MotionPlanner,
                                            traversal_graph_generator: TraversalGraphGenerator):
@@ -156,7 +156,7 @@ class TokenPassingWithDeadlines:
     
     def _determine_closest_request(self,
                                    robot_id: int,
-                                   request_dict: dict[int, float],
+                                   request_dict: dict[str, float],
                                    state: PlanningState,
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator):
@@ -225,7 +225,7 @@ class TokenPassingWithDeadlines:
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
                                             robot_type: str,
-                                            requests_dict: dict[int, float],
+                                            requests_dict: dict[str, float],
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         print(f"Available robots for {robot_type}: {available_robots}")

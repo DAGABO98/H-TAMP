@@ -53,9 +53,9 @@ class PlanningState:
 
         self.robot_paths: dict[int, list[tuple[TraversalNode, TimeInterval]]] = {key: [] for key in simulator_config.robot_profiles.keys()}
 
-        self.requests: dict[int, TaskRequest] = {}
+        self.requests: dict[str, TaskRequest] = {}
 
-        self.assigned_requests: dict[int, list[int]] = {key: [] for key in simulator_config.robot_profiles.keys()}
+        self.assigned_requests: dict[int, list[str]] = {key: [] for key in simulator_config.robot_profiles.keys()}
 
     def _extract_edge_samples_and_cumulative_lengths(self, 
                                                 start_node: TraversalNode, 
@@ -119,7 +119,7 @@ class PlanningState:
     
     def assign_request_to_robot(self, 
                                 robot_id: int, 
-                                request_id: int, 
+                                request_id: str, 
                                 path: list[tuple[TraversalNode, TimeInterval]],
                                 traversal_graph: TraversalGraph) -> None:
         self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
@@ -127,7 +127,7 @@ class PlanningState:
     
     def reassign_requests_to_robot(self, 
                                  robot_id: int, 
-                                 request_ids: list[int],
+                                 request_ids: list[str],
                                  path: list[tuple[TraversalNode, TimeInterval]],
                                  traversal_graph: TraversalGraph) -> None:
         self.assigned_requests[robot_id] = request_ids
@@ -391,7 +391,7 @@ def main():
 
         print(f"Robot {i} - Ordered Time: {ordered_time}, Scheduled Time: {scheduled_time}")
         
-        current_request = TaskRequest(request_id=i, 
+        current_request = TaskRequest(request_id=str(i), 
                                       request_type="move", 
                                       goal_nodes=[selected_goal_nodes[i].label, selected_goal_nodes[i + args.num_robots].label], 
                                       wait_times_at_goals_seconds=[10.0, 10.0],
@@ -490,9 +490,9 @@ def main():
         robot_paths_seq.append(copy.deepcopy(state.robot_paths))
         planned_goal_indices_dict: dict[int, list[int]] = {}
         completed_goals_dict: dict[int, int] = {}
-        for robot_id, requests in state.assigned_requests.items():
-            if requests:
-                current_request_id = requests[0]
+        for robot_id, assigned_requests in state.assigned_requests.items():
+            if assigned_requests:
+                current_request_id = assigned_requests[0]
                 current_request = state.requests[current_request_id]
                 planned_goal_indices_dict[robot_id] = current_request.planned_goal_indices
                 completed_goals_dict[robot_id] = current_request.completed_goals
