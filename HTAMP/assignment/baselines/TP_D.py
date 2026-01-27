@@ -154,35 +154,50 @@ class TokenPassingWithDeadlines:
             planned_time_to_service_request = float('inf')
         return final_path, planned_goal_indices, planned_time_to_service_request
     
+    def _heuristic_cost_for_robot(self, 
+                                  request_id: str, 
+                                  robot_id: int, 
+                                  state: PlanningState,
+                                  motion_planner: MotionPlanner,
+                                  traversal_graph_generator: TraversalGraphGenerator) \
+                                    -> float:
+        current_request = state.requests[request_id]
+        start_node = self._determine_robot_locations(robot_id, state)
+        trip_time: float = 0.0
+
+        for j, goal_node_label in enumerate(current_request.goal_nodes):
+            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
+            subpath_length = motion_planner.planner.heuristic(start_traversal_node=start_node,
+                                                              goal_traversal_node=goal_node,
+                                                              robot_profile=state.simulator_config.robot_profiles[robot_id])
+            trip_time += subpath_length
+            start_node = goal_node
+
+        return trip_time
+    
     def _determine_closest_request(self,
                                    robot_id: int,
                                    request_dict: dict[str, float],
                                    state: PlanningState,
                                    motion_planner: MotionPlanner,
-                                   traversal_graph_generator: TraversalGraphGenerator):
+                                   traversal_graph_generator: TraversalGraphGenerator) -> Optional[str]:
         closest_request_id = None
-        closest_path = []
-        closest_planned_goal_indices = []
-        shortest_time = float('inf')
         smallest_cost = float('inf')
         for request_id in request_dict.keys():
             request_pickup_deadline = request_dict[request_id]
-            path, planned_goal_indices, planned_time = self._determine_path_for_robot(request_id=request_id, 
-                                                                                      robot_id=robot_id,
-                                                                                      state=state, 
-                                                                                      motion_planner=motion_planner, 
-                                                                                      traversal_graph_generator=traversal_graph_generator)
-            if len(path) > 0:
-                current_cost = (self.alpha * (request_pickup_deadline - state.robots_current_time[robot_id]) + \
-                                (1 - self.alpha) * (planned_time - state.robots_current_time[robot_id]))
-                if current_cost < smallest_cost:
-                    closest_request_id = request_id
-                    smallest_cost = current_cost
-                    closest_path = path
-                    closest_planned_goal_indices = planned_goal_indices
-                    shortest_time = planned_time
+            trip_time = self._heuristic_cost_for_robot(request_id=request_id,
+                                                         robot_id=robot_id,
+                                                         state=state,
+                                                         motion_planner=motion_planner,
+                                                         traversal_graph_generator=traversal_graph_generator)
+            
+            current_cost = (self.alpha * (request_pickup_deadline - state.robots_current_time[robot_id])) + \
+                            (1 - self.alpha) * (trip_time)
+            if current_cost < smallest_cost:
+                smallest_cost = current_cost
+                closest_request_id = request_id
 
-        return closest_request_id, closest_path, closest_planned_goal_indices, shortest_time
+        return closest_request_id
     
     def _assign_request_to_robot(self,
                                  state: PlanningState,
@@ -231,16 +246,21 @@ class TokenPassingWithDeadlines:
         available_robots = state.get_available_robots(robot_type=robot_type)
         print(f"Available robots for {robot_type}: {available_robots}")
         for robot_id in available_robots:
-            closest_request_results = self._determine_closest_request(
-                robot_id=robot_id,
-                request_dict=requests_dict,
-                state=state,
-                motion_planner=motion_planner,
-                traversal_graph_generator=traversal_graph_generator
-            )
-            closest_request_id, closest_path, closest_planned_goal_indices, shortest_time = closest_request_results
-            print(f"Robot {robot_id} closest request: {closest_request_id}, Shortest time: {shortest_time}")
+            closest_request_id = self._determine_closest_request(robot_id=robot_id,
+                                                                 request_dict=requests_dict,
+                                                                 state=state,
+                                                                 motion_planner=motion_planner,
+                                                                 traversal_graph_generator=traversal_graph_generator)
+            
+            print(f"Robot {robot_id} closest request: {closest_request_id}")
             if closest_request_id is not None:
+                planning_results = self._determine_path_for_robot(request_id=closest_request_id,
+                                                                  robot_id=robot_id,
+                                                                  state=state,
+                                                                  motion_planner=motion_planner,
+                                                                  traversal_graph_generator=traversal_graph_generator)
+                
+                closest_path, closest_planned_goal_indices, shortest_time = planning_results
                 self._assign_request_to_robot(state=state,
                                               request_id=closest_request_id,
                                               robot_id=robot_id,
@@ -250,6 +270,7 @@ class TokenPassingWithDeadlines:
                                               motion_planner=motion_planner,
                                               traversal_graph_generator=traversal_graph_generator,
                                               debug=debug)
+                
                 requests_dict.pop(closest_request_id)
             else:
                 print(f"No feasible request found for robot {robot_id}")
