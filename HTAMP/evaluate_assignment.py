@@ -270,6 +270,8 @@ class AssignmentEvaluator:
             start_hour, end_hour = hour_range
         else:
             start_hour, end_hour = 0, 24
+        
+        pStart = datetime.now()
 
         for hour in range(start_hour, end_hour):
             for minute in range(60):
@@ -288,6 +290,9 @@ class AssignmentEvaluator:
                                               traversal_graph_generator=self.tg_generator,
                                               debug=debug)
             self._step_simulation(frame_data=frame_data, save_frame_data=save_frame_data)
+        
+        pEnd = datetime.now()
+        print(f"Total Planning Time: {pEnd - pStart}")
         
         total_cost = self.state.compute_total_costs_for_completed_requests()
         rejected_requests = self.state.get_rejected_requests()
