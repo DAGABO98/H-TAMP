@@ -253,7 +253,7 @@ class AssignmentEvaluator:
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
-                            look_ahead_minutes: int = 60,
+                            look_ahead_minutes: int = 30,
                             debug = False) -> tuple[FrameData, float, int, int, int]:
         request_handler = self._get_request_handler(start_date=start_date,
                                                     end_date=end_date,
@@ -290,13 +290,17 @@ class AssignmentEvaluator:
         
         total_cost = self.state.compute_total_costs_for_completed_requests()
         rejected_requests = self.state.get_rejected_requests()
+        number_of_rejected_requests = 0
+        for request_type, request_list in rejected_requests.items():
+            number_of_rejected_requests += len(request_list)
         print(f"Rejected Requests: {rejected_requests}")
-        number_of_rejections = len(rejected_requests)
         completed_requests = self.state.get_completed_requests()
-        number_of_completed_requests = len(completed_requests)
+        number_of_completed_requests = 0
+        for request_type, request_list in completed_requests.items():
+            number_of_completed_requests += len(request_list)
         total_number_of_requests = len(list(self.state.requests.keys()))
-        return frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests
-
+        return frame_data, total_cost, number_of_completed_requests, number_of_rejected_requests, total_number_of_requests
+    
 class Experiment():
 
     def __init__(self,
@@ -375,7 +379,7 @@ class Experiment():
         medications_properties = TaskProperties(
             task_type="medication",
             wait_time_seconds=60.0,
-            time_for_rejection_minutes=60.0
+            time_for_rejection_minutes=30.0
         )
 
         all_task_properties = AllTaskProperties(

@@ -286,7 +286,7 @@ class PlanningState:
         for request_type, request_list in self.get_completed_requests().items():
             total_cost = 0.0
             for request in request_list:
-                total_cost += request.total_cost
+                total_cost += max(request.total_cost, 0.0)
             total_costs[request_type] = total_cost
         return total_costs
 def main():

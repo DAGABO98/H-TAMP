@@ -213,6 +213,7 @@ class TaskRequest:
     def mark_completed(self, completion_time: float) -> None:
         self.completed = True
         self.total_cost = completion_time - self.scheduled_time
+        print(f"Request {self.request_id} completed at time {completion_time:.2f} with total cost {self.total_cost:.2f}.")
     
     def mark_rejected(self, rejection_penalty: float) -> None:
         self.rejected = True
