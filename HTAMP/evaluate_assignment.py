@@ -1,5 +1,6 @@
 import argparse
 import copy
+import os
 import traceback
 import random
 import pandas as pd
@@ -247,6 +248,34 @@ class AssignmentEvaluator:
 
         self._step_simulation(frame_data=frame_data, save_frame_data=save_frame_data)
     
+    def _generate_results_summary(self) -> pd.DataFrame:
+        results_df = pd.DataFrame([r.to_dict() for r in self.state.requests.values()])
+
+        total_cost = self.state.compute_total_costs_for_completed_requests()
+        rejected_requests = self.state.get_rejected_requests()
+        number_of_rejected_requests = 0
+        number_rejected_requests_dict = {}
+        for request_type, request_list in rejected_requests.items():
+            number_of_rejected_requests += len(request_list)
+            number_rejected_requests_dict[request_type] = len(request_list)
+        print(f"Rejected Requests: {rejected_requests}")
+        completed_requests = self.state.get_completed_requests()
+        number_of_completed_requests = 0
+        number_completed_requests_dict = {}
+        for request_type, request_list in completed_requests.items():
+            number_of_completed_requests += len(request_list)
+            number_completed_requests_dict[request_type] = len(request_list)
+        total_number_of_requests = len(list(self.state.requests.keys()))
+
+        print(f"Number of Completed Requests: {number_of_completed_requests}")
+        print(f"Number of Rejected Requests: {number_of_rejected_requests}")
+        print(f"Total Number of Requests: {total_number_of_requests}")
+        print(f"Number of Rejected Requests by Type: {number_rejected_requests_dict}")
+        print(f"Number of Completed Requests by Type: {number_completed_requests_dict}")
+        print(f"Total Cost: {total_cost}")
+
+        return results_df
+    
     def evaluate_assignment(self, 
                             start_date: str,
                             end_date: str,
@@ -255,7 +284,7 @@ class AssignmentEvaluator:
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
                             look_ahead_minutes: int = 30,
-                            debug = False) -> tuple[FrameData, float, int, int, int]:
+                            debug = False) -> tuple[FrameData, pd.DataFrame]:
         request_handler = self._get_request_handler(start_date=start_date,
                                                     end_date=end_date,
                                                     annotated_data_files=self.annotated_data_files,
@@ -293,23 +322,10 @@ class AssignmentEvaluator:
         
         pEnd = datetime.now()
         print(f"Total Planning Time: {pEnd - pStart}")
+
+        results_df = self._generate_results_summary()
         
-        total_cost = self.state.compute_total_costs_for_completed_requests()
-        rejected_requests = self.state.get_rejected_requests()
-        number_of_rejected_requests = 0
-        number_rejected_requests_dict = {}
-        for request_type, request_list in rejected_requests.items():
-            number_of_rejected_requests += len(request_list)
-            number_rejected_requests_dict[request_type] = len(request_list)
-        print(f"Rejected Requests: {rejected_requests}")
-        completed_requests = self.state.get_completed_requests()
-        number_of_completed_requests = 0
-        number_completed_requests_dict = {}
-        for request_type, request_list in completed_requests.items():
-            number_of_completed_requests += len(request_list)
-            number_completed_requests_dict[request_type] = len(request_list)
-        total_number_of_requests = len(list(self.state.requests.keys()))
-        return frame_data, total_cost, number_of_completed_requests, number_of_rejected_requests, total_number_of_requests, number_rejected_requests_dict, number_completed_requests_dict
+        return frame_data, results_df
     
 class Experiment():
 
@@ -414,22 +430,20 @@ def run_experiment(args):
                             start_date=start_date,
                             end_date=end_date,
                             random_seed=random_seed)
+    
+    os.makedirs("results/motion_planning/debug", exist_ok=True)
+    os.makedirs("results/motion_planning/steps", exist_ok=True)
 
-    evaluate_results = experiment.evaluator.evaluate_assignment(start_date=start_date,
+    frame_data, results_df = experiment.evaluator.evaluate_assignment(start_date=start_date,
                                                      end_date=end_date,
                                                      hour_range=(args.hour_start,args.hour_end),
                                                      request_dir=args.request_dir,
                                                      use_saved_request_data=args.use_saved_request_data,
                                                      save_frame_data=False)
     
-    frame_data, total_cost, number_of_completed_requests, number_of_rejections, total_number_of_requests, number_rejected_requests_dict, number_completed_requests_dict = evaluate_results
-
-    print(f"Number of Completed Requests: {number_of_completed_requests}")
-    print(f"Number of Rejected Requests: {number_of_rejections}")
-    print(f"Total Number of Requests: {total_number_of_requests}")
-    print(f"Number of Rejected Requests by Type: {number_rejected_requests_dict}")
-    print(f"Number of Completed Requests by Type: {number_completed_requests_dict}")
-    print(f"Total Cost: {total_cost}")
+    os.makedirs("results/policies", exist_ok=True)
+    os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
+    results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}_{args.month}_{args.day}.csv", index=False)
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
