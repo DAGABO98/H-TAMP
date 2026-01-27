@@ -189,6 +189,7 @@ class TaskRequest:
                  time_for_rejection_minutes: float,
                  ordered_time: float,
                  scheduled_time: float,
+                 assigned_robot_id: Optional[int] = None,
                  started: bool = False,
                  completed_goals: int = 0,
                  completed: bool = False,
@@ -209,6 +210,7 @@ class TaskRequest:
         self.total_cost = 0.0
         self.planned_goal_indices = planned_goal_indices if planned_goal_indices is not None else []
         self.planned_time = planned_time if planned_time is not None else -1.0
+        self.assigned_robot_id = assigned_robot_id
 
     def mark_completed(self, completion_time: float) -> None:
         self.completed = True
@@ -222,20 +224,25 @@ class TaskRequest:
     def mark_started(self) -> None:
         self.started = True
 
-    def schedule_task(self, planned_time: float, planned_goal_indices: list[int]) -> None:
+    def schedule_task(self, planned_time: float, planned_goal_indices: list[int], assigned_robot_id: Optional[int] = None) -> None:
         self.completed_goals = 0
         self.planned_time = planned_time    
         self.planned_goal_indices = planned_goal_indices
+        if assigned_robot_id is not None:
+            self.assigned_robot_id = assigned_robot_id
     
     def is_expired(self, current_time: float) -> bool:
         return current_time >= self.time_for_service
+    
+    def is_started(self) -> bool:
+        return self.started
 
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}'," + \
             f"ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time}, time_for_service={self.time_for_service}, " + \
             f"goal_nodes={self.goal_nodes}, wait_times_at_goals_seconds={self.wait_times_at_goals_seconds}, " + \
             f"started={self.started}, completed_goals={self.completed_goals}, completed={self.completed}, rejected={self.rejected}, " + \
-            f"planned_time={self.planned_time}, planned_goal_indices={self.planned_goal_indices}, total_cost={self.total_cost})"
+            f"planned_time={self.planned_time}, planned_goal_indices={self.planned_goal_indices}, total_cost={self.total_cost}, assigned_robot_id={self.assigned_robot_id})"
     
 @dataclass
 class RequestsLists:

@@ -195,7 +195,8 @@ class TokenPassingWithDeadlines:
                                  traversal_graph_generator: TraversalGraphGenerator,
                                  debug: bool):
         state.requests[request_id].schedule_task(planned_time=planned_time,
-                                                planned_goal_indices=planned_goal_indices)
+                                                planned_goal_indices=planned_goal_indices,
+                                                assigned_robot_id=robot_id)
 
         if debug:
             MotionPlanningPlotter.plot_assigned_path(

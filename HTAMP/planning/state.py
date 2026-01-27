@@ -215,6 +215,7 @@ class PlanningState:
                             completed_request = self.requests[completed_request_id]
                             completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id])
                             print(f"Request {completed_request_id} completed at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
+
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
@@ -438,7 +439,8 @@ def main():
             if return_path:
                 sub_paths.append(return_path)
                 current_request.schedule_task(planned_time=sub_paths[-2][-1][1].end,
-                                             planned_goal_indices=planned_goal_indices)
+                                             planned_goal_indices=planned_goal_indices,
+                                             assigned_robot_id=i)
                 planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
                 final_path = planner.combine_paths(sub_paths)
                 planner.reserve_path_for_agent(path=final_path, 
