@@ -21,17 +21,17 @@ class FleetManager:
         self.delivery_requests_queue = TaskQueue()
     
     def _remove_expired_requests_from_queue(self, queue: TaskQueue, state: PlanningState):
-            temp_heap = []
-            while queue.heap:
-                priority, request_id = heapq.heappop(queue.heap)
-                if request_id in state.requests:
-                    request = state.requests[request_id]
-                    if not request.is_expired(state.simulator_time):
-                        heapq.heappush(temp_heap, (priority, request_id))
-                    else:
-                        print(f"Request {request_id} has expired and is being removed from the queue.")
-                        request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
-            queue.heap = temp_heap
+        temp_heap = []
+        while queue.heap:
+            priority, request_id = heapq.heappop(queue.heap)
+            if request_id in state.requests:
+                request = state.requests[request_id]
+                if not request.is_expired(state.simulator_time):
+                    heapq.heappush(temp_heap, (priority, request_id))
+                else:
+                    print(f"Request {request_id} has expired and is being removed from the queue.")
+                    request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
+        queue.heap = temp_heap
 
     def _check_if_requests_in_queues_expired(self, state: PlanningState):
         self._remove_expired_requests_from_queue(queue=self.monitoring_requests_queue, 
@@ -153,31 +153,31 @@ class FleetManager:
                                  motion_planner: MotionPlanner,
                                  traversal_graph_generator: TraversalGraphGenerator,
                                  debug: bool):
-            state.requests[request_id].schedule_task(planned_time=planned_time,
-                                                    planned_goal_indices=planned_goal_indices)
+        state.requests[request_id].schedule_task(planned_time=planned_time,
+                                                planned_goal_indices=planned_goal_indices)
 
-            if debug:
-                MotionPlanningPlotter.plot_assigned_path(
-                    occupancy_map=traversal_graph_generator.occupancy_map,
-                    origin_x=traversal_graph_generator.origin_x,
-                    origin_y=traversal_graph_generator.origin_y,
-                    resolution=traversal_graph_generator.resolution,
-                    request_id=request_id,
-                    results_folder="results/motion_planning/debug",
-                    planned_path=planned_path,
-                    traversal_graph=traversal_graph_generator.traversal_graph,
-                    robot_profile=state.simulator_config.robot_profiles[robot_id]
-                )
-                
-            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-            motion_planner.reserve_path_for_agent(path=planned_path,
-                                                 robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                 wait_time_at_goal=state.simulator_config.horizon)
+        if debug:
+            MotionPlanningPlotter.plot_assigned_path(
+                occupancy_map=traversal_graph_generator.occupancy_map,
+                origin_x=traversal_graph_generator.origin_x,
+                origin_y=traversal_graph_generator.origin_y,
+                resolution=traversal_graph_generator.resolution,
+                request_id=request_id,
+                results_folder="results/motion_planning/debug",
+                planned_path=planned_path,
+                traversal_graph=traversal_graph_generator.traversal_graph,
+                robot_profile=state.simulator_config.robot_profiles[robot_id]
+            )
             
-            state.assign_request_to_robot(request_id=request_id, 
-                                        robot_id=robot_id, 
-                                        path=planned_path, 
-                                        traversal_graph=traversal_graph_generator.traversal_graph)
+        motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+        motion_planner.reserve_path_for_agent(path=planned_path,
+                                                robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                wait_time_at_goal=state.simulator_config.horizon)
+        
+        state.assign_request_to_robot(request_id=request_id, 
+                                    robot_id=robot_id, 
+                                    path=planned_path, 
+                                    traversal_graph=traversal_graph_generator.traversal_graph)
     
     def _assign_requests_to_available_robots(self,
                                             state: PlanningState,

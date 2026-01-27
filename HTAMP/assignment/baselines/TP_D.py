@@ -47,18 +47,18 @@ class TokenPassingWithDeadlines:
                                            state: PlanningState,
                                            motion_planner: MotionPlanner,
                                            traversal_graph_generator: TraversalGraphGenerator):
-            for request_id, deadline in task_dict.items():
-                request = state.requests[request_id]
-                if not request.is_expired(state.simulator_time):
-                    self._add_request_to_dict(request, 
-                                                task_dict=task_dict, 
-                                                state=state, 
-                                                motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator)
-                else:
-                    print(f"Request {request_id} has expired and is being removed from the list.")
-                    task_dict.pop(request_id)
-                    request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
+        for request_id, deadline in task_dict.items():
+            request = state.requests[request_id]
+            if not request.is_expired(state.simulator_time):
+                self._add_request_to_dict(request, 
+                                            task_dict=task_dict, 
+                                            state=state, 
+                                            motion_planner=motion_planner,
+                                            traversal_graph_generator=traversal_graph_generator)
+            else:
+                print(f"Request {request_id} has expired and is being removed from the list.")
+                task_dict.pop(request_id)
+                request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
 
     def _check_if_requests_in_dicts_expired(self, 
                                             state: PlanningState, 
@@ -194,31 +194,31 @@ class TokenPassingWithDeadlines:
                                  motion_planner: MotionPlanner,
                                  traversal_graph_generator: TraversalGraphGenerator,
                                  debug: bool):
-            state.requests[request_id].schedule_task(planned_time=planned_time,
-                                                    planned_goal_indices=planned_goal_indices)
+        state.requests[request_id].schedule_task(planned_time=planned_time,
+                                                planned_goal_indices=planned_goal_indices)
 
-            if debug:
-                MotionPlanningPlotter.plot_assigned_path(
-                    occupancy_map=traversal_graph_generator.occupancy_map,
-                    origin_x=traversal_graph_generator.origin_x,
-                    origin_y=traversal_graph_generator.origin_y,
-                    resolution=traversal_graph_generator.resolution,
-                    request_id=request_id,
-                    results_folder="results/motion_planning/debug",
-                    planned_path=planned_path,
-                    traversal_graph=traversal_graph_generator.traversal_graph,
-                    robot_profile=state.simulator_config.robot_profiles[robot_id]
-                )
-                
-            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-            motion_planner.reserve_path_for_agent(path=planned_path,
-                                                 robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                 wait_time_at_goal=state.simulator_config.horizon)
+        if debug:
+            MotionPlanningPlotter.plot_assigned_path(
+                occupancy_map=traversal_graph_generator.occupancy_map,
+                origin_x=traversal_graph_generator.origin_x,
+                origin_y=traversal_graph_generator.origin_y,
+                resolution=traversal_graph_generator.resolution,
+                request_id=request_id,
+                results_folder="results/motion_planning/debug",
+                planned_path=planned_path,
+                traversal_graph=traversal_graph_generator.traversal_graph,
+                robot_profile=state.simulator_config.robot_profiles[robot_id]
+            )
             
-            state.assign_request_to_robot(request_id=request_id, 
-                                        robot_id=robot_id, 
-                                        path=planned_path, 
-                                        traversal_graph=traversal_graph_generator.traversal_graph)
+        motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+        motion_planner.reserve_path_for_agent(path=planned_path,
+                                                robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                wait_time_at_goal=state.simulator_config.horizon)
+        
+        state.assign_request_to_robot(request_id=request_id, 
+                                    robot_id=robot_id, 
+                                    path=planned_path, 
+                                    traversal_graph=traversal_graph_generator.traversal_graph)
     
     def _assign_requests_to_available_robots(self,
                                             state: PlanningState,
