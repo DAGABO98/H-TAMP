@@ -494,6 +494,7 @@ def main():
 
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
+    parser.add_argument("--policy_name", type=str, dest='policy_name', default='fleet_manager', help='Name of the policy for saving results.')
     parser.add_argument("--num_monitoring_robots", type=int, default=6, help="Number of monitoring robots to be used in the team")
     parser.add_argument("--num_delivery_robots", type=int, default=3, help="Number of delivery robots to be used in the team")
     parser.add_argument("--rejection_penalty", type=int, dest='rejection_penalty', default=28800, help='Penalty for rejecting a request. Default value set to the number of seconds in 8 hours.')
