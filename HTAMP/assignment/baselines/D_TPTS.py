@@ -288,7 +288,10 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                    traversal_graph_generator: TraversalGraphGenerator):
         allocations = []
         for request_id in list(unassigned_requests_dict.keys()) + list(assigned_requests_dict.keys()):
-            request_pickup_deadline = unassigned_requests_dict[request_id]
+            if request_id in assigned_requests_dict:
+                request_pickup_deadline = assigned_requests_dict[request_id][1]
+            else:
+                request_pickup_deadline = unassigned_requests_dict[request_id]
             trip_time = self._heuristic_cost_for_robot(request_id=request_id,
                                                        robot_id=robot_id,
                                                        state=state,
@@ -366,12 +369,6 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                 if planned_path:
                     if request_id in unassigned_requests_dict:
                         unassigned_requests_dict.pop(request_id)
-                        self._add_request_to_dict(request=state.requests[request_id],
-                                                    task_dict=assigned_requests_dict,
-                                                    state=state,
-                                                    motion_planner=motion_planner,
-                                                    traversal_graph_generator=traversal_graph_generator,
-                                                    assigned=True)
                         self._assign_request_to_robot(state=state,
                                                 request_id=request_id,
                                                 robot_id=robot_id,
@@ -381,23 +378,24 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                 motion_planner=motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator,
                                                 debug=debug)
+                        self._add_request_to_dict(request=state.requests[request_id],
+                                                  task_dict=assigned_requests_dict,
+                                                  state=state,
+                                                  motion_planner=motion_planner,
+                                                  traversal_graph_generator=traversal_graph_generator,
+                                                  assigned=True)
                         request_allocated = True
                         break
                     elif request_id in assigned_requests_dict:
                         prev_planned_time = state.requests[request_id].planned_time
                         if planned_time < prev_planned_time:
+                            print(f"Reassigning request {request_id} to robot {robot_id} from robot {assigned_requests_dict[request_id][0]}.")
                             assigned_robot_id, _ = assigned_requests_dict.pop(request_id)
                             assigned_request = state.requests[request_id]
                             assigned_request.reset_assignment()
                             state.remove_request_from_robot(robot_id=assigned_robot_id,
                                                             request_id=request_id)
                             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[assigned_robot_id])
-                            self._add_request_to_dict(request=state.requests[request_id],
-                                                        task_dict=assigned_requests_dict,
-                                                        state=state,
-                                                        motion_planner=motion_planner,
-                                                        traversal_graph_generator=traversal_graph_generator,
-                                                        assigned=True)
                             self._assign_request_to_robot(state=state,
                                                     request_id=request_id,
                                                     robot_id=robot_id,
@@ -407,9 +405,16 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                     motion_planner=motion_planner,
                                                     traversal_graph_generator=traversal_graph_generator,
                                                     debug=debug)
+                            self._add_request_to_dict(request=state.requests[request_id],
+                                                      task_dict=assigned_requests_dict,
+                                                      state=state,
+                                                      motion_planner=motion_planner,
+                                                      traversal_graph_generator=traversal_graph_generator,
+                                                      assigned=True)
                             request_allocated = True
                             break
             if not request_allocated:
+                print(f"No suitable requests found for robot {robot_id}. Planning return to depot.")
                 return_path = motion_planner.obtain_path_for_agent(start_traversal_node=self._determine_robot_locations(robot_id, state),
                                                        goal_traversal_node=state.robot_depots[robot_id],
                                                        robot_profile=state.simulator_config.robot_profiles[robot_id],
