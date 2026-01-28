@@ -16,6 +16,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         self.assigned_monitoring_requests_dict: dict[str, tuple[int, float]] = {}
         self.delivery_requests_dict: dict[str, float] = {}
         self.assigned_delivery_requests_dict: dict[str, float] = {}
+        self.robots_to_be_sent_to_depot: list[int] = list()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
     
     def _calculate_pickup_deadline(self, 
@@ -166,6 +167,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                     state.remove_request_from_robot(robot_id=assigned_robot_id,
                                                     request_id=assigned_request_id)
                     motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[assigned_robot_id])
+                    self.robots_to_be_sent_to_depot.append(assigned_robot_id)
     
     def _add_new_requests_to_dicts(self,
                                    requests_lists: Optional[RequestsLists], 
@@ -352,14 +354,14 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         print(f"Available robots for {robot_type}: {available_robots}")
-        for robot_id in available_robots:
+        while available_robots:
+            robot_id = available_robots.pop(0)
             allocations = self._generate_sorted_allocation_costs_for_requests(robot_id=robot_id,
                                                                             unassigned_requests_dict=unassigned_requests_dict,
                                                                             assigned_requests_dict=assigned_requests_dict,
                                                                             state=state,
                                                                             motion_planner=motion_planner,
                                                                             traversal_graph_generator=traversal_graph_generator)
-            request_allocated = False
             for request_id, _ in allocations:
                 planned_path, planned_goal_indices, planned_time = self._determine_path_for_robot(request_id=request_id,
                                                                                                     robot_id=robot_id,
@@ -384,7 +386,9 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                   motion_planner=motion_planner,
                                                   traversal_graph_generator=traversal_graph_generator,
                                                   assigned=True)
-                        request_allocated = True
+                        if robot_id in self.robots_to_be_sent_to_depot:
+                            self.robots_to_be_sent_to_depot.remove(robot_id)
+                        print(f"Assigned request {request_id} to robot {robot_id}.")
                         break
                     elif request_id in assigned_requests_dict:
                         prev_planned_time = state.requests[request_id].planned_time
@@ -411,25 +415,30 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                       motion_planner=motion_planner,
                                                       traversal_graph_generator=traversal_graph_generator,
                                                       assigned=True)
-                            request_allocated = True
+                            if robot_id in self.robots_to_be_sent_to_depot:
+                                self.robots_to_be_sent_to_depot.remove(robot_id)
+                            self.robots_to_be_sent_to_depot.append(assigned_robot_id)
+                            available_robots.append(assigned_robot_id)
                             break
-            if not request_allocated:
-                print(f"No suitable requests found for robot {robot_id}. Planning return to depot.")
-                return_path = motion_planner.obtain_path_for_agent(start_traversal_node=self._determine_robot_locations(robot_id, state),
-                                                       goal_traversal_node=state.robot_depots[robot_id],
-                                                       robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                       current_time=state.robots_current_time[robot_id],
-                                                       wait_time_at_goal=120.0,
-                                                       horizon=state.simulator_config.horizon)
-                assert return_path is not None, "Return path to depot could not be found."
-                motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-                motion_planner.reserve_path_for_agent(path=return_path,
-                                                        robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                        wait_time_at_goal=state.simulator_config.horizon)
-                state.assign_robot_path(robot_id=robot_id, 
-                                        path=return_path, 
-                                        traversal_graph=traversal_graph_generator.traversal_graph)
-    
+
+        while self.robots_to_be_sent_to_depot:
+            robot_to_depot_id = self.robots_to_be_sent_to_depot.pop(0)
+            print(f"No suitable requests found for robot {robot_to_depot_id}. Planning return to depot.")
+            return_path = motion_planner.obtain_path_for_agent(start_traversal_node=self._determine_robot_locations(robot_to_depot_id, state),
+                                                    goal_traversal_node=state.robot_depots[robot_to_depot_id],
+                                                    robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id],
+                                                    current_time=state.robots_current_time[robot_to_depot_id],
+                                                    wait_time_at_goal=120.0,
+                                                    horizon=state.simulator_config.horizon)
+            assert return_path is not None, "Return path to depot could not be found."
+            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
+            motion_planner.reserve_path_for_agent(path=return_path,
+                                                    robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id],
+                                                    wait_time_at_goal=state.simulator_config.horizon)
+            state.assign_robot_path(robot_id=robot_to_depot_id, 
+                                    path=return_path, 
+                                    traversal_graph=traversal_graph_generator.traversal_graph)
+                
     def _assign_requests_for_monitoring_robots(self, 
                                                state: PlanningState, 
                                                motion_planner: MotionPlanner, 
