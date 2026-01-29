@@ -266,6 +266,235 @@ class DataStatistics:
             out_png=out_png
         )
     
+    def generate_and_plot_weekly_laney_u_chart(self,
+                                         original_df: pd.DataFrame,
+                                         time_col: str,
+                                         room_col: str,
+                                         start_date: str,
+                                         end_date: str,
+                                         label: str) -> None:
+        df_prep = DataHelpers.prepare_df(
+            original_df,
+            time_col=time_col,
+            room_col=room_col,
+        )
+
+        df_filtered = DataHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        per_day = DataHelpers.compute_per_day_counts(dff=df_filtered)
+
+        weekly = DataHelpers.weekly_laney_u_chart(per_day)
+
+        out_png = self.u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_weekly_u_chart(
+            weekly=weekly,
+            out_png=out_png
+        )
+    
+    def build_per_day_all_tasks(self,
+                                original_dfs: list[pd.DataFrame],
+                                labels: Sequence[str],
+                                start_date: str,
+                                end_date: str) -> pd.DataFrame:
+        per_day_list = []
+        for original_df, label in zip(original_dfs, labels):
+            if label == "medications":
+                df_prep = DataHelpers.prepare_df(
+                    original_df,
+                    time_col="Medication Scheduled DTTM",
+                    room_col="scheduled_room",
+                )
+            else:
+                df_prep = DataHelpers.prepare_df(
+                    original_df,
+                    time_col="Scheduled DTTM",
+                    room_col="scheduled_room",
+                )
+
+            df_filtered = DataHelpers.apply_date_filters(
+                df_prep,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            per_day = DataHelpers.compute_per_day_counts(dff=df_filtered)
+            per_day["__task__"] = label
+            per_day_list.append(per_day)
+
+        combined_per_day = pd.concat(per_day_list, ignore_index=True)
+        return combined_per_day
+    
+    def generate_and_plot_combined_standardized_weekly_u_chart(self,
+                                                  original_dfs: list[pd.DataFrame],
+                                                  labels: Sequence[str],
+                                                  start_date: str,
+                                                  end_date: str) -> None:
+        combined_per_day = self.build_per_day_all_tasks(
+            original_dfs=original_dfs,
+            labels=labels,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        weekly_df = DataHelpers.build_weekly_per_task(per_day_all=combined_per_day)
+
+        weekly_std = DataHelpers.equal_task_influence_oe_chart(weekly_df)
+
+        out_png = self.u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_oe_u_chart(weekly=weekly_std,
+                                                     out_png=out_png)
+    
+    def generate_and_plot_combined_weekly_laney_u_chart(self,
+                                                  original_dfs: list[pd.DataFrame],
+                                                  labels: Sequence[str],
+                                                  start_date: str,
+                                                  end_date: str) -> None:
+        per_day_list = []
+        for original_df, label in zip(original_dfs, labels):
+            if label == "medications":
+                df_prep = DataHelpers.prepare_df(
+                    original_df,
+                    time_col="Medication Scheduled DTTM",
+                    room_col="scheduled_room",
+                )
+            else:
+                df_prep = DataHelpers.prepare_df(
+                    original_df,
+                    time_col="Scheduled DTTM",
+                    room_col="scheduled_room",
+                )
+
+            df_filtered = DataHelpers.apply_date_filters(
+                df_prep,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            df_filtered["__task__"] = label
+            per_day_list.append(df_filtered)
+
+        combined_filtered_df = pd.concat(per_day_list, ignore_index=True)
+
+        per_day = DataHelpers.compute_per_day_counts(dff=combined_filtered_df)
+
+        weekly = DataHelpers.weekly_laney_u_chart(per_day)
+
+        out_png = self.u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_weekly_u_chart(
+            weekly=weekly,
+            out_png=out_png
+        )
+
+    def generate_and_plot_combined_weekly_u_chart(self,
+                                                  original_dfs: list[pd.DataFrame],
+                                                  labels: Sequence[str],
+                                                  start_date: str,
+                                                  end_date: str) -> None:
+        per_day_list = []
+        for original_df, label in zip(original_dfs, labels):
+            if label == "medications":
+                df_prep = DataHelpers.prepare_df(
+                    original_df,
+                    time_col="Medication Scheduled DTTM",
+                    room_col="scheduled_room",
+                )
+            else:
+                df_prep = DataHelpers.prepare_df(
+                    original_df,
+                    time_col="Scheduled DTTM",
+                    room_col="scheduled_room",
+                )
+
+            df_filtered = DataHelpers.apply_date_filters(
+                df_prep,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            df_filtered["__task__"] = label
+            per_day_list.append(df_filtered)
+
+        combined_filtered_df = pd.concat(per_day_list, ignore_index=True)
+
+        per_day = DataHelpers.compute_per_day_counts(dff=combined_filtered_df)
+
+        weekly = DataHelpers.weekly_u_chart(per_day)
+
+        out_png = self.u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_weekly_u_chart(
+            weekly=weekly,
+            out_png=out_png
+        )
+    
+    def generate_and_plot_all_weekly_laney_u_charts(self,
+                                                    start_date: str,
+                                                    end_date: str) -> None:
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions"
+        )
+        self.generate_and_plot_weekly_laney_u_chart(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges"
+        )
+    
     def generate_and_plot_all_weekly_u_charts(self,
                                             start_date: str,
                                             end_date: str) -> None:
@@ -613,7 +842,7 @@ def main():
     parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
     parser.add_argument("--week-start", default="MON", help="Week anchor day: MON (default), SUN, TUE, ...")
-    parser.add_argument("--outdir", default="results", help="Directory to write outputs (default: ./results)")
+    parser.add_argument("--outdir", default="results/data_statistics", help="Directory to write outputs (default: ./results/data_statistics)")
     parser.add_argument("--dist-data-dir", default="data/distributions", help="Directory to write distribution data outputs (default: ./data/distributions/)")
     args = parser.parse_args()
 
@@ -641,6 +870,74 @@ def main():
     )
 
     data_stats.generate_and_plot_all_weekly_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29"
+    )
+
+    data_stats.generate_and_plot_all_weekly_laney_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29"
+    )
+
+    data_stats.generate_and_plot_combined_weekly_u_chart(
+        original_dfs=[
+            data_stats.bp_df,
+            data_stats.medications_df,
+            data_stats.hr_df,
+            data_stats.rr_df,
+            data_stats.temp_df,
+            data_stats.oximetry_df
+        ],
+        labels=[
+            "blood_pressure",
+            "medications",
+            "heart_rate",
+            "respiratory_rate",
+            "temperature",
+            "oxygen_saturation"
+        ],
+        start_date="2024-06-24",
+        end_date="2025-06-29"
+    )
+
+    data_stats.generate_and_plot_combined_weekly_laney_u_chart(
+        original_dfs=[
+            data_stats.bp_df,
+            data_stats.medications_df,
+            data_stats.hr_df,
+            data_stats.rr_df,
+            data_stats.temp_df,
+            data_stats.oximetry_df
+        ],
+        labels=[
+            "blood_pressure",
+            "medications",
+            "heart_rate",
+            "respiratory_rate",
+            "temperature",
+            "oxygen_saturation"
+        ],
+        start_date="2024-06-24",
+        end_date="2025-06-29"
+    )
+
+    data_stats.generate_and_plot_combined_standardized_weekly_u_chart(
+        original_dfs=[
+            data_stats.bp_df,
+            data_stats.medications_df,
+            data_stats.hr_df,
+            data_stats.rr_df,
+            data_stats.temp_df,
+            data_stats.oximetry_df
+        ],
+        labels=[
+            "blood_pressure",
+            "medications",
+            "heart_rate",
+            "respiratory_rate",
+            "temperature",
+            "oxygen_saturation"
+        ],
         start_date="2024-06-24",
         end_date="2025-06-29"
     )

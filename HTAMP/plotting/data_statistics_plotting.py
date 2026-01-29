@@ -64,6 +64,31 @@ class DataStatisticsPlottingHelper:
         plt.tight_layout()
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()
+    
+    @staticmethod
+    def plot_oe_u_chart(weekly: pd.DataFrame, out_png: Path, title: str = "Standardized u-chart (Observed/Expected across tasks)"):
+        d = weekly.dropna(subset=["week_start"]).sort_values("week_start").copy()
+        if d.empty:
+            raise ValueError("No weeks to plot (week_start missing or filtered out).")
+
+        plt.figure()
+        plt.plot(d["week_start"], d["Z"], marker="o", label="Z = mean task residual (equal weight)")
+
+        flagged = d[d["flag"]]
+        if len(flagged) > 0:
+            plt.scatter(flagged["week_start"], flagged["Z"], zorder=3, label="Outside limits")
+
+        plt.plot(d["week_start"], d["ucl"], linestyle="--", label="UCL/LCL")
+        plt.plot(d["week_start"], d["lcl"], linestyle="--")
+        plt.axhline(0.0, linestyle=":", label="Center (0)")
+
+        plt.xlabel("ISO week (start)")
+        plt.ylabel("Standardized Rate (Observed / Expected)")
+        plt.title(title)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160, bbox_inches="tight")
+        plt.close()
 
     @staticmethod
     def plot_heatmap(weekly_dow: pd.DataFrame, out_png: Path) -> None:
@@ -132,6 +157,7 @@ class DataStatisticsPlottingHelper:
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()
 
+    @staticmethod
     def plot_wasserstein_distance(top: pd.DataFrame, out_png: Path) -> None:
         plt.figure(figsize=(8, 5))
         labels = [f'{y}-W{str(w).zfill(2)}' for y, w in zip(top["iso_year"], top["iso_week"])]

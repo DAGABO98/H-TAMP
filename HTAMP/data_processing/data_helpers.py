@@ -230,6 +230,183 @@ class DataHelpers:
         return weekly
     
     @staticmethod
+    def build_weekly_per_task(per_day_all: pd.DataFrame) -> pd.DataFrame:
+        """
+        per_day_all expected columns:
+        __task__, __floor__, __day__, n_requests, iso_year, iso_week
+
+        Returns wk with:
+        iso_year, iso_week, __task__, O_it (weekly total), n_it (exposure = # floor-days for that task-week)
+        """
+        if per_day_all.empty:
+            return pd.DataFrame(columns=["iso_year","iso_week","__task__","O_it","n_it"])
+
+        wk = (per_day_all.groupby(["iso_year","iso_week","__task__"], as_index=False)
+                        .agg(
+                            O_it=("n_requests","sum"),
+                            n_it=("n_requests","size"),
+                        ))
+        wk["iso_year"] = wk["iso_year"].astype(int)
+        wk["iso_week"] = wk["iso_week"].astype(int)
+        return wk
+    
+    @staticmethod
+    def equal_task_influence_oe_chart(wk: pd.DataFrame,
+                                      min_expected: float = 0.2,
+                                      min_tasks_per_week: int = 1) -> pd.DataFrame:
+        """
+        Equal-influence combined chart:
+        - compute per task-week expected E_it from task baseline
+        - compute z_it = (O_it - E_it) / sqrt(E_it)
+        - per week, Z = mean(z_it) (each task counts equally)
+        - limits: ± 3 / sqrt(k) 
+
+        min_expected:
+        drop task-weeks with E_it < min_expected (too noisy)
+        min_tasks_per_week:
+        drop weeks with fewer than this many tasks contributing
+        """
+        if wk.empty:
+            return pd.DataFrame(columns=["iso_year","iso_week","week_start","Z","k_tasks","ucl","lcl","flag"])
+
+        w = wk.copy()
+
+        # Baseline rate per task
+        base = (w.groupby("__task__", as_index=False)
+                .agg(O_tot=("O_it","sum"), n_tot=("n_it","sum")))
+        base["lambda_hat"] = base["O_tot"] / base["n_tot"]
+
+        w = w.merge(base[["__task__", "lambda_hat"]], on="__task__", how="left")
+
+        # Expected + Pearson residual per task-week
+        w["E_it"] = w["n_it"] * w["lambda_hat"]
+        w = w[w["E_it"] >= float(min_expected)].copy()
+
+        w["z_it"] = (w["O_it"] - w["E_it"]) / np.sqrt(w["E_it"])
+
+        # Equal-weight combine across tasks per week
+        weekly = (w.groupby(["iso_year","iso_week"], as_index=False)
+                    .agg(
+                        Z=("z_it", "mean"),
+                        k_tasks=("z_it", "size"),
+                    ))
+
+        # Filter weeks with too few tasks
+        weekly = weekly[weekly["k_tasks"] >= int(min_tasks_per_week)].copy()
+
+        # Week start date for plotting
+        weekly["week_start"] = pd.to_datetime(
+            weekly["iso_year"].astype(str) + "-W" + weekly["iso_week"].astype(str).str.zfill(2) + "-1",
+            format="%G-W%V-%u",
+            errors="coerce",
+        )
+        weekly = weekly.sort_values("week_start").reset_index(drop=True)
+
+        # Standard limits for mean of ~N(0,1) residuals
+        weekly["ucl"] = 3.0 / np.sqrt(weekly["k_tasks"].astype(float))
+        weekly["lcl"] = -weekly["ucl"]
+        weekly["flag"] = (weekly["Z"] > weekly["ucl"]) | (weekly["Z"] < weekly["lcl"])
+
+        return weekly
+    
+    @staticmethod
+    def weekly_laney_u_chart(per_day: pd.DataFrame) -> pd.DataFrame:
+        """
+        Build weekly metrics for a Laney u' chart.
+        Returns a DataFrame with columns:
+        - iso_year, iso_week, week_start, n_units, total_requests, u,
+          u_bar, sigma_z, ucl, lcl, flagged_high, flagged_low, flagged
+        Stores u_bar and sigma_z in weekly.attrs.
+        """
+        if per_day.empty:
+            return pd.DataFrame(columns=[
+                "iso_year","iso_week","week_start","n_units","total_requests","u",
+                "ucl","lcl","flagged_high","flagged_low","flagged"
+            ])
+
+        tmp = per_day.copy()
+
+        # ISO year/week
+        tmp["iso_year"] = tmp["__day__"].apply(lambda d: d.isocalendar().year)
+        tmp["iso_week"] = tmp["__day__"].apply(lambda d: d.isocalendar().week)
+
+        # Weekly totals
+        g = tmp.groupby(["iso_year","iso_week"], as_index=False)
+        weekly = g.agg(
+            n_units=("n_requests", "size"),      # number of day-rows (your "units")
+            total_requests=("n_requests", "sum")
+        )
+
+        weekly["u"] = np.where(weekly["n_units"] > 0,
+                               weekly["total_requests"] / weekly["n_units"],
+                               np.nan)
+
+        # Center line (weighted)
+        total_requests_all = weekly["total_requests"].sum()
+        total_units_all = weekly["n_units"].sum()
+        u_bar = 0.0 if total_units_all == 0 else total_requests_all / total_units_all
+
+        # If u_bar == 0, Poisson variance is 0 => limits collapse; Laney can't help.
+        if u_bar <= 0:
+            weekly["ucl"] = 0.0
+            weekly["lcl"] = 0.0
+            weekly["flagged_high"] = weekly["u"] > 0.0
+            weekly["flagged_low"] = False
+            weekly["flagged"] = weekly["flagged_high"]
+            weekly.attrs["u_bar"] = u_bar
+            weekly.attrs["sigma_z"] = np.nan
+        else:
+            # Std error under Poisson for each week
+            se = np.sqrt(np.where(weekly["n_units"] > 0, u_bar / weekly["n_units"], np.nan))
+
+            # Standardized residuals
+            z = (weekly["u"] - u_bar) / se
+            weekly["z"] = z
+
+            # ---- Laney sigma_z estimate (moving range of successive z's) ----
+            # Use weeks in chronological order for MR.
+            # Create week_start (Monday) first, then sort.
+            tmp_dates = tmp.groupby(["iso_year","iso_week"])["__day__"].min().reset_index()
+            tmp_dates["__day__"] = pd.to_datetime(tmp_dates["__day__"])
+            tmp_dates["week_start"] = tmp_dates["__day__"] - pd.to_timedelta(tmp_dates["__day__"].dt.weekday, unit="D")
+            weekly = weekly.merge(tmp_dates[["iso_year","iso_week","week_start"]],
+                                  on=["iso_year","iso_week"], how="left")
+
+            weekly = weekly.sort_values(["week_start","iso_year","iso_week"], ignore_index=True)
+
+            # Recompute z in sorted order (same values, but aligned for diff)
+            se_sorted = np.sqrt(np.where(weekly["n_units"] > 0, u_bar / weekly["n_units"], np.nan))
+            z_sorted = (weekly["u"] - u_bar) / se_sorted
+
+            mr = np.abs(np.diff(z_sorted.to_numpy()))
+            mr = mr[~np.isnan(mr)]
+            mr_bar = np.nan if mr.size == 0 else mr.mean()
+
+            d2 = 1.128  # for moving range of 2
+            sigma_z = np.nan if (mr_bar is np.nan) else (mr_bar / d2)
+
+            # Guardrails: sigma_z should be positive; if weird, fall back to 1.0
+            if not np.isfinite(sigma_z) or sigma_z <= 0:
+                sigma_z = 1.0
+
+            weekly["sigma_z"] = sigma_z
+
+            # Laney limits
+            weekly["ucl"] = u_bar + 3.0 * sigma_z * se_sorted
+            weekly["lcl"] = np.maximum(0.0, u_bar - 3.0 * sigma_z * se_sorted)
+
+            weekly["flagged_high"] = weekly["u"] > weekly["ucl"]
+            weekly["flagged_low"] = weekly["u"] < weekly["lcl"]
+            weekly["flagged"] = weekly["flagged_high"] | weekly["flagged_low"]
+
+            weekly.attrs["u_bar"] = u_bar
+            weekly.attrs["sigma_z"] = sigma_z
+
+        # Keep your final sorting columns consistent
+        weekly = weekly.sort_values(["week_start","iso_year","iso_week"], ignore_index=True)
+        return weekly
+    
+    @staticmethod
     def compute_week_by_dow(df: pd.DataFrame) -> pd.DataFrame:
         """
         Returns a long table of total_requests per (iso_year, iso_week, dow)
