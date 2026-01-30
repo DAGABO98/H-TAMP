@@ -20,6 +20,79 @@ class SequentialGreedy:
     def _extract_assigned_requests_from_state(self, state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
     
+    def _check_validity_of_request_order(self, 
+                                         first_task_started: bool,
+                                         request_order: list[str],
+                                         robot_id: int, 
+                                         state: PlanningState, 
+                                         motion_planner: MotionPlanner, 
+                                         traversal_graph_generator: TraversalGraphGenerator) -> tuple[float, float, Optional[str]]:
+        if first_task_started:
+            start_node_label = state.requests[request_order[0]].goal_nodes[-1]
+            start_node = traversal_graph_generator.traversal_graph.nodes_dict[start_node_label]
+            current_time = state.requests[request_order[0]].planned_time
+        else:
+            start_node = self._determine_robot_locations(robot_id, state)
+            current_time: float = state.robots_current_time[robot_id]
+
+        if first_task_started:
+            new_request_order = request_order[1:]
+        else:
+            new_request_order = request_order
+
+        total_unmodified_cost = 0.0
+        total_cost = 0.0
+        total_trip_time = 0.0
+        for request_id in new_request_order:
+            current_request = state.requests[request_id]
+            for j, goal_node_label in enumerate(current_request.goal_nodes):
+                goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
+                subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
+                                                                  goal_traversal_node=goal_node,
+                                                                  robot_profile=state.simulator_config.robot_profiles[robot_id])
+                total_trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
+                start_node = goal_node
+            time_to_complete_request = current_time + total_trip_time
+            if time_to_complete_request > current_request.time_for_service - sum(current_request.wait_times_at_goals_seconds):
+                return float('inf'), float('inf'), request_id
+            total_unmodified_cost += (time_to_complete_request - current_request.scheduled_time)
+            total_cost += max(time_to_complete_request - current_request.scheduled_time, 0.0)
+        return total_unmodified_cost, total_cost, None
+    
+    def _check_assigned_requests_validity(self,
+                                          state: PlanningState,
+                                          motion_planner: MotionPlanner,
+                                          traversal_graph_generator: TraversalGraphGenerator):
+            for robot_id in self.assigned_requests.keys():
+                if not self.assigned_requests[robot_id]:
+                    continue
+                first_request_id = self.assigned_requests[robot_id][0]
+                first_task_started = state.requests[first_request_id].is_started()
+                validity_results = self._check_validity_of_request_order(first_task_started=first_task_started,
+                                                                         request_order=self.assigned_requests[robot_id],
+                                                                         robot_id=robot_id,
+                                                                         state=state,
+                                                                         motion_planner=motion_planner,
+                                                                         traversal_graph_generator=traversal_graph_generator)
+                _, _, invalid_request_id = validity_results
+                if invalid_request_id is not None:
+                    invalid_request_id_index = self.assigned_requests[robot_id].index(invalid_request_id)
+                    requests_to_be_added_back = self.assigned_requests[robot_id][invalid_request_id_index:]
+                    self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:invalid_request_id_index]
+                
+                    for request_id in requests_to_be_added_back:
+                        if state.requests[request_id].request_type in ["blood_pressure", "heart_rate", "respiratory_rate", "temperature", "oxygen_saturation"]:
+                            self._add_request_to_queue(request=state.requests[request_id],
+                                                       task_queue=self.monitoring_requests_queue,
+                                                       motion_planner=motion_planner,
+                                                       traversal_graph_generator=traversal_graph_generator)
+                        else:
+                            self._add_request_to_queue(request=state.requests[request_id],
+                                                       task_queue=self.delivery_requests_queue,
+                                                       motion_planner=motion_planner,
+                                                       traversal_graph_generator=traversal_graph_generator)
+                
+    
     def _calculate_pickup_deadline(self, 
                                    request: TaskRequest,
                                    motion_planner: MotionPlanner,
@@ -107,7 +180,7 @@ class SequentialGreedy:
                 total_trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
                 start_node = goal_node
             time_to_complete_request = current_time + total_trip_time
-            if time_to_complete_request > current_request.time_for_service:
+            if time_to_complete_request > current_request.time_for_service - sum(current_request.wait_times_at_goals_seconds):
                 return float('inf'), float('inf')
             total_unmodified_cost += (time_to_complete_request - current_request.scheduled_time)
             total_cost += max(time_to_complete_request - current_request.scheduled_time, 0.0)
@@ -290,24 +363,61 @@ class SequentialGreedy:
 
         return final_path, planned_goal_indices, planned_time_to_reach_last_goal
     
-    def _determine_path_for_robot(self, 
-                                  initial_request_id: Optional[str],
-                                  current_request_id: str, 
-                                  robot_id: int, 
-                                  state: PlanningState,
-                                  motion_planner: MotionPlanner,
-                                  traversal_graph_generator: TraversalGraphGenerator) \
-                                    -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
-        # TODO: Implement this method
-        
-        pass
+    def _generate_robot_priorities(self,
+                                   state: PlanningState,
+                                   motion_planner: MotionPlanner,
+                                   traversal_graph_generator: TraversalGraphGenerator) -> list[int]:
+        robot_priorities = []
+        for robot_id in self.assigned_requests.keys():
+            if not self.assigned_requests[robot_id]:
+                robot_priorities.append((robot_id, state.simulator_config.horizon))
+                continue
+            first_request_id = self.assigned_requests[robot_id][0]
+            pickup_deadline = self._calculate_pickup_deadline(request=state.requests[first_request_id],
+                                                              motion_planner=motion_planner,
+                                                              traversal_graph_generator=traversal_graph_generator)
+            
+            robot_priorities.append((robot_id, pickup_deadline))
+        robot_priorities.sort(key=lambda x: x[1])
+        sorted_robot_ids = [robot_priority[0] for robot_priority in robot_priorities]
+        return sorted_robot_ids
     
     def _update_state_with_assigned_requests_and_generate_plans(self, 
+                                                                sorted_robot_ids: list[int],
                                                                 state: PlanningState,
                                                                 motion_planner: MotionPlanner,
                                                                 traversal_graph_generator: TraversalGraphGenerator):
-        # TODO: Implement this method
-        pass
+        for robot_id in sorted_robot_ids:
+            if not self.assigned_requests[robot_id]:
+                continue
+            first_request_id = self.assigned_requests[robot_id][0]
+            first_request = state.requests[first_request_id]
+            first_task_started = state.requests[first_request_id].is_started()
+            if first_task_started:
+                if first_request.planned_time > state.simulator_time + 60.0:
+                    continue
+                else:
+                    start_node = self._determine_robot_locations(robot_id=robot_id, 
+                                                                state=state)
+                    current_time = state.robots_current_time[robot_id]
+                    remaining_goal_nodes = first_request.goal_nodes[first_request.completed_goals:]
+                    remaining_wait_times = first_request.wait_times_at_goals_seconds[first_request.completed_goals:]
+                    path_results = self._find_path_for_goal_nodes(robot_id=robot_id,
+                                                                 start_node=start_node,
+                                                                 start_time=current_time,
+                                                                 goal_nodes=remaining_goal_nodes,
+                                                                 wait_times_at_goals_seconds=remaining_wait_times,
+                                                                 initial_planned_goal_indices=None,
+                                                                 state=state,
+                                                                 motion_planner=motion_planner,
+                                                                 traversal_graph_generator=traversal_graph_generator)
+                    planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+
+            else:
+                start_node = self._determine_robot_locations(robot_id=robot_id, 
+                                                             state=state)
+                current_time = state.robots_current_time[robot_id]
+
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
@@ -317,6 +427,11 @@ class SequentialGreedy:
                                   debug: bool):
         # Extract assigned requests from state
         self._extract_assigned_requests_from_state(state=state)
+
+        # Check if assigned requests can be reached
+        self._check_assigned_requests_validity(state=state,
+                                              motion_planner=motion_planner,
+                                              traversal_graph_generator=traversal_graph_generator)
 
         # Add new requests to the appropriate queues
         self._add_all_requests_to_queues(requests_lists=requests_lists,
@@ -335,7 +450,13 @@ class SequentialGreedy:
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  debug=debug)
         
+        # Determine robot priorities based on earliest deadlines
+        sorted_robot_ids = self._generate_robot_priorities(state=state,
+                                                           motion_planner=motion_planner,
+                                                           traversal_graph_generator=traversal_graph_generator)
+        
         # Update the state with the new assignments and generate motion plans
-        self._update_state_with_assigned_requests_and_generate_plans(state=state,
+        self._update_state_with_assigned_requests_and_generate_plans(sorted_robot_ids=sorted_robot_ids,
+                                                                    state=state,
                                                                     motion_planner=motion_planner,
                                                                     traversal_graph_generator=traversal_graph_generator)
