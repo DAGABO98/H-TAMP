@@ -261,6 +261,9 @@ class TokenPassingWithDeadlines:
                                                                   traversal_graph_generator=traversal_graph_generator)
                 
                 closest_path, closest_planned_goal_indices, shortest_time = planning_results
+                if not closest_path:
+                    print(f"No feasible path found for robot {robot_id} to request {closest_request_id}")
+                    continue
                 self._assign_request_to_robot(state=state,
                                               request_id=closest_request_id,
                                               robot_id=robot_id,
