@@ -70,68 +70,6 @@ class SequentialGreedy:
             robot_location =  state.robots_next_nodes[robot_id]
         return robot_location
     
-    def _determine_path_for_robot(self, 
-                                  request_id: str, 
-                                  robot_id: int, 
-                                  end_node: TraversalNode,
-                                  state: PlanningState,
-                                  motion_planner: MotionPlanner,
-                                  traversal_graph_generator: TraversalGraphGenerator) \
-                                    -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
-        # TODO: fix planning to plan for multiple requests in a single path
-        current_request = state.requests[request_id]
-        start_node = self._determine_robot_locations(robot_id, state)
-        sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
-        planned_goal_indices: list[int] = []
-        planned_time_to_service_request: float = float('inf')
-        for j, goal_node_label in enumerate(current_request.goal_nodes):
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            current_time = state.robots_current_time[robot_id] if not sub_paths else sub_paths[-1][-1][1].end
-            sub_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
-                                                    goal_traversal_node=goal_node,
-                                                    robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                    current_time=current_time,
-                                                    wait_time_at_goal=current_request.wait_times_at_goals_seconds[j],
-                                                    horizon=state.simulator_config.horizon)
-            if sub_path is None:
-                sub_paths = []
-                planned_goal_indices = []
-                planned_time_to_service_request = float('inf')
-                break
-            sub_paths.append(sub_path)
-            if planned_goal_indices:
-                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
-            else:
-                planned_goal_indices.append(len(sub_path) - 1)
-            start_node = goal_node
-        
-        if sub_paths:
-            return_path = motion_planner.obtain_path_for_agent(start_traversal_node=sub_paths[-1][-1][0],
-                                                       goal_traversal_node=end_node,
-                                                       robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                       current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=120.0,
-                                                       horizon=state.simulator_config.horizon)
-            if return_path is not None:
-                sub_paths.append(return_path)
-                planned_time_to_service_request = sub_paths[-2][-1][1].end
-                if planned_time_to_service_request > current_request.time_for_service:
-                    final_path = []
-                    planned_goal_indices = []
-                    planned_time_to_service_request = float('inf')
-                else:
-                    final_path = motion_planner.combine_paths(sub_paths)
-
-            else:
-                final_path = []
-                planned_goal_indices = []
-                planned_time_to_service_request = float('inf')
-        else:
-            final_path = []
-            planned_goal_indices = []
-            planned_time_to_service_request = float('inf')
-        return final_path, planned_goal_indices, planned_time_to_service_request
-    
     def _calculate_costs_of_request_order(self, 
                                           request_order: list[str], 
                                           robot_id: int, 
@@ -201,7 +139,99 @@ class SequentialGreedy:
                                  state: PlanningState, 
                                  motion_planner: MotionPlanner, 
                                  traversal_graph_generator: TraversalGraphGenerator):
-        # TODO: find lowest cost insertion point based on heuristic costs for requests already in the system
+        best_robot_id: Optional[int] = None
+        best_request_order: list[str] = []
+        lowest_total_cost: float = float('inf')
+        lowest_unmodified_cost: float = float('inf')
+        for robot_id in robots_list:
+            insertion_results = self._determine_lowest_cost_insertion_for_robot(request_id=request_id,
+                                                                                robot_id=robot_id,
+                                                                                state=state,
+                                                                                motion_planner=motion_planner,
+                                                                                traversal_graph_generator=traversal_graph_generator)
+            trial_request_order, trial_unmodified_cost, trial_total_cost = insertion_results
+            if trial_total_cost < lowest_total_cost:
+                lowest_total_cost = trial_total_cost
+                lowest_unmodified_cost = trial_unmodified_cost
+                best_request_order = trial_request_order
+                best_robot_id = robot_id
+            elif trial_total_cost == lowest_total_cost:
+                if trial_unmodified_cost < lowest_unmodified_cost:
+                    lowest_unmodified_cost = trial_unmodified_cost
+                    best_request_order = trial_request_order
+                    best_robot_id = robot_id
+        return best_robot_id, best_request_order
+    
+    def _determine_path_for_robot(self, 
+                                  request_id: str, 
+                                  robot_id: int, 
+                                  end_node: TraversalNode,
+                                  state: PlanningState,
+                                  motion_planner: MotionPlanner,
+                                  traversal_graph_generator: TraversalGraphGenerator) \
+                                    -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
+        # TODO: fix planning to plan for multiple requests in a single path
+        current_request = state.requests[request_id]
+        start_node = self._determine_robot_locations(robot_id, state)
+        sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
+        planned_goal_indices: list[int] = []
+        planned_time_to_service_request: float = float('inf')
+        for j, goal_node_label in enumerate(current_request.goal_nodes):
+            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
+            current_time = state.robots_current_time[robot_id] if not sub_paths else sub_paths[-1][-1][1].end
+            sub_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
+                                                    goal_traversal_node=goal_node,
+                                                    robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                    current_time=current_time,
+                                                    wait_time_at_goal=current_request.wait_times_at_goals_seconds[j],
+                                                    horizon=state.simulator_config.horizon)
+            if sub_path is None:
+                sub_paths = []
+                planned_goal_indices = []
+                planned_time_to_service_request = float('inf')
+                break
+            sub_paths.append(sub_path)
+            if planned_goal_indices:
+                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
+            else:
+                planned_goal_indices.append(len(sub_path) - 1)
+            start_node = goal_node
+        
+        if sub_paths:
+            return_path = motion_planner.obtain_path_for_agent(start_traversal_node=sub_paths[-1][-1][0],
+                                                       goal_traversal_node=end_node,
+                                                       robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                       current_time=sub_paths[-1][-1][1].end,
+                                                       wait_time_at_goal=120.0,
+                                                       horizon=state.simulator_config.horizon)
+            if return_path is not None:
+                sub_paths.append(return_path)
+                planned_time_to_service_request = sub_paths[-2][-1][1].end
+                if planned_time_to_service_request > current_request.time_for_service:
+                    final_path = []
+                    planned_goal_indices = []
+                    planned_time_to_service_request = float('inf')
+                else:
+                    final_path = motion_planner.combine_paths(sub_paths)
+
+            else:
+                final_path = []
+                planned_goal_indices = []
+                planned_time_to_service_request = float('inf')
+        else:
+            final_path = []
+            planned_goal_indices = []
+            planned_time_to_service_request = float('inf')
+        return final_path, planned_goal_indices, planned_time_to_service_request
+    
+    def _create_assignment_plan_for_request_sequence(self,
+                                          robot_id: int,
+                                          request_order: list[str],
+                                          state: PlanningState,
+                                          motion_planner: MotionPlanner,
+                                          traversal_graph_generator: TraversalGraphGenerator):
+        # TODO assign requests to robot in the state and inside the reuqests
+        # Only create a motion plan if first request is different than current assigned request
         pass
     
     def _assign_requests_to_robots(self,
@@ -211,12 +241,25 @@ class SequentialGreedy:
                                    robot_type: str,
                                    requests_queue: TaskQueue,
                                    debug: bool):
-        # TODO: implement assignment logic
         robots_list = state.get_robots_of_type(robot_type=robot_type)
 
         while requests_queue.heap:
             next_request_id = requests_queue.pop_task()
-    
+            fleet_insertion_results = self._determine_lowest_cost_insertion_in_fleet(request_id=next_request_id,
+                                                                                     robots_list=robots_list,
+                                                                                     state=state,
+                                                                                     motion_planner=motion_planner,
+                                                                                     traversal_graph_generator=traversal_graph_generator)
+            best_robot_id, best_request_order = fleet_insertion_results
+            if best_robot_id is not None:
+                self._create_assignment_plan_for_request_sequence(robot_id=best_robot_id,
+                                                                  request_order=best_request_order,
+                                                                  state=state,
+                                                                  motion_planner=motion_planner,
+                                                                  traversal_graph_generator=traversal_graph_generator)
+            else:
+                request_struct = state.requests[next_request_id]
+                request_struct.mark_rejected()
 
     def _assign_requests_for_monitoring_robots(self, 
                                                state: PlanningState, 
