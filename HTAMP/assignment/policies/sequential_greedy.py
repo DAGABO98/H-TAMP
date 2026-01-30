@@ -118,7 +118,7 @@ class SequentialGreedy:
                                                    robot_id: int, 
                                                    state: PlanningState, 
                                                    motion_planner: MotionPlanner, 
-                                                   traversal_graph_generator: TraversalGraphGenerator):
+                                                   traversal_graph_generator: TraversalGraphGenerator) -> tuple[list[str], float, float]:
         new_request_order = []
         total_cost = float('inf')
         total_unmodified_cost = float('inf')
@@ -196,6 +196,53 @@ class SequentialGreedy:
                     best_robot_id = robot_id
         return best_robot_id, best_request_order
     
+    def _assign_requests_to_robots(self,
+                                   state: PlanningState,
+                                   motion_planner: MotionPlanner,
+                                   traversal_graph_generator: TraversalGraphGenerator,
+                                   robot_type: str,
+                                   requests_queue: TaskQueue,
+                                   debug: bool):
+        robots_list = state.get_robots_of_type(robot_type=robot_type)
+
+        while requests_queue.heap:
+            next_request_id = requests_queue.pop_task()
+            fleet_insertion_results = self._determine_lowest_cost_insertion_in_fleet(request_id=next_request_id,
+                                                                                     robots_list=robots_list,
+                                                                                     state=state,
+                                                                                     motion_planner=motion_planner,
+                                                                                     traversal_graph_generator=traversal_graph_generator)
+            best_robot_id, best_request_order = fleet_insertion_results
+            if best_robot_id is not None:
+                self.assigned_requests[best_robot_id] = best_request_order
+            else:
+                request_struct = state.requests[next_request_id]
+                request_struct.mark_rejected()
+
+    def _assign_requests_for_monitoring_robots(self, 
+                                               state: PlanningState, 
+                                               motion_planner: MotionPlanner, 
+                                               traversal_graph_generator: TraversalGraphGenerator,
+                                               debug: bool):
+        self._assign_requests_to_robots(state=state,
+                                        motion_planner=motion_planner,
+                                        traversal_graph_generator=traversal_graph_generator,
+                                        robot_type="monitoring",
+                                        requests_queue=self.monitoring_requests_queue,         
+                                        debug=debug)
+    
+    def _assign_requests_for_delivery_robots(self, 
+                                             state: PlanningState, 
+                                             motion_planner: MotionPlanner, 
+                                             traversal_graph_generator: TraversalGraphGenerator,
+                                             debug: bool):
+        self._assign_requests_to_robots(state=state,
+                                        motion_planner=motion_planner,
+                                        traversal_graph_generator=traversal_graph_generator,
+                                        robot_type="delivery",
+                                        requests_queue=self.delivery_requests_queue,         
+                                        debug=debug)
+    
     def _find_path_for_goal_nodes(self,
                                  robot_id: int,
                                  start_node: TraversalNode,
@@ -251,71 +298,15 @@ class SequentialGreedy:
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator) \
                                     -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
+        # TODO: Implement this method
         
         pass
     
-    def _create_assignment_plan_for_request_sequence(self,
-                                          robot_id: int,
-                                          request_order: list[str],
-                                          state: PlanningState,
-                                          motion_planner: MotionPlanner,
-                                          traversal_graph_generator: TraversalGraphGenerator):
-        # TODO assign requests to robot in the state and inside the requests
-        # Only create a motion plan if first request is different than current assigned request
-        pass
-    
-    def _assign_requests_to_robots(self,
-                                   state: PlanningState,
-                                   motion_planner: MotionPlanner,
-                                   traversal_graph_generator: TraversalGraphGenerator,
-                                   robot_type: str,
-                                   requests_queue: TaskQueue,
-                                   debug: bool):
-        robots_list = state.get_robots_of_type(robot_type=robot_type)
-
-        while requests_queue.heap:
-            next_request_id = requests_queue.pop_task()
-            fleet_insertion_results = self._determine_lowest_cost_insertion_in_fleet(request_id=next_request_id,
-                                                                                     robots_list=robots_list,
-                                                                                     state=state,
-                                                                                     motion_planner=motion_planner,
-                                                                                     traversal_graph_generator=traversal_graph_generator)
-            best_robot_id, best_request_order = fleet_insertion_results
-            if best_robot_id is not None:
-                self._create_assignment_plan_for_request_sequence(robot_id=best_robot_id,
-                                                                  request_order=best_request_order,
-                                                                  state=state,
-                                                                  motion_planner=motion_planner,
-                                                                  traversal_graph_generator=traversal_graph_generator)
-            else:
-                request_struct = state.requests[next_request_id]
-                request_struct.mark_rejected()
-
-    def _assign_requests_for_monitoring_robots(self, 
-                                               state: PlanningState, 
-                                               motion_planner: MotionPlanner, 
-                                               traversal_graph_generator: TraversalGraphGenerator,
-                                               debug: bool):
-        self._assign_requests_to_robots(state=state,
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator,
-                                        robot_type="monitoring",
-                                        requests_queue=self.monitoring_requests_queue,         
-                                        debug=debug)
-    
-    def _assign_requests_for_delivery_robots(self, 
-                                             state: PlanningState, 
-                                             motion_planner: MotionPlanner, 
-                                             traversal_graph_generator: TraversalGraphGenerator,
-                                             debug: bool):
-        self._assign_requests_to_robots(state=state,
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator,
-                                        robot_type="delivery",
-                                        requests_queue=self.delivery_requests_queue,         
-                                        debug=debug)
-    
-    def _update_state_with_assigned_requests(self, state: PlanningState):
+    def _update_state_with_assigned_requests_and_generate_plans(self, 
+                                                                state: PlanningState,
+                                                                motion_planner: MotionPlanner,
+                                                                traversal_graph_generator: TraversalGraphGenerator):
+        # TODO: Implement this method
         pass
 
     def assign_requests_to_robots(self, 
@@ -344,4 +335,7 @@ class SequentialGreedy:
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  debug=debug)
         
-        self._update_state_with_assigned_requests(state=state)
+        # Update the state with the new assignments and generate motion plans
+        self._update_state_with_assigned_requests_and_generate_plans(state=state,
+                                                                    motion_planner=motion_planner,
+                                                                    traversal_graph_generator=traversal_graph_generator)
