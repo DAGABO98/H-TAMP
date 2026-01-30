@@ -264,6 +264,14 @@ class PlanningState:
                 if profile.robot_type == robot_type:
                     available_robots.append(robot_id)
         return available_robots
+    
+    def get_robots_of_type(self, robot_type: str) -> list[int]:
+        robots_of_type = []
+        for robot_id in self.robots_positions:
+            profile = self.simulator_config.robot_profiles[robot_id]
+            if profile.robot_type == robot_type:
+                robots_of_type.append(robot_id)
+        return robots_of_type
 
     def step(self, traversal_graph: TraversalGraph) -> None:
         for robot_id in self.robots_positions:
