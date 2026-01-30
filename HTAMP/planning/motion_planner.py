@@ -414,10 +414,15 @@ class MotionPlanner:
     def _reserve_path(self,
                       path: List[Tuple[TraversalNode, TimeInterval]],
                       robot_profile: RobotProfile,
+                      reserve_last_position: bool = True,
                       wait_time_at_goal: float = 0.0) -> None:
 
         # Add reservations to the reservation table
-        for i in range(len(path) - 1):
+        if reserve_last_position:
+            range_limit = len(path) - 1
+        else:
+            range_limit = len(path)
+        for i in range(range_limit):
             start_node, start_time_interval = path[i]
             end_node, end_time_interval = path[i + 1]
             if start_time_interval.end > start_time_interval.start:
@@ -432,21 +437,24 @@ class MotionPlanner:
                                                   time_interval=TimeInterval(start=start_time_interval.end,
                                                                               end=end_time_interval.start),
                                                   robot_profile=robot_profile)
-        # Reserve the last position indefinitely
-        last_node, last_time_interval = path[-1]
-        self._reserve_cells_for_time_interval(from_node=last_node,
-                                              to_node=last_node,
-                                              time_interval=TimeInterval(start=last_time_interval.start,
-                                                                          end=last_time_interval.start + wait_time_at_goal),
-                                              robot_profile=robot_profile)
+        if reserve_last_position:
+            # Reserve the last position indefinitely
+            last_node, last_time_interval = path[-1]
+            self._reserve_cells_for_time_interval(from_node=last_node,
+                                                to_node=last_node,
+                                                time_interval=TimeInterval(start=last_time_interval.start,
+                                                                            end=last_time_interval.start + wait_time_at_goal),
+                                                robot_profile=robot_profile)
 
     def reserve_path_for_agent(self,
                                path: List[Tuple[TraversalNode, TimeInterval]],
                                robot_profile: RobotProfile,
-                               wait_time_at_goal: float = 0.0) -> None:
+                               wait_time_at_goal: float = 0.0,
+                               reserve_last_position: bool = True) -> None:
         self._reserve_path(path=path,
                            robot_profile=robot_profile,
-                           wait_time_at_goal=wait_time_at_goal)
+                           wait_time_at_goal=wait_time_at_goal,
+                           reserve_last_position=reserve_last_position)
         
     def clear_reservations_for_agent(self,
                                    robot_profile: RobotProfile) -> None:
