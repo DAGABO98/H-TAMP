@@ -213,10 +213,10 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
 
         for j, goal_node_label in enumerate(current_request.goal_nodes):
             goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            subpath_length = motion_planner.planner.heuristic(start_traversal_node=start_node,
+            subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
                                                               goal_traversal_node=goal_node,
                                                               robot_profile=state.simulator_config.robot_profiles[robot_id])
-            trip_time += subpath_length + current_request.wait_times_at_goals_seconds[j]
+            trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
             start_node = goal_node
 
         return trip_time
