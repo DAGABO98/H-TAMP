@@ -194,6 +194,7 @@ class TaskRequest:
                  completed_goals: int = 0,
                  completed: bool = False,
                  rejected: bool = False,
+                 scheduled: bool = False,
                  planned_time: Optional[float] = None,
                  planned_goal_indices: Optional[list[int]] = None):
         self.request_id = request_id
@@ -207,6 +208,7 @@ class TaskRequest:
         self.completed_goals = completed_goals
         self.completed = completed
         self.rejected = rejected
+        self.scheduled = scheduled
         self.total_cost = 0.0
         self.planned_goal_indices = planned_goal_indices if planned_goal_indices is not None else []
         self.planned_time = planned_time if planned_time is not None else -1.0
