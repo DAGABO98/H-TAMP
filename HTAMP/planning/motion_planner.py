@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple, Dict
 
 from HTAMP.environment.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
-from HTAMP.planning.planning_dataclasses import ReservationTable, TimeReservation
+from HTAMP.planning.planning_dataclasses import CellReservationTable, TimeReservation
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
@@ -28,7 +28,7 @@ class SIPPNode:
 class SIPPwRT:
     def __init__(self, 
                  grid: GridWorld, 
-                 reservation_table: Optional[ReservationTable],
+                 reservation_table: Optional[CellReservationTable],
                  weight_factor: float = 1.0):
         self.grid = grid
         self.reservation_table = reservation_table
@@ -338,7 +338,7 @@ class SIPPwRT:
 class MotionPlanner:
     def __init__(self, grid: GridWorld, weight_factor: float = 1.0):
         self.grid = grid
-        self.reservation_table = ReservationTable(reservations={}, robot_cell_dict={})
+        self.reservation_table = CellReservationTable(reservations={}, robot_cell_dict={})
         self.planner = SIPPwRT(grid=grid, 
                                reservation_table=self.reservation_table,
                                weight_factor=weight_factor)

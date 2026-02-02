@@ -11,7 +11,7 @@ from matplotlib.patches import Circle
 from HTAMP.environment.loc_dataclasses import Coordinate, MotionReservation, TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
-from HTAMP.planning.planning_dataclasses import ReservationTable
+from HTAMP.planning.planning_dataclasses import CellReservationTable
 
 class MotionPlanningPlotter:
 
@@ -139,7 +139,7 @@ class MotionPlanningPlotter:
                                                 origin_x: float,
                                                 origin_y: float,
                                                 resolution: float,
-                                                reservation_table: ReservationTable):
+                                                reservation_table: CellReservationTable):
         rows, cols = occupancy_map.shape
         xmin, xmax = origin_x, origin_x + cols * resolution
         ymin, ymax = origin_y, origin_y + rows * resolution

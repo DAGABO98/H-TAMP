@@ -45,7 +45,7 @@ class TimeReservation:
         return f"TimeReservation(start={self.interval.start}, end={self.interval.end}, robot_id={self.robot_id})"
 
 @dataclass
-class ReservationTable:
+class CellReservationTable:
     reservations: dict[GridIndex, list[TimeReservation]]
     robot_cell_dict: dict[int, list[GridIndex]] = field(default_factory=dict)
 
@@ -92,6 +92,69 @@ class ReservationTable:
                            horizon: float = float('inf'), 
                            robot_id: int = 1) -> list[TimeReservation]:
         blocked = sorted([r for r in self.get_reservations(cell) if r.robot_id != robot_id], 
+                         key=lambda r: r.interval.start)
+        safe_intervals: list[TimeReservation] = []
+        current_time = 0.0
+        for reservation in blocked:
+            if reservation.interval.start > current_time:
+                safe_intervals.append(TimeReservation(TimeInterval(current_time, reservation.interval.start), robot_id=robot_id))
+            current_time = max(current_time, reservation.interval.end)
+        if current_time < horizon:
+            safe_intervals.append(TimeReservation(TimeInterval(current_time, horizon), robot_id=robot_id))
+        return safe_intervals
+
+@dataclass
+class NodeReservationTable:
+    reservations: dict[str, list[TimeReservation]]
+    robot_node_dict: dict[int, list[str]] = field(default_factory=dict)
+
+    def reset(self) -> None:
+        self.reservations.clear()
+        self.robot_node_dict.clear()
+
+    def get_reservations(self, node: str) -> list[TimeReservation]:
+        return self.reservations.get(node, [])
+
+    def add_reservation(self, node: str, reservation: TimeReservation) -> TimeReservation:
+        if node in self.reservations:
+            for i, existing in enumerate(self.reservations[node]):
+                if existing.overlaps(reservation):
+                    if existing.robot_id == reservation.robot_id:
+                        merged = existing.merge(reservation)
+                        self.reservations[node][i] = merged
+                        return merged
+                    else:
+                        raise ValueError(f"Conflict detected for node {node} between robot {existing.robot_id} and robot {reservation.robot_id}.")
+            self.reservations[node].append(reservation)
+            self.robot_node_dict.setdefault(reservation.robot_id, []).append(node)
+        else:
+            self.reservations[node] = [reservation]
+            self.robot_node_dict.setdefault(reservation.robot_id, []).append(node)
+        return reservation
+
+    def _remove_node_reservation_for_robot(self, node: str, robot_id: int) -> None:
+        if node in self.reservations:
+            self.reservations[node] = [r for r in self.reservations[node] if r.robot_id != robot_id]
+            if not self.reservations[node]:
+                del self.reservations[node]
+    
+    def remove_reservations_for_robot(self, robot_id: int) -> None:
+        if robot_id in self.robot_node_dict:
+            for node in self.robot_node_dict[robot_id]:
+                self._remove_node_reservation_for_robot(node, robot_id)
+            del self.robot_node_dict[robot_id]
+
+    def check_conflict(self, node: str, reservation: TimeReservation) -> bool:
+        for existing in self.get_reservations(node):
+            if existing.overlaps(reservation) and existing.robot_id != reservation.robot_id:
+                return True
+        return False
+
+    def get_safe_intervals(self, 
+                           node: str,
+                           horizon: float = float('inf'), 
+                           robot_id: int = 1) -> list[TimeReservation]:
+        blocked = sorted([r for r in self.get_reservations(node) if r.robot_id != robot_id], 
                          key=lambda r: r.interval.start)
         safe_intervals: list[TimeReservation] = []
         current_time = 0.0
