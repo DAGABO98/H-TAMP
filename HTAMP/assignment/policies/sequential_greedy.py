@@ -1,4 +1,5 @@
 import copy
+import math
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import TaskQueue
 from HTAMP.environment.loc_dataclasses import TimeInterval
@@ -6,7 +7,7 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest
+from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest, NodeReservationTable, TimeReservation
 from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
@@ -16,9 +17,18 @@ class SequentialGreedy:
         self.delivery_requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
+        self.node_reservation_table = NodeReservationTable()
     
     def _extract_assigned_requests_from_state(self, state: PlanningState):
+        self.node_reservation_table.reset()
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
+    
+    def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
+        if state.robots_next_nodes[robot_id] is None:
+            robot_location = state.robots_current_nodes[robot_id]
+        else:
+            robot_location =  state.robots_next_nodes[robot_id]
+        return robot_location
     
     def _check_validity_of_request_order(self, 
                                          first_task_started: bool,
@@ -91,6 +101,36 @@ class SequentialGreedy:
                                                        task_queue=self.delivery_requests_queue,
                                                        motion_planner=motion_planner,
                                                        traversal_graph_generator=traversal_graph_generator)
+    
+    def _populate_node_reservation_table(self,
+                                         state: PlanningState,
+                                         motion_planner: MotionPlanner,
+                                         traversal_graph_generator: TraversalGraphGenerator):
+        for robot_id in self.assigned_requests.keys():
+            if not self.assigned_requests[robot_id]:
+                continue
+            start_node = self._determine_robot_locations(robot_id, state)
+            current_time: float = state.robots_current_time[robot_id]
+            total_trip_time = 0.0
+            for request_id in self.assigned_requests[robot_id]:
+                current_request = state.requests[request_id]
+                for j in range(current_request.completed_goals, len(current_request.goal_nodes)):
+                    goal_node = traversal_graph_generator.traversal_graph.nodes_dict[current_request.goal_nodes[j]]
+                    subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
+                                                                  goal_traversal_node=goal_node,
+                                                                  robot_profile=state.simulator_config.robot_profiles[robot_id])
+
+                    total_trip_time += subpath_time
+                    arrival_time = current_time + total_trip_time
+                    wait_time = current_request.wait_times_at_goals_seconds[j]
+                    reservation = TimeReservation(robot_id=robot_id,
+                                                    interval=TimeInterval(start=arrival_time,
+                                                                        end=arrival_time + wait_time))
+                    self.node_reservation_table.add_reservation(node=goal_node.label,
+                                                                reservation=reservation)
+                    total_trip_time += wait_time
+                    start_node = goal_node
+
                 
     
     def _calculate_pickup_deadline(self, 
@@ -139,13 +179,6 @@ class SequentialGreedy:
                                        task_queue=self.delivery_requests_queue,
                                        motion_planner=motion_planner,
                                        traversal_graph_generator=traversal_graph_generator)
-    
-    def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
-        if state.robots_next_nodes[robot_id] is None:
-            robot_location = state.robots_current_nodes[robot_id]
-        else:
-            robot_location =  state.robots_next_nodes[robot_id]
-        return robot_location
     
     def _calculate_costs_of_request_order(self, 
                                           request_order: list[str], 
@@ -430,6 +463,11 @@ class SequentialGreedy:
 
         # Check if assigned requests can be reached
         self._check_assigned_requests_validity(state=state,
+                                              motion_planner=motion_planner,
+                                              traversal_graph_generator=traversal_graph_generator)
+        
+        # Populate node reservation table based on assigned requests
+        self._populate_node_reservation_table(state=state,
                                               motion_planner=motion_planner,
                                               traversal_graph_generator=traversal_graph_generator)
 
