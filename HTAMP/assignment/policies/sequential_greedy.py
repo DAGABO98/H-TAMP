@@ -63,7 +63,7 @@ class SequentialGreedy:
                 total_trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
                 start_node = goal_node
             time_to_complete_request = current_time + total_trip_time
-            if time_to_complete_request > current_request.time_for_service - sum(current_request.wait_times_at_goals_seconds):
+            if time_to_complete_request > current_request.time_for_service:
                 return float('inf'), float('inf'), request_id
             total_unmodified_cost += (time_to_complete_request - current_request.scheduled_time)
             total_cost += max(time_to_complete_request - current_request.scheduled_time, 0.0)
@@ -109,6 +109,17 @@ class SequentialGreedy:
         for robot_id in self.assigned_requests.keys():
             if not self.assigned_requests[robot_id]:
                 continue
+            first_request_id = self.assigned_requests[robot_id][0]
+            first_request = state.requests[first_request_id]
+            first_task_started = first_request.is_started()
+            if first_task_started:
+                for j in range(first_request.completed_goals, len(first_request.goal_nodes)):
+                    # TODO extract reservations from existing plan
+                    pass
+            else:
+                start_node = self._determine_robot_locations(robot_id, state)
+                current_time: float = state.robots_current_time[robot_id]
+
             start_node = self._determine_robot_locations(robot_id, state)
             current_time: float = state.robots_current_time[robot_id]
             total_trip_time = 0.0
@@ -213,7 +224,7 @@ class SequentialGreedy:
                 total_trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
                 start_node = goal_node
             time_to_complete_request = current_time + total_trip_time
-            if time_to_complete_request > current_request.time_for_service - sum(current_request.wait_times_at_goals_seconds):
+            if time_to_complete_request > current_request.time_for_service:
                 return float('inf'), float('inf')
             total_unmodified_cost += (time_to_complete_request - current_request.scheduled_time)
             total_cost += max(time_to_complete_request - current_request.scheduled_time, 0.0)
@@ -302,6 +313,16 @@ class SequentialGreedy:
                     best_robot_id = robot_id
         return best_robot_id, best_request_order
     
+    def _reserve_request_order_for_robot(self,
+                                        robot_id: int,
+                                        request_order: list[str],
+                                        state: PlanningState,
+                                        motion_planner: MotionPlanner,
+                                        traversal_graph_generator: TraversalGraphGenerator):
+        # TODO : implement reservation logic
+        self.node_reservation_table.remove_reservations_for_robot(robot_id=robot_id)
+
+    
     def _assign_requests_to_robots(self,
                                    state: PlanningState,
                                    motion_planner: MotionPlanner,
@@ -320,6 +341,12 @@ class SequentialGreedy:
                                                                                      traversal_graph_generator=traversal_graph_generator)
             best_robot_id, best_request_order = fleet_insertion_results
             if best_robot_id is not None:
+                # add request to reservation table
+                self._reserve_request_order_for_robot(robot_id=best_robot_id,
+                                                     request_order=best_request_order,
+                                                     state=state,
+                                                     motion_planner=motion_planner,
+                                                     traversal_graph_generator=traversal_graph_generator)
                 self.assigned_requests[best_robot_id] = best_request_order
             else:
                 request_struct = state.requests[next_request_id]
