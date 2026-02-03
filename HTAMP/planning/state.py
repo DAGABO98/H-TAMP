@@ -220,7 +220,6 @@ class PlanningState:
                             completed_request_id = self.assigned_requests[robot_id].pop(0)
                             completed_request = self.requests[completed_request_id]
                             completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id])
-                            print(f"Request {completed_request_id} completed at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
 
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
         if self.robots_next_nodes[robot_id] is None:
