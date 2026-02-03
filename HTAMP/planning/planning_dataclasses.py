@@ -130,6 +130,7 @@ class NodeReservationTable:
         else:
             self.reservations[node] = [reservation]
             self.robot_node_dict.setdefault(reservation.robot_id, []).append(node)
+        self.reservations[node].sort(key=lambda r: r.interval.start)
         return reservation
 
     def _remove_node_reservation_for_robot(self, node: str, robot_id: int) -> None:
