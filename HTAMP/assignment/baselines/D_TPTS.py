@@ -1,4 +1,5 @@
 from typing import Optional
+from HTAMP.assignment.assignment_helpers import AssignmentHelpers
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
@@ -141,13 +142,15 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         for assigned_request_id, (assigned_robot_id, assigned_deadline) in assigned_requests_dict.items():
             if request_pickup_deadline < assigned_deadline:
                 # Check if the newly arrived request can be assigned to the robot
-                new_trip_time = self._heuristic_cost_for_robot(request_id=request.request_id,
+                new_request = state.requests[request.request_id]
+                new_trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=new_request,
                                                                 robot_id=assigned_robot_id,
                                                                 state=state,
                                                                 motion_planner=motion_planner,
                                                                 traversal_graph_generator=traversal_graph_generator)
                 
-                prev_trip_time = self._heuristic_cost_for_robot(request_id=assigned_request_id,
+                prev_request = state.requests[assigned_request_id]
+                prev_trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=prev_request,
                                                                  robot_id=assigned_robot_id,
                                                                  state=state,
                                                                  motion_planner=motion_planner,
@@ -193,94 +196,6 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                              motion_planner=motion_planner,
                                                              traversal_graph_generator=traversal_graph_generator)
     
-    def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
-        if state.robots_next_nodes[robot_id] is None:
-            robot_location = state.robots_current_nodes[robot_id]
-        else:
-            robot_location =  state.robots_next_nodes[robot_id]
-        return robot_location
-    
-    def _heuristic_cost_for_robot(self, 
-                                  request_id: str, 
-                                  robot_id: int, 
-                                  state: PlanningState,
-                                  motion_planner: MotionPlanner,
-                                  traversal_graph_generator: TraversalGraphGenerator) \
-                                    -> float:
-        current_request = state.requests[request_id]
-        start_node = self._determine_robot_locations(robot_id, state)
-        trip_time: float = 0.0
-
-        for j, goal_node_label in enumerate(current_request.goal_nodes):
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                              goal_traversal_node=goal_node,
-                                                              robot_profile=state.simulator_config.robot_profiles[robot_id])
-            trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
-            start_node = goal_node
-
-        return trip_time
-    
-    def _determine_path_for_robot(self, 
-                                  request_id: str, 
-                                  robot_id: int, 
-                                  state: PlanningState,
-                                  motion_planner: MotionPlanner,
-                                  traversal_graph_generator: TraversalGraphGenerator) \
-                                    -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
-        current_request = state.requests[request_id]
-        start_node = self._determine_robot_locations(robot_id, state)
-        sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
-        planned_goal_indices: list[int] = []
-        planned_time_to_service_request: float = float('inf')
-        for j, goal_node_label in enumerate(current_request.goal_nodes):
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            current_time = state.robots_current_time[robot_id] if not sub_paths else sub_paths[-1][-1][1].end
-            sub_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
-                                                    goal_traversal_node=goal_node,
-                                                    robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                    current_time=current_time,
-                                                    wait_time_at_goal=current_request.wait_times_at_goals_seconds[j],
-                                                    horizon=state.simulator_config.horizon)
-            if sub_path is None:
-                sub_paths = []
-                planned_goal_indices = []
-                planned_time_to_service_request = float('inf')
-                break
-            sub_paths.append(sub_path)
-            if planned_goal_indices:
-                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
-            else:
-                planned_goal_indices.append(len(sub_path) - 1)
-            start_node = goal_node
-        
-        if sub_paths:
-            return_path = motion_planner.obtain_path_for_agent(start_traversal_node=sub_paths[-1][-1][0],
-                                                       goal_traversal_node=state.robot_depots[robot_id],
-                                                       robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                       current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=120.0,
-                                                       horizon=state.simulator_config.horizon)
-            if return_path is not None:
-                sub_paths.append(return_path)
-                planned_time_to_service_request = sub_paths[-2][-1][1].end
-                if planned_time_to_service_request > current_request.time_for_service:
-                    final_path = []
-                    planned_goal_indices = []
-                    planned_time_to_service_request = float('inf')
-                else:
-                    final_path = motion_planner.combine_paths(sub_paths)
-
-            else:
-                final_path = []
-                planned_goal_indices = []
-                planned_time_to_service_request = float('inf')
-        else:
-            final_path = []
-            planned_goal_indices = []
-            planned_time_to_service_request = float('inf')
-        return final_path, planned_goal_indices, planned_time_to_service_request
-    
     def _generate_sorted_allocation_costs_for_requests(self,
                                    robot_id: int,
                                    unassigned_requests_dict: dict[str, float],
@@ -294,7 +209,8 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                 request_pickup_deadline = assigned_requests_dict[request_id][1]
             else:
                 request_pickup_deadline = unassigned_requests_dict[request_id]
-            trip_time = self._heuristic_cost_for_robot(request_id=request_id,
+            current_request = state.requests[request_id]
+            trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=current_request,
                                                        robot_id=robot_id,
                                                        state=state,
                                                        motion_planner=motion_planner,
@@ -306,43 +222,6 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         
         allocations.sort(key=lambda x: x[1])  # Sort by cost
         return allocations
-    
-    def _assign_request_to_robot(self,
-                                 state: PlanningState,
-                                 request_id: str, 
-                                 robot_id: int, 
-                                 planned_path: list[list[tuple[TraversalNode, TimeInterval]]], 
-                                 planned_time: float,
-                                 planned_goal_indices: list[int],
-                                 motion_planner: MotionPlanner,
-                                 traversal_graph_generator: TraversalGraphGenerator,
-                                 debug: bool):
-            state.requests[request_id].schedule_task(planned_time=planned_time,
-                                                    planned_goal_indices=planned_goal_indices,
-                                                    assigned_robot_id=robot_id)
-
-            if debug:
-                MotionPlanningPlotter.plot_assigned_path(
-                    occupancy_map=traversal_graph_generator.occupancy_map,
-                    origin_x=traversal_graph_generator.origin_x,
-                    origin_y=traversal_graph_generator.origin_y,
-                    resolution=traversal_graph_generator.resolution,
-                    request_id=request_id,
-                    results_folder="results/motion_planning/debug",
-                    planned_path=planned_path,
-                    traversal_graph=traversal_graph_generator.traversal_graph,
-                    robot_profile=state.simulator_config.robot_profiles[robot_id]
-                )
-                
-            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-            motion_planner.reserve_path_for_agent(path=planned_path,
-                                                 robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                 wait_time_at_goal=state.simulator_config.horizon)
-            
-            state.assign_request_to_robot(request_id=request_id, 
-                                        robot_id=robot_id, 
-                                        path=planned_path, 
-                                        traversal_graph=traversal_graph_generator.traversal_graph)
     
     def _assign_requests_to_available_robots(self,
                                             state: PlanningState,
@@ -363,7 +242,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                                             motion_planner=motion_planner,
                                                                             traversal_graph_generator=traversal_graph_generator)
             for request_id, _ in allocations:
-                planned_path, planned_goal_indices, planned_time = self._determine_path_for_robot(request_id=request_id,
+                planned_path, planned_goal_indices, planned_time = AssignmentHelpers.determine_path_from_robot_location_to_request(request_id=request_id,
                                                                                                     robot_id=robot_id,
                                                                                                     state=state,
                                                                                                     motion_planner=motion_planner,
@@ -371,7 +250,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                 if planned_path:
                     if request_id in unassigned_requests_dict:
                         unassigned_requests_dict.pop(request_id)
-                        self._assign_request_to_robot(state=state,
+                        AssignmentHelpers.assign_request_to_robot(state=state,
                                                 request_id=request_id,
                                                 robot_id=robot_id,
                                                 planned_path=planned_path,
@@ -400,9 +279,9 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                             state.remove_request_from_robot(robot_id=assigned_robot_id,
                                                             request_id=request_id)
                             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[assigned_robot_id])
-                            self._assign_request_to_robot(state=state,
+                            AssignmentHelpers.assign_request_to_robot(state=state,
                                                     request_id=request_id,
-                                                    robot_id=robot_id,
+                                                    robot_id=robot_id,  
                                                     planned_path=planned_path,
                                                     planned_time=planned_time,
                                                     planned_goal_indices=planned_goal_indices,
