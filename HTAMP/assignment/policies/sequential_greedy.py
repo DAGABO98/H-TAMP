@@ -1,7 +1,7 @@
 import copy
 import math
 from typing import Optional
-from HTAMP.assignment.assignment_helpers import TaskQueue
+from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
@@ -20,15 +20,9 @@ class SequentialGreedy:
         self.node_reservation_table = NodeReservationTable()
         self.start_times: dict[int, float]  = {}
         self.start_nodes: dict[int, TraversalNode]  = {}
-        self.current_trip_times: dict[int, float]  = {}
         self.first_request_started: dict[int, bool]  = {}
-    
-    def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
-        if state.robots_next_nodes[robot_id] is None:
-            robot_location = state.robots_current_nodes[robot_id]
-        else:
-            robot_location =  state.robots_next_nodes[robot_id]
-        return robot_location
+        self.current_trip_times: dict[int, float]  = {}
+        self.requests_costs: dict[str, tuple[float, float]] = {}
     
     def _extract_start_times_and_nodes(self, 
                                        state: PlanningState,
@@ -41,7 +35,7 @@ class SequentialGreedy:
                 start_node = traversal_graph_generator.traversal_graph.nodes_dict[start_node_label]
                 current_time = state.requests[first_request_id].planned_time
             else:
-                start_node = self._determine_robot_locations(robot_id, state)
+                start_node = AssignmentHelpers.determine_robot_locations(robot_id, state)
                 current_time: float = state.robots_current_time[robot_id]
             self.start_times[robot_id] = current_time
             self.start_nodes[robot_id] = start_node
@@ -50,7 +44,7 @@ class SequentialGreedy:
     def _extract_trip_times(self):
         for robot_id in self.assigned_requests.keys():
             self.current_trip_times[robot_id] = 0.0
-    
+
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState, 
                                               traversal_graph_generator: TraversalGraphGenerator):
@@ -109,15 +103,16 @@ class SequentialGreedy:
     
     def _generate_robot_order(self,
                               round_index: int, 
+                              assigned_requests: dict[int, list[str]],
                               state: PlanningState,
                               motion_planner: MotionPlanner,
                               traversal_graph_generator: TraversalGraphGenerator) -> list[int]:
         robot_priorities = []
-        for robot_id in self.assigned_requests.keys():
-            if round_index >= len(self.assigned_requests[robot_id]):
+        for robot_id in assigned_requests.keys():
+            if round_index >= len(assigned_requests[robot_id]):
                 robot_priorities.append((robot_id, state.simulator_config.horizon))
                 continue
-            request_id = self.assigned_requests[robot_id][round_index]
+            request_id = assigned_requests[robot_id][round_index]
             pickup_deadline = self._calculate_pickup_deadline(request=state.requests[request_id],
                                                               motion_planner=motion_planner,
                                                               traversal_graph_generator=traversal_graph_generator)
@@ -128,12 +123,13 @@ class SequentialGreedy:
         return sorted_robot_ids
     
     def _obtain_time_to_service_node(self,
-                                    node_label: str,
-                                    arrival_time: float,
-                                    wait_time: float,
-                                    movement_time: float = 10.0) -> TimeInterval:
+                                     node_reservation_table: NodeReservationTable,
+                                     node_label: str,
+                                     arrival_time: float,
+                                     wait_time: float,
+                                     movement_time: float = 10.0) -> TimeInterval:
         
-        reservations = self.node_reservation_table.get_reservations(node=node_label)
+        reservations = node_reservation_table.get_reservations(node=node_label)
         requested_interval = TimeInterval(start=arrival_time, end=arrival_time + wait_time)
         if not reservations:
             return requested_interval
@@ -150,13 +146,74 @@ class SequentialGreedy:
             return requested_interval
     
     def _add_reservations_for_goal_intervals(self,
+                                             node_reservation_table: NodeReservationTable,
                                              robot_id: int,
                                              goal_intervals: list[tuple[TraversalNode, TimeInterval]]):
         for goal_node, time_interval in goal_intervals:
             reservation = TimeReservation(robot_id=robot_id,
                                           interval=time_interval)
-            self.node_reservation_table.add_reservation(node=goal_node.label,
-                                                        reservation=reservation)
+            node_reservation_table.add_reservation(node=goal_node.label,
+                                                   reservation=reservation)
+    
+    def _calculate_service_time_for_request(self,
+                                            robot_id: int,
+                                            request: TaskRequest,
+                                            current_trip_times: dict[int, float],
+                                            node_reservation_table: NodeReservationTable,
+                                            state: PlanningState,
+                                            motion_planner: MotionPlanner,
+                                            traversal_graph_generator: TraversalGraphGenerator) -> float:
+        start_node = self.start_nodes[robot_id]
+        current_time = self.start_times[robot_id] + current_trip_times[robot_id]
+
+        total_trip_time = 0.0
+        can_service_request = True
+        requested_intervals: list[tuple[TraversalNode, TimeInterval]] = []
+        for j, goal_node_label in enumerate(request.goal_nodes):
+            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
+            subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
+                                                            goal_traversal_node=goal_node,
+                                                            robot_profile=state.simulator_config.robot_profiles[robot_id])
+            total_trip_time += subpath_time
+            arrival_time = current_time + total_trip_time
+            wait_time = request.wait_times_at_goals_seconds[j]
+            requested_interval = self._obtain_time_to_service_node(node_reservation_table=node_reservation_table,
+                                                                    node_label=goal_node_label,
+                                                                    arrival_time=arrival_time,
+                                                                    wait_time=wait_time)
+            requested_intervals.append((goal_node, requested_interval))
+            new_wait_time = requested_interval.end - arrival_time
+            total_trip_time += new_wait_time
+            start_node = goal_node
+        time_to_complete_request = current_time + total_trip_time
+        if time_to_complete_request > request.time_for_service:
+            can_service_request = False
+
+        return time_to_complete_request, total_trip_time, requested_intervals, can_service_request
+    
+    def _remove_requests_after_violation(self,
+                                       robot_id: int,
+                                       request_id: str,
+                                       state: PlanningState,
+                                       motion_planner: MotionPlanner,
+                                       traversal_graph_generator: TraversalGraphGenerator):
+        
+        request_id_index = self.assigned_requests[robot_id].index(request_id)
+        requests_to_be_added_to_queues = self.assigned_requests[robot_id][request_id_index:]
+        for req_id in requests_to_be_added_to_queues:
+            req_struct = state.requests[req_id]
+            if req_struct.request_type in ["blood_pressure", "heart_rate", "respiratory_rate", "temperature", "oxygen_saturation"]:
+                self._add_request_to_queue(request=req_struct,
+                                            task_queue=self.monitoring_requests_queue,
+                                            motion_planner=motion_planner,
+                                            traversal_graph_generator=traversal_graph_generator)
+            else:
+                self._add_request_to_queue(request=req_struct,
+                                            task_queue=self.delivery_requests_queue,
+                                            motion_planner=motion_planner,
+                                            traversal_graph_generator=traversal_graph_generator)
+        self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:request_id_index]
+        self.current_trip_times[robot_id] = 0.0
     
     def _check_validity_of_requests_in_current_round(self,
                                                      round_index: int,
@@ -177,59 +234,40 @@ class SequentialGreedy:
 
             request_id = self.assigned_requests[robot_id][round_index]
             request_struct = state.requests[request_id]
-            start_node = self.start_nodes[robot_id]
-            current_time = self.start_times[robot_id] + self.current_trip_times[robot_id]
-            total_trip_time = 0.0
-            can_service_request = True
-            requested_intervals: list[tuple[TraversalNode, TimeInterval]] = []
-            for j, goal_node_label in enumerate(request_struct.goal_nodes):
-                goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-                subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                                goal_traversal_node=goal_node,
-                                                                robot_profile=state.simulator_config.robot_profiles[robot_id])
-                total_trip_time += subpath_time
-                arrival_time = current_time + total_trip_time
-                wait_time = request_struct.wait_times_at_goals_seconds[j]
-                requested_interval = self._obtain_time_to_service_node(node_label=goal_node_label,
-                                                                       arrival_time=arrival_time,
-                                                                       wait_time=wait_time)
-                requested_intervals.append((goal_node, requested_interval))
-                new_wait_time = requested_interval.end - arrival_time
-                total_trip_time += new_wait_time
-                start_node = goal_node
-            time_to_complete_request = current_time + total_trip_time
-            if time_to_complete_request > request_struct.time_for_service:
-                can_service_request = False
+
+            service_time_results = self._calculate_service_time_for_request(robot_id=robot_id,
+                                                                           request=request_struct,
+                                                                           current_trip_times=self.current_trip_times,
+                                                                            node_reservation_table=self.node_reservation_table,
+                                                                           state=state,
+                                                                           motion_planner=motion_planner,
+                                                                           traversal_graph_generator=traversal_graph_generator)
+            time_to_complete_request, total_trip_time, requested_intervals, can_service_request = service_time_results
 
             if not can_service_request:
-                request_id_index = self.assigned_requests[robot_id].index(request_id)
-                requests_to_be_added_to_queues = self.assigned_requests[robot_id][request_id_index:]
-                for req_id in requests_to_be_added_to_queues:
-                    req_struct = state.requests[req_id]
-                    if req_struct.request_type in ["blood_pressure", "heart_rate", "respiratory_rate", "temperature", "oxygen_saturation"]:
-                        self._add_request_to_queue(request=req_struct,
-                                                   task_queue=self.monitoring_requests_queue,
-                                                   motion_planner=motion_planner,
-                                                   traversal_graph_generator=traversal_graph_generator)
-                    else:
-                        self._add_request_to_queue(request=req_struct,
-                                                   task_queue=self.delivery_requests_queue,
-                                                   motion_planner=motion_planner,
-                                                   traversal_graph_generator=traversal_graph_generator)
-                self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:request_id_index]
+                self._remove_requests_after_violation(robot_id=robot_id,
+                                                      request_id=request_id,
+                                                      state=state,
+                                                      motion_planner=motion_planner,
+                                                      traversal_graph_generator=traversal_graph_generator)
             else:
                 self.current_trip_times[robot_id] += total_trip_time
-                self._add_reservations_for_goal_intervals(robot_id=robot_id,
-                                                         goal_intervals=requested_intervals)
+                self._add_reservations_for_goal_intervals(node_reservation_table=self.node_reservation_table,
+                                                          robot_id=robot_id,
+                                                          goal_intervals=requested_intervals)
+                self.requests_costs[request_id] = (time_to_complete_request - request_struct.scheduled_time,
+                                                   max(time_to_complete_request - request_struct.scheduled_time, 0.0))
                 
     def _generate_reservations_for_started_requests(self,
-                                                  state: PlanningState):
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
+                                                    state: PlanningState,
+                                                    assigned_requests: dict[int, list[str]],
+                                                    node_reservation_table: NodeReservationTable):
+        for robot_id in assigned_requests.keys():
+            if not assigned_requests[robot_id]:
                 continue
             first_task_started = self.first_request_started[robot_id]
             if first_task_started:
-                request_id = self.assigned_requests[robot_id][0]
+                request_id = assigned_requests[robot_id][0]
                 request_struct = state.requests[request_id]
                 for goal_index in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
                     goal_node_label = request_struct.goal_nodes[goal_index]
@@ -243,14 +281,16 @@ class SequentialGreedy:
                                                         end=planned_time)
                     reservation = TimeReservation(robot_id=robot_id,
                                                   interval=reservation_interval)
-                    self.node_reservation_table.add_reservation(node=goal_node_label,
-                                                                reservation=reservation)
+                    node_reservation_table.add_reservation(node=goal_node_label,
+                                                           reservation=reservation)
                     
     def _check_assigned_requests_validity_and_generate_reservations(self,
                                                                    state: PlanningState,
                                                                    motion_planner: MotionPlanner,
                                                                    traversal_graph_generator: TraversalGraphGenerator):
-        self._generate_reservations_for_started_requests(state=state)
+        self._generate_reservations_for_started_requests(state=state,
+                                                         assigned_requests=self.assigned_requests,
+                                                        node_reservation_table=self.node_reservation_table)
         
         max_rounds = max(len(requests) for requests in self.assigned_requests.values())
         for round_index in range(max_rounds):
@@ -258,102 +298,81 @@ class SequentialGreedy:
                                                               state=state,
                                                               motion_planner=motion_planner,
                                                               traversal_graph_generator=traversal_graph_generator)
-    
-    def _calculate_costs_of_request_order(self, 
-                                          request_order: list[str], 
-                                          first_task_started: bool,
-                                          robot_id: int, 
-                                          state: PlanningState, 
-                                          motion_planner: MotionPlanner, 
-                                          traversal_graph_generator: TraversalGraphGenerator) -> tuple[float, float]:
-        if first_task_started:
-            start_node_label = state.requests[request_order[0]].goal_nodes[-1]
-            start_node = traversal_graph_generator.traversal_graph.nodes_dict[start_node_label]
-            current_time = state.requests[request_order[0]].planned_time
-        else:
-            start_node = self._determine_robot_locations(robot_id, state)
-            current_time: float = state.robots_current_time[robot_id]
-
-        if first_task_started:
-            new_request_order = request_order[1:]
-        else:
-            new_request_order = request_order
-
-        total_unmodified_cost = 0.0
-        total_cost = 0.0
-        total_trip_time = 0.0
-        for request_id in new_request_order:
-            current_request = state.requests[request_id]
-            for j, goal_node_label in enumerate(current_request.goal_nodes):
-                goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-                subpath_time = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                                  goal_traversal_node=goal_node,
-                                                                  robot_profile=state.simulator_config.robot_profiles[robot_id])
-                # TODO Check if goal_node is free at the estimated arrival time and for the time period of wait_time_at_goal
-                # If not, determine next available time slot and adjust subpath_time accordingly
-
-                total_trip_time += subpath_time + current_request.wait_times_at_goals_seconds[j]
-                start_node = goal_node
-            time_to_complete_request = current_time + total_trip_time
-            if time_to_complete_request > current_request.time_for_service:
-                return float('inf'), float('inf')
-            total_unmodified_cost += (time_to_complete_request - current_request.scheduled_time)
-            total_cost += max(time_to_complete_request - current_request.scheduled_time, 0.0)
-        return total_unmodified_cost, total_cost
-    
-    def _determine_lowest_cost_insertion_for_robot(self, 
-                                                   request_id: str, 
-                                                   robot_id: int, 
-                                                   state: PlanningState, 
-                                                   motion_planner: MotionPlanner, 
-                                                   traversal_graph_generator: TraversalGraphGenerator) -> tuple[list[str], float, float]:
-        new_request_order = []
-        total_cost = float('inf')
-        total_unmodified_cost = float('inf')
-
-        if not self.assigned_requests[robot_id]:
-            new_request_order = [request_id]
-            total_unmodified_cost, total_cost = self._calculate_costs_of_request_order(request_order=new_request_order,
-                                                                                        first_task_started=False,
-                                                                                        robot_id=robot_id,
-                                                                                        state=state,
-                                                                                        motion_planner=motion_planner,
-                                                                                        traversal_graph_generator=traversal_graph_generator)
-        else:
-            start_index = 0
-            first_request_id = self.assigned_requests[robot_id][0]
-            first_task_started = state.requests[first_request_id].is_started()
-
-            if first_task_started:
-                start_index = 1
             
-            original_unmodified_cost, original_total_cost = self._calculate_costs_of_request_order(request_order=self.assigned_requests[robot_id],
-                                                                                               first_task_started=first_task_started,
-                                                                                               robot_id=robot_id,
-                                                                                               state=state,
-                                                                                               motion_planner=motion_planner,
-                                                                                               traversal_graph_generator=traversal_graph_generator)
+    def _calculate_costs_of_assignment_for_current_round(self,
+                                                        round_index: int,
+                                                        assigned_requests: dict[int, list[str]],
+                                                        node_reservation_table: NodeReservationTable,
+                                                        trial_trip_times: dict[int, float],
+                                                        trial_requests_costs: dict[str, tuple[float, float]],
+                                                        state: PlanningState,
+                                                        motion_planner: MotionPlanner,
+                                                        traversal_graph_generator: TraversalGraphGenerator):
+        robot_order = self._generate_robot_order(round_index=round_index,
+                                                 assigned_requests=assigned_requests,
+                                                 state=state,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator)
+        
+        for robot_id in robot_order:
+            if round_index >= len(assigned_requests[robot_id]):
+                continue
 
-            for i in range(start_index, len(self.assigned_requests[robot_id]) + 1):
-                trial_request_order = self.assigned_requests[robot_id][:i] + [request_id] + self.assigned_requests[robot_id][i:]
-                trial_unmodified_cost, trial_total_cost = self._calculate_costs_of_request_order(request_order=trial_request_order,
-                                                                                                 first_task_started=first_task_started,
-                                                                                                 robot_id=robot_id,
-                                                                                                 state=state,
-                                                                                                 motion_planner=motion_planner,
-                                                                                                 traversal_graph_generator=traversal_graph_generator)
-                current_total_cost = trial_total_cost - original_total_cost
-                current_unmodified_cost = trial_unmodified_cost - original_unmodified_cost
-                if current_total_cost < total_cost:
-                    total_cost = current_total_cost
-                    total_unmodified_cost = current_unmodified_cost
-                    new_request_order = trial_request_order
-                elif current_total_cost == total_cost:
-                    if current_unmodified_cost < total_unmodified_cost:
-                        total_unmodified_cost = current_unmodified_cost
-                        new_request_order = trial_request_order
+            if self.first_request_started[robot_id] and round_index == 0:
+                continue
 
-        return new_request_order, total_unmodified_cost, total_cost
+            request_id = assigned_requests[robot_id][round_index]
+            request_struct = state.requests[request_id]
+
+            service_time_results = self._calculate_service_time_for_request(robot_id=robot_id,
+                                                                           request=request_struct,
+                                                                           current_trip_times=trial_trip_times,
+                                                                            node_reservation_table=node_reservation_table,
+                                                                           state=state,
+                                                                           motion_planner=motion_planner,
+                                                                           traversal_graph_generator=traversal_graph_generator)
+            time_to_complete_request, total_trip_time, requested_intervals, can_service_request = service_time_results
+
+            if not can_service_request:
+                return False
+                
+            else:
+                trial_trip_times[robot_id] += total_trip_time
+                self._add_reservations_for_goal_intervals(node_reservation_table=node_reservation_table,
+                                                          robot_id=robot_id,
+                                                          goal_intervals=requested_intervals)
+                trial_requests_costs[request_id] = (time_to_complete_request - request_struct.scheduled_time,
+                                                   max(time_to_complete_request - request_struct.scheduled_time, 0.0))
+        return True
+    
+    def _calculate_costs_for_request_assignment(self,
+                                                state: PlanningState,
+                                                assigned_requests: dict[int, list[str]],
+                                                motion_planner: MotionPlanner,
+                                                traversal_graph_generator: TraversalGraphGenerator):
+        trial_trip_times: dict[int, float]  = {robot_id: 0.0 for robot_id in assigned_requests.keys()}
+        trial_requests_costs: dict[str, tuple[float, float]] = {}
+        node_reservation_table = NodeReservationTable()
+        self._generate_reservations_for_started_requests(state=state,
+                                                         assigned_requests=assigned_requests,
+                                                         node_reservation_table=node_reservation_table)
+        
+        max_rounds = max(len(requests) for requests in assigned_requests.values())
+        for round_index in range(max_rounds):
+            valid_assignment = self._calculate_costs_of_assignment_for_current_round(round_index=round_index,
+                                                                                    assigned_requests=assigned_requests,
+                                                                                    node_reservation_table=node_reservation_table,
+                                                                                    trial_trip_times=trial_trip_times,
+                                                                                    trial_requests_costs=trial_requests_costs,
+                                                                                    state=state,
+                                                                                    motion_planner=motion_planner,
+                                                                                    traversal_graph_generator=traversal_graph_generator)
+            if not valid_assignment:
+                return float('inf'), float('inf')
+        total_unmodified_cost = sum(costs[0] for costs in trial_requests_costs.values())
+        total_cost = sum(costs[1] for costs in trial_requests_costs.values())
+
+        return total_unmodified_cost, total_cost
     
     def _determine_lowest_cost_insertion_in_fleet(self, 
                                  request_id: str, 
@@ -361,39 +380,26 @@ class SequentialGreedy:
                                  state: PlanningState, 
                                  motion_planner: MotionPlanner, 
                                  traversal_graph_generator: TraversalGraphGenerator):
-        best_robot_id: Optional[int] = None
-        best_request_order: list[str] = []
+        best_request_assignment: Optional[dict[int, list[str]]] = None
         lowest_total_cost: float = float('inf')
         lowest_unmodified_cost: float = float('inf')
         for robot_id in robots_list:
-            insertion_results = self._determine_lowest_cost_insertion_for_robot(request_id=request_id,
-                                                                                robot_id=robot_id,
-                                                                                state=state,
-                                                                                motion_planner=motion_planner,
-                                                                                traversal_graph_generator=traversal_graph_generator)
-            trial_request_order, trial_unmodified_cost, trial_total_cost = insertion_results
+            trial_request_assignment = copy.deepcopy(self.assigned_requests)
+            trial_request_assignment[robot_id].append(request_id)
+            total_costs = self._calculate_costs_for_request_assignment(state=state,
+                                                                      assigned_requests=trial_request_assignment,
+                                                                      motion_planner=motion_planner,
+                                                                      traversal_graph_generator=traversal_graph_generator)
+            trial_unmodified_cost, trial_total_cost = total_costs
             if trial_total_cost < lowest_total_cost:
                 lowest_total_cost = trial_total_cost
                 lowest_unmodified_cost = trial_unmodified_cost
-                best_request_order = trial_request_order
-                best_robot_id = robot_id
+                best_request_assignment = trial_request_assignment
             elif trial_total_cost == lowest_total_cost:
                 if trial_unmodified_cost < lowest_unmodified_cost:
                     lowest_unmodified_cost = trial_unmodified_cost
-                    best_request_order = trial_request_order
-                    best_robot_id = robot_id
-        return best_robot_id, best_request_order
-    
-    def _reserve_request_order_for_robot(self,
-                                        robot_id: int,
-                                        state: PlanningState,
-                                        motion_planner: MotionPlanner,
-                                        traversal_graph_generator: TraversalGraphGenerator):
-        self.node_reservation_table.remove_reservations_for_robot(robot_id=robot_id)
-        self._create_reservation_for_robot(robot_id=robot_id,
-                                          state=state,
-                                          motion_planner=motion_planner,
-                                          traversal_graph_generator=traversal_graph_generator)
+                    best_request_assignment = trial_request_assignment
+        return best_request_assignment
     
     def _assign_requests_to_robots(self,
                                    state: PlanningState,
@@ -406,21 +412,17 @@ class SequentialGreedy:
 
         while requests_queue.heap:
             next_request_id = requests_queue.pop_task()
-            fleet_insertion_results = self._determine_lowest_cost_insertion_in_fleet(request_id=next_request_id,
+            best_request_assignment = self._determine_lowest_cost_insertion_in_fleet(request_id=next_request_id,
                                                                                      robots_list=robots_list,
                                                                                      state=state,
                                                                                      motion_planner=motion_planner,
                                                                                      traversal_graph_generator=traversal_graph_generator)
-            best_robot_id, best_request_order = fleet_insertion_results
-            if best_robot_id is not None:
-                self.assigned_requests[best_robot_id] = best_request_order
-                self._reserve_request_order_for_robot(robot_id=best_robot_id,
-                                                     state=state,
-                                                     motion_planner=motion_planner,
-                                                     traversal_graph_generator=traversal_graph_generator)
-            else:
+            if best_request_assignment is None:
                 request_struct = state.requests[next_request_id]
                 request_struct.mark_rejected()
+                continue
+            else:
+                self.assigned_requests = best_request_assignment
 
     def _assign_requests_for_monitoring_robots(self, 
                                                state: PlanningState, 
