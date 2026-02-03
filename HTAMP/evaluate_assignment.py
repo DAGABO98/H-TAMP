@@ -10,8 +10,8 @@ from typing import Optional
 from HTAMP.assignment.baselines.D_TPTS import DeadlineAwareTokenPassingwithTaskSwaps
 from HTAMP.assignment.baselines.TP_D import TokenPassingWithDeadlines
 from HTAMP.assignment.baselines.idle_pred import IdleTaskPrediction
+from HTAMP.assignment.policies.adaptive_heuristic import AdaptiveHeuristicPolicy
 from HTAMP.assignment.policies.adaptive_rollout import AdaptiveRollout
-from HTAMP.assignment.policies.greedy_reopt import GreedyPolicyWithReoptimization
 from HTAMP.assignment.policies.vanilla_rollout import VanillaRollout
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
@@ -48,8 +48,8 @@ class AssignmentEvaluator:
         self.state = PlanningState(simulator_config=self.simulator_config)
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                     SequentialGreedy | GreedyPolicyWithReoptimization | \
-                     VanillaRollout | AdaptiveRollout = self._initialize_policy(args.mode)
+                     SequentialGreedy | VanillaRollout | AdaptiveRollout | \
+                        AdaptiveHeuristicPolicy = self._initialize_policy(args.mode)
     
     def _initialize_traversal_graph_generator(self):
         print("Generating Traversal Graph...")
@@ -123,8 +123,7 @@ class AssignmentEvaluator:
     
     def _initialize_policy(self, mode: int) -> FleetManager | TokenPassingWithDeadlines | \
                                                 DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                                                    SequentialGreedy | GreedyPolicyWithReoptimization | \
-                                                        VanillaRollout | AdaptiveRollout:
+                                                    SequentialGreedy | VanillaRollout | AdaptiveRollout | AdaptiveHeuristicPolicy:
         print("Initializing Policy...")
         print(f"Selected mode: {mode}")
         policy_dict = {
@@ -133,9 +132,9 @@ class AssignmentEvaluator:
             2: DeadlineAwareTokenPassingwithTaskSwaps,
             3: IdleTaskPrediction,
             4: SequentialGreedy,
-            5: GreedyPolicyWithReoptimization,
-            6: VanillaRollout,
-            7: AdaptiveRollout
+            5: VanillaRollout,
+            6: AdaptiveRollout,
+            7: AdaptiveHeuristicPolicy
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
