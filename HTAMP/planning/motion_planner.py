@@ -388,7 +388,11 @@ class MotionPlanner:
             for cell in occupied_cells:
                 time_reservation = TimeReservation(interval=time_interval,
                                                    robot_id=robot_profile.robot_id)
-                self.reservation_table.add_reservation(cell, time_reservation)
+                try:
+                    self.reservation_table.add_reservation(cell, time_reservation)
+                except Exception as e:
+                    print(f"Error adding reservation for node {from_node.label} at cell {cell}: {e}")
+                    raise e
         else:
             robot_reservations = self.grid.get_robot_reservations_for_move(from_node=from_node,
                                                                             to_node=to_node,
@@ -398,7 +402,12 @@ class MotionPlanner:
                 for cell in robot_reservation.robot_occupancy.occupied_cells:
                     time_reservation = TimeReservation(interval=robot_reservation.time_interval,
                                                         robot_id=robot_profile.robot_id)
-                    self.reservation_table.add_reservation(cell, time_reservation)
+                    try:
+                        self.reservation_table.add_reservation(cell, time_reservation)
+                    except Exception as e:
+                        print(f"Error adding reservation for move from {from_node.label} to {to_node.label} at cell {cell}: {e}")
+                        raise e
+                    
     def _initialize_robot_reservations(self, 
                                        initial_node: TraversalNode,
                                        robot_profile: RobotProfile,
