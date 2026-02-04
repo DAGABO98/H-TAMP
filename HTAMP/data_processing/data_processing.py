@@ -346,36 +346,36 @@ class DataProcessor:
         valid_prev = prev_taken.notna()
 
         # Timedelta thresholds
-        td10m = pd.Timedelta(minutes=10)
+        td15m = pd.Timedelta(minutes=30)
         td2h  = pd.Timedelta(hours=2)
 
         # Masks (mutually exclusive by construction)
-        m_lt10   = valid_prev & (elapsed < td10m)
-        m_10_2   = valid_prev & (elapsed >= td10m) & (elapsed < td2h)
+        m_lt15   = valid_prev & (elapsed < td15m)
+        m_15_2   = valid_prev & (elapsed >= td15m) & (elapsed < td2h)
         m_gt2    = valid_prev & (elapsed >= td2h)
         m_noprev = ~valid_prev  # first row in each group
 
         # Build each branch
-        sched_lt10 = curr_taken.dt.round("5min")                      # < 10 min → round to nearest 5 min
-        sched_10_2 = curr_taken.dt.round("15min")                     # 10 min–2 h → round to nearest 15 min
+        sched_lt15 = curr_taken.dt.round("1min")                      # < 30 min → round to nearest 1 min
+        sched_15_2 = curr_taken.dt.round("1min")                     # 30 min–2 h → round to nearest 5 min
         sched_gt2  = prev_taken.dt.round("30min") + df["freq_timedelta"]  # > 2 h → prev rounded to 30 min + freq hours
         sched_seed = curr_taken.dt.round("30min")                     # no previous → seed at nearest 30 min
 
-        order_lt10 = curr_taken.dt.round("5min") - pd.Timedelta(minutes=5)
-        order_10_2 = curr_taken.dt.round("15min") - pd.Timedelta(minutes=30)
+        order_lt15 = curr_taken.dt.round("1min")
+        order_15_2 = curr_taken.dt.round("1min") - pd.Timedelta(minutes=30)
         order_gt2  = prev_taken.dt.round("30min") + df["freq_timedelta"] - pd.Timedelta(minutes=30)
         order_noprev = curr_taken.dt.round("30min") - pd.Timedelta(minutes=30)
 
         # Combine
         scheduled = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
-        scheduled.loc[m_lt10]   = sched_lt10[m_lt10]
-        scheduled.loc[m_10_2]   = sched_10_2[m_10_2]
+        scheduled.loc[m_lt15]   = sched_lt15[m_lt15]
+        scheduled.loc[m_15_2]   = sched_15_2[m_15_2]
         scheduled.loc[m_gt2]    = sched_gt2[m_gt2]
         scheduled.loc[m_noprev] = sched_seed[m_noprev]
 
         ordered = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
-        ordered.loc[m_lt10]     = order_lt10[m_lt10]
-        ordered.loc[m_10_2]     = order_10_2[m_10_2]
+        ordered.loc[m_lt15]     = order_lt15[m_lt15]
+        ordered.loc[m_15_2]     = order_15_2[m_15_2]
         ordered.loc[m_gt2]      = order_gt2[m_gt2]
         ordered.loc[m_noprev]   = order_noprev[m_noprev]
 
@@ -425,8 +425,8 @@ class DataProcessor:
             df=self.hospital_data['blood_pressure_orders']
         )
 
-        bd_annotated_df = self._annotate_orders_with_room(bp_df)
-        return bd_annotated_df
+        bp_annotated_df = self._annotate_orders_with_room(bp_df)
+        return bp_annotated_df
     
     def _annotate_heart_rate_orders_with_room(self) -> pd.DataFrame:
         
