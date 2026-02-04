@@ -437,7 +437,7 @@ class SequentialGreedy:
                                    debug: bool):
 
         while self.requests_queue.heap:
-            next_request_id = self.requests_queue.pop_task
+            next_request_id = self.requests_queue.pop_task()
             next_request = state.requests[next_request_id]
             if next_request.request_type == "medication":
                 robots_list = state.get_robots_of_type(robot_type="delivery")
