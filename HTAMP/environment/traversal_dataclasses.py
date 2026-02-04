@@ -51,6 +51,9 @@ class TraversalNode:
     orientation_vec: OrientationVector
     connections: list[str]
 
+    def __repr__(self):
+        return self.label
+
 @dataclass
 class TraversalEdge:
     from_node: str

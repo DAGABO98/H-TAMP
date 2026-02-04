@@ -64,6 +64,9 @@ class TimeInterval:
 
     def __hash__(self):
         return hash(self._key())
+    
+    def __repr__(self):
+        return f"[{self.start}, {self.end}]"
 
 @dataclass
 class RobotOccupancy:
