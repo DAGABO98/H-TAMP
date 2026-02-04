@@ -212,16 +212,10 @@ class SequentialGreedy:
         requests_to_be_added_to_queues = self.assigned_requests[robot_id][request_id_index:]
         for req_id in requests_to_be_added_to_queues:
             req_struct = state.requests[req_id]
-            if req_struct.request_type in ["blood_pressure", "heart_rate", "respiratory_rate", "temperature", "oxygen_saturation"]:
-                self._add_request_to_queue(request=req_struct,
-                                            task_queue=self.monitoring_requests_queue,
-                                            motion_planner=motion_planner,
-                                            traversal_graph_generator=traversal_graph_generator)
-            else:
-                self._add_request_to_queue(request=req_struct,
-                                            task_queue=self.delivery_requests_queue,
-                                            motion_planner=motion_planner,
-                                            traversal_graph_generator=traversal_graph_generator)
+            self._add_request_to_queue(request=req_struct,
+                                        task_queue=self.requests_queue,
+                                        motion_planner=motion_planner,
+                                        traversal_graph_generator=traversal_graph_generator)
         self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:request_id_index]
         self.current_trip_times[robot_id] = 0.0
     
@@ -238,16 +232,10 @@ class SequentialGreedy:
                 if req_id == failed_request_id:
                     continue
                 req_struct = state.requests[req_id]
-                if req_struct.request_type in ["blood_pressure", "heart_rate", "respiratory_rate", "temperature", "oxygen_saturation"]:
-                    self._add_request_to_queue(request=req_struct,
-                                                task_queue=self.monitoring_requests_queue,
-                                                motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator)
-                else:
-                    self._add_request_to_queue(request=req_struct,
-                                                task_queue=self.delivery_requests_queue,
-                                                motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator)
+                self._add_request_to_queue(request=req_struct,
+                                            task_queue=self.requests_queue,
+                                            motion_planner=motion_planner,
+                                            traversal_graph_generator=traversal_graph_generator)
             if self.first_request_started[robot_id]:
                 self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:1]
             else:
@@ -446,13 +434,16 @@ class SequentialGreedy:
                                    state: PlanningState,
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator,
-                                   robot_type: str,
-                                   requests_queue: TaskQueue,
                                    debug: bool):
-        robots_list = state.get_robots_of_type(robot_type=robot_type)
 
-        while requests_queue.heap:
-            next_request_id = requests_queue.pop_task()
+        while self.requests_queue.heap:
+            next_request_id = self.requests_queue.pop_task
+            next_request = state.requests[next_request_id]
+            if next_request.request_type == "medication":
+                robots_list = state.get_robots_of_type(robot_type="delivery")
+            else:
+                robots_list = state.get_robots_of_type(robot_type="monitoring")
+                
             best_request_assignment = self._determine_lowest_cost_insertion_in_fleet(request_id=next_request_id,
                                                                                      robots_list=robots_list,
                                                                                      state=state,
@@ -464,30 +455,6 @@ class SequentialGreedy:
                 continue
             else:
                 self.assigned_requests = best_request_assignment
-
-    def _assign_requests_for_monitoring_robots(self, 
-                                               state: PlanningState, 
-                                               motion_planner: MotionPlanner, 
-                                               traversal_graph_generator: TraversalGraphGenerator,
-                                               debug: bool):
-        self._assign_requests_to_robots(state=state,
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator,
-                                        robot_type="monitoring",
-                                        requests_queue=self.monitoring_requests_queue,         
-                                        debug=debug)
-    
-    def _assign_requests_for_delivery_robots(self, 
-                                             state: PlanningState, 
-                                             motion_planner: MotionPlanner, 
-                                             traversal_graph_generator: TraversalGraphGenerator,
-                                             debug: bool):
-        self._assign_requests_to_robots(state=state,
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator,
-                                        robot_type="delivery",
-                                        requests_queue=self.delivery_requests_queue,         
-                                        debug=debug)
     
     def _find_path_for_goal_nodes(self,
                                  robot_id: int,
@@ -819,16 +786,10 @@ class SequentialGreedy:
         while self.need_assignment:
             print("Starting new assignment iteration...")
             # Assignment logic for monitoring robots
-            self._assign_requests_for_monitoring_robots(state=state, 
-                                                    motion_planner=motion_planner, 
-                                                    traversal_graph_generator=traversal_graph_generator,
-                                                    debug=debug)
-            
-            # Assignment logic for delivery robots
-            self._assign_requests_for_delivery_robots(state=state, 
-                                                    motion_planner=motion_planner, 
-                                                    traversal_graph_generator=traversal_graph_generator,
-                                                    debug=debug)
+            self._assign_requests_to_robots(state=state,
+                                           motion_planner=motion_planner,
+                                           traversal_graph_generator=traversal_graph_generator,
+                                           debug=debug)
             
             # Reset motion planning reservations
             self._reset_motion_planning_reservations(state=state,
