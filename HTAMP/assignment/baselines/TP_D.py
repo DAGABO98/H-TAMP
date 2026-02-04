@@ -35,8 +35,7 @@ class TokenPassingWithDeadlines:
                                                     goal_traversal_node=end_node,
                                                     robot_profile=self.dummy_delivery_robot_profile,
                                                     current_time=start_time,
-                                                    wait_time_at_goal=request.wait_times_at_goals_seconds[1],
-                                                    horizon=state.simulator_config.horizon)
+                                                    wait_time_at_goal=request.wait_times_at_goals_seconds[1])
             planned_time = sub_path[-1][1].end if sub_path else request.time_for_service
             trip_time = planned_time - start_time
             pickup_deadline = request.time_for_service - trip_time - request.wait_times_at_goals_seconds[0]

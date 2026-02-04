@@ -97,8 +97,7 @@ class IdleTaskPrediction:
                                                        goal_traversal_node=state.robot_depots[robot_id],
                                                        robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                        current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=120.0,
-                                                       horizon=state.simulator_config.horizon)
+                                                       wait_time_at_goal=state.simulator_config.horizon)
             if return_path is not None:
                 sub_paths.append(return_path)
                 planned_time_to_service_request = sub_paths[-2][-1][1].end

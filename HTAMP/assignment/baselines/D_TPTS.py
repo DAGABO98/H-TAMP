@@ -34,8 +34,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                     goal_traversal_node=end_node,
                                                     robot_profile=self.dummy_delivery_robot_profile,
                                                     current_time=start_time,
-                                                    wait_time_at_goal=request.wait_times_at_goals_seconds[1],
-                                                    horizon=state.simulator_config.horizon)
+                                                    wait_time_at_goal=request.wait_times_at_goals_seconds[1])
             planned_time = sub_path[-1][1].end if sub_path else request.time_for_service
             trip_time = planned_time - start_time
             pickup_deadline = request.time_for_service - trip_time - request.wait_times_at_goals_seconds[0]
@@ -304,8 +303,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                     goal_traversal_node=state.robot_depots[robot_to_depot_id],
                                                     robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id],
                                                     current_time=state.robots_current_time[robot_to_depot_id],
-                                                    wait_time_at_goal=120.0,
-                                                    horizon=state.simulator_config.horizon)
+                                                    wait_time_at_goal=state.simulator_config.horizon)
             assert return_path is not None, "Return path to depot could not be found."
             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
             motion_planner.reserve_path_for_agent(path=return_path,
