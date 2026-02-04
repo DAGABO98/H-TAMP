@@ -17,12 +17,14 @@ class SequentialGreedy:
         self.delivery_requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
-        self.node_reservation_table = NodeReservationTable()
+        self.node_reservation_table = NodeReservationTable(reservations={},
+                                                          robot_node_dict={})
         self.start_times: dict[int, float]  = {}
         self.start_nodes: dict[int, TraversalNode]  = {}
         self.first_request_started: dict[int, bool]  = {}
         self.current_trip_times: dict[int, float]  = {}
         self.requests_costs: dict[str, tuple[float, float]] = {}
+        self.need_assignment: bool = True
     
     def _extract_start_times_and_nodes(self, 
                                        state: PlanningState,
@@ -50,6 +52,7 @@ class SequentialGreedy:
                                               traversal_graph_generator: TraversalGraphGenerator):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
         self.node_reservation_table.reset()
+        self.need_assignment = True
         self._extract_trip_times()
         self._extract_start_times_and_nodes(state=state,
                                             traversal_graph_generator=traversal_graph_generator)
@@ -215,6 +218,35 @@ class SequentialGreedy:
         self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:request_id_index]
         self.current_trip_times[robot_id] = 0.0
     
+    def _remove_all_requests_except_started_requests(self,
+                             failed_request_id: str,
+                             state: PlanningState,
+                             motion_planner: MotionPlanner,
+                             traversal_graph_generator: TraversalGraphGenerator):
+        for robot_id in self.assigned_requests.keys():
+            requests_to_be_added_to_queues = self.assigned_requests[robot_id]
+            if self.first_request_started[robot_id]:
+                requests_to_be_added_to_queues = self.assigned_requests[robot_id][1:]
+            for req_id in requests_to_be_added_to_queues:
+                if req_id == failed_request_id:
+                    continue
+                req_struct = state.requests[req_id]
+                if req_struct.request_type in ["blood_pressure", "heart_rate", "respiratory_rate", "temperature", "oxygen_saturation"]:
+                    self._add_request_to_queue(request=req_struct,
+                                                task_queue=self.monitoring_requests_queue,
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
+                else:
+                    self._add_request_to_queue(request=req_struct,
+                                                task_queue=self.delivery_requests_queue,
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
+            if self.first_request_started[robot_id]:
+                self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:1]
+            else:
+                self.assigned_requests[robot_id] = []
+            self.current_trip_times[robot_id] = 0.0
+    
     def _check_validity_of_requests_in_current_round(self,
                                                      round_index: int,
                                                      state: PlanningState,
@@ -352,7 +384,8 @@ class SequentialGreedy:
                                                 traversal_graph_generator: TraversalGraphGenerator):
         trial_trip_times: dict[int, float]  = {robot_id: 0.0 for robot_id in assigned_requests.keys()}
         trial_requests_costs: dict[str, tuple[float, float]] = {}
-        node_reservation_table = NodeReservationTable()
+        node_reservation_table = NodeReservationTable(reservations={},
+                                                      robot_node_dict={})
         self._generate_reservations_for_started_requests(state=state,
                                                          assigned_requests=assigned_requests,
                                                          node_reservation_table=node_reservation_table)
@@ -423,6 +456,8 @@ class SequentialGreedy:
                 continue
             else:
                 self.assigned_requests = best_request_assignment
+        
+        print(f"Assigned requests for {robot_type} robots: {self.assigned_requests}")
 
     def _assign_requests_for_monitoring_robots(self, 
                                                state: PlanningState, 
@@ -454,16 +489,13 @@ class SequentialGreedy:
                                  start_time: float,
                                  goal_nodes: list[str],
                                  wait_times_at_goals_seconds: list[float],
-                                 initial_planned_goal_indices: Optional[list[int]],
+                                 initial_planned_goal_index: int,
                                  state: PlanningState,
                                  motion_planner: MotionPlanner,
                                  traversal_graph_generator: TraversalGraphGenerator) \
                                     -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
-        if initial_planned_goal_indices is not None:
-            planned_goal_indices = copy.deepcopy(initial_planned_goal_indices)
-        else:
-            planned_goal_indices = []
+        planned_goal_indices: list[int] = []
         planned_time_to_reach_last_goal: float = float('inf')
         for j, goal_node_label in enumerate(goal_nodes):
             goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
@@ -480,10 +512,9 @@ class SequentialGreedy:
                 planned_time_to_reach_last_goal = float('inf')
                 break
             sub_paths.append(sub_path)
-            if planned_goal_indices:
-                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
-            else:
-                planned_goal_indices.append(len(sub_path) - 1)
+            new_goal_index = initial_planned_goal_index + len(sub_path) - 1
+            planned_goal_indices.append(new_goal_index)
+            initial_planned_goal_index = new_goal_index
             start_node = goal_node
         if sub_paths:
             final_path = motion_planner.combine_paths(sub_paths)
@@ -495,60 +526,236 @@ class SequentialGreedy:
 
         return final_path, planned_goal_indices, planned_time_to_reach_last_goal
     
-    def _generate_robot_priorities(self,
-                                   state: PlanningState,
-                                   motion_planner: MotionPlanner,
-                                   traversal_graph_generator: TraversalGraphGenerator) -> list[int]:
-        robot_priorities = []
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
-                robot_priorities.append((robot_id, state.simulator_config.horizon))
+    def _reset_motion_planning_reservations(self,
+                                            state: PlanningState,
+                                            motion_planner: MotionPlanner,
+                                            traversal_graph_generator: TraversalGraphGenerator):
+        robot_order = self._generate_robot_order(round_index=0,
+                                                 assigned_requests=self.assigned_requests,
+                                                 state=state,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator)
+        for robot_id in robot_order:
+            if not state.assigned_requests[robot_id] and not self.assigned_requests[robot_id]:
+                # No assigned requests, no plan needed
                 continue
-            first_request_id = self.assigned_requests[robot_id][0]
-            pickup_deadline = self._calculate_pickup_deadline(request=state.requests[first_request_id],
-                                                              motion_planner=motion_planner,
-                                                              traversal_graph_generator=traversal_graph_generator)
-            
-            robot_priorities.append((robot_id, pickup_deadline))
-        robot_priorities.sort(key=lambda x: x[1])
-        sorted_robot_ids = [robot_priority[0] for robot_priority in robot_priorities]
-        return sorted_robot_ids
-    
-    def _update_state_with_assigned_requests_and_generate_plans(self, 
-                                                                sorted_robot_ids: list[int],
-                                                                state: PlanningState,
-                                                                motion_planner: MotionPlanner,
-                                                                traversal_graph_generator: TraversalGraphGenerator):
-        for robot_id in sorted_robot_ids:
-            if not self.assigned_requests[robot_id]:
-                continue
-            first_request_id = self.assigned_requests[robot_id][0]
-            first_request = state.requests[first_request_id]
-            first_task_started = state.requests[first_request_id].is_started()
-            if first_task_started:
-                if first_request.planned_time > state.simulator_time + 60.0:
+            elif not state.assigned_requests[robot_id] and self.assigned_requests[robot_id]:
+                # New assignment for idle robot
+                motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+            elif state.assigned_requests[robot_id] and not self.assigned_requests[robot_id]:
+                # Robot has been unassigned all requests, plan to return to depot
+                motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+            elif state.assigned_requests[robot_id] and self.assigned_requests[robot_id] and \
+                 state.assigned_requests[robot_id][0] == self.assigned_requests[robot_id][0]:
+                first_request_id = state.assigned_requests[robot_id][0]
+                request_struct = state.requests[first_request_id]
+                if request_struct.planned_time > state.simulator_time + 60.0:
+                    # Continue with existing plan
                     continue
                 else:
-                    start_node = self._determine_robot_locations(robot_id=robot_id, 
-                                                                state=state)
-                    current_time = state.robots_current_time[robot_id]
-                    remaining_goal_nodes = first_request.goal_nodes[first_request.completed_goals:]
-                    remaining_wait_times = first_request.wait_times_at_goals_seconds[first_request.completed_goals:]
-                    path_results = self._find_path_for_goal_nodes(robot_id=robot_id,
-                                                                 start_node=start_node,
-                                                                 start_time=current_time,
-                                                                 goal_nodes=remaining_goal_nodes,
-                                                                 wait_times_at_goals_seconds=remaining_wait_times,
-                                                                 initial_planned_goal_indices=None,
-                                                                 state=state,
-                                                                 motion_planner=motion_planner,
-                                                                 traversal_graph_generator=traversal_graph_generator)
-                    planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
-
+                    motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
             else:
-                start_node = self._determine_robot_locations(robot_id=robot_id, 
-                                                             state=state)
-                current_time = state.robots_current_time[robot_id]
+                motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+    
+    def _handle_failed_request_at_planning(self,
+                                          failed_request_id: str,
+                                          state: PlanningState,
+                                          motion_planner: MotionPlanner,
+                                          traversal_graph_generator: TraversalGraphGenerator):
+        self._remove_all_requests_except_started_requests(failed_request_id=failed_request_id,
+                                                                      state=state,
+                                                                      motion_planner=motion_planner,
+                                                                      traversal_graph_generator=traversal_graph_generator)
+        failed_request = state.requests[failed_request_id]
+        failed_request.mark_rejected()
+        
+    
+    def _generate_motion_plans_for_assigned_requests(self,
+                                                    robot_id: int,
+                                                    state: PlanningState,
+                                                    motion_planner: MotionPlanner,
+                                                    traversal_graph_generator: TraversalGraphGenerator):
+        start_node = AssignmentHelpers.determine_robot_locations(robot_id=robot_id, 
+                                                                state=state)
+        failed_request_id = None
+        current_time = state.robots_current_time[robot_id]
+        planned_goal_indices_list: list[list[int]] = []
+        planned_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
+        planned_request_ids: list[str] = []
+        planned_times_to_reach_last_goals: list[float] = []
+        initial_planned_goal_index = 0
+        for request_id in self.assigned_requests[robot_id]:
+            request_struct = state.requests[request_id]
+            goal_nodes = request_struct.goal_nodes[request_struct.completed_goals:]
+            wait_times = request_struct.wait_times_at_goals_seconds[request_struct.completed_goals:]
+            path_results = self._find_path_for_goal_nodes(robot_id=robot_id,
+                                                        start_node=start_node,
+                                                        start_time=current_time,
+                                                        goal_nodes=goal_nodes,
+                                                        wait_times_at_goals_seconds=wait_times,
+                                                        initial_planned_goal_index=initial_planned_goal_index,
+                                                        state=state,
+                                                        motion_planner=motion_planner,
+                                                        traversal_graph_generator=traversal_graph_generator)
+            planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+            if not planned_path:
+                print(f"Warning: Unable to generate plan for robot {robot_id} with assigned requests.")
+                print(f"Failed at request {request_id} with goals {goal_nodes}.")
+                failed_request_id = request_id
+                break
+            planned_paths.append(planned_path)
+            planned_goal_indices_list.append(planned_goal_indices)
+            planned_request_ids.append(request_id)
+            planned_times_to_reach_last_goals.append(planned_time_to_reach_last_goal)
+            start_node = planned_path[-1][0]
+            current_time = planned_time_to_reach_last_goal
+            initial_planned_goal_index = planned_goal_indices[-1]
+            if current_time > state.simulator_time + 60.0:
+                break
+        return planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals, failed_request_id
+    
+    def _generate_motion_plan_to_depot(self,
+                                      robot_id: int,
+                                      state: PlanningState,
+                                      motion_planner: MotionPlanner,
+                                      traversal_graph_generator: TraversalGraphGenerator):
+        start_node = AssignmentHelpers.determine_robot_locations(robot_id=robot_id, 
+                                                                state=state)
+        depot_node = state.robot_depots[robot_id]
+        current_time = state.robots_current_time[robot_id]
+        planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
+                                                        goal_traversal_node=depot_node,
+                                                        robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                        current_time=current_time,
+                                                        wait_time_at_goal=100.0,
+                                                        horizon=state.simulator_config.horizon)
+    
+    def _generate_motion_plans_for_fleet(self,
+                                          state: PlanningState,
+                                          motion_planner: MotionPlanner,
+                                          traversal_graph_generator: TraversalGraphGenerator):
+        robot_order = self._generate_robot_order(round_index=0,
+                                                 assigned_requests=self.assigned_requests,
+                                                 state=state,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator)
+        failed_request_id = None
+        robot_assignments = {}
+        for robot_id in robot_order:
+            if not state.assigned_requests[robot_id] and not self.assigned_requests[robot_id]:
+                # No assigned requests, no plan needed
+                continue
+            elif not state.assigned_requests[robot_id] and self.assigned_requests[robot_id]:
+                # New assignment for idle robot
+                plan_results = self._generate_motion_plans_for_assigned_requests(robot_id=robot_id,
+                                                                                state=state,
+                                                                                motion_planner=motion_planner,
+                                                                                traversal_graph_generator=traversal_graph_generator)
+                planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals, failed_request_id = plan_results
+                
+                if failed_request_id is not None:
+                    self._handle_failed_request_at_planning(failed_request_id=failed_request_id,
+                                                            state=state,
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator)
+                    break
+                else:
+                    robot_assignments[robot_id] = (planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals)
+            elif state.assigned_requests[robot_id] and not self.assigned_requests[robot_id]:
+                # Robot has been unassigned all requests, plan to return to depot
+                planned_path = self._generate_motion_plan_to_depot(robot_id=robot_id,
+                                                                   state=state,
+                                                                   motion_planner=motion_planner,
+                                                                   traversal_graph_generator=traversal_graph_generator)
+                assert planned_path, f"Failed to generate path to depot for robot {robot_id}"
+                robot_assignments[robot_id] = ([planned_path], [], [], [])
+        
+            elif state.assigned_requests[robot_id] and self.assigned_requests[robot_id] and \
+                 state.assigned_requests[robot_id][0] == self.assigned_requests[robot_id][0]:
+                # Continuing with the first assigned request
+                first_request_id = state.assigned_requests[robot_id][0]
+                request_struct = state.requests[first_request_id]
+                if request_struct.planned_time > state.simulator_time + 60.0:
+                    # Continue with existing plan
+                    continue
+                else:
+                    # Replan from current location
+                    plan_results = self._generate_motion_plans_for_assigned_requests(robot_id=robot_id,
+                                                                                state=state,
+                                                                                motion_planner=motion_planner,
+                                                                                traversal_graph_generator=traversal_graph_generator)
+                    planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals, failed_request_id = plan_results
+                    
+                    if failed_request_id is not None:
+                        self._handle_failed_request_at_planning(failed_request_id=failed_request_id,
+                                                                state=state,
+                                                                motion_planner=motion_planner,
+                                                                traversal_graph_generator=traversal_graph_generator)
+                        break
+                    else:
+                        robot_assignments[robot_id] = (planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals)
+            else:
+                # New assignment different from current one
+                plan_results = self._generate_motion_plans_for_assigned_requests(robot_id=robot_id,
+                                                                                state=state,
+                                                                                motion_planner=motion_planner,
+                                                                                traversal_graph_generator=traversal_graph_generator)
+                planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals, failed_request_id = plan_results
+                
+                if failed_request_id is not None:
+                    self._handle_failed_request_at_planning(failed_request_id=failed_request_id,
+                                                            state=state,
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator)
+                    break
+                else:
+                    robot_assignments[robot_id] = (planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals)
+        
+        return robot_assignments, failed_request_id
+    
+    def _generate_motion_plans_and_update_state(self,
+                                                state: PlanningState,
+                                                motion_planner: MotionPlanner,
+                                                traversal_graph_generator: TraversalGraphGenerator):
+        robot_assignments, failed_request_id = self._generate_motion_plans_for_fleet(state=state,
+                                                                                    motion_planner=motion_planner,
+                                                                                    traversal_graph_generator=traversal_graph_generator)
+        if failed_request_id is not None:
+            print(f"Failed to generate motion plan for request {failed_request_id}, reassigning all available requests...")
+            self.need_assignment = True
+        else:
+            for robot_id, (planned_paths, planned_goal_indices_list, planned_request_ids, planned_times_to_reach_last_goals) in robot_assignments.items():
+                final_path = motion_planner.combine_paths(planned_paths)
+                state.assign_robot_path(robot_id=robot_id,
+                                        path=final_path,
+                                        traversal_graph=traversal_graph_generator.traversal_graph)
+                
+                for i in range(len(planned_request_ids)):
+                    request_id = planned_request_ids[i]
+                    request_struct = state.requests[request_id]
+                    planned_goal_indices = planned_goal_indices_list[i]
+                    planned_time_to_reach_last_goal = planned_times_to_reach_last_goals[i]
+                    request_struct.schedule_task(planned_time=planned_time_to_reach_last_goal,
+                                                 planned_goal_indices=planned_goal_indices,
+                                                 assigned_robot_id=robot_id)
+                
+                if len(planned_request_ids) == 0:
+                    motion_planner.reserve_path_for_agent(path=final_path,
+                                                robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                wait_time_at_goal=state.simulator_config.horizon,
+                                                reserve_last_position=True)
+                else:
+                    last_request_id = planned_request_ids[-1]
+                    last_request_struct = state.requests[last_request_id]
+                    wait_time_at_goal = last_request_struct.wait_times_at_goals_seconds[-1]
+                    motion_planner.reserve_path_for_agent(path=final_path,
+                                                robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                wait_time_at_goal=wait_time_at_goal,
+                                                reserve_last_position=False)
+
+
+            state.assigned_requests = copy.deepcopy(self.assigned_requests)
+            self.need_assignment = False
 
 
     def assign_requests_to_robots(self, 
@@ -569,26 +776,29 @@ class SequentialGreedy:
         self._check_assigned_requests_validity_and_generate_reservations(state=state,
                                                                          motion_planner=motion_planner,
                                                                          traversal_graph_generator=traversal_graph_generator)
-
-        # Assignment logic for monitoring robots
-        self._assign_requests_for_monitoring_robots(state=state, 
-                                                   motion_planner=motion_planner, 
-                                                   traversal_graph_generator=traversal_graph_generator,
-                                                   debug=debug)
         
-        # Assignment logic for delivery robots
-        self._assign_requests_for_delivery_robots(state=state, 
-                                                 motion_planner=motion_planner, 
-                                                 traversal_graph_generator=traversal_graph_generator,
-                                                 debug=debug)
+        while self.need_assignment:
+            print("Starting new assignment iteration...")
+            # Assignment logic for monitoring robots
+            self._assign_requests_for_monitoring_robots(state=state, 
+                                                    motion_planner=motion_planner, 
+                                                    traversal_graph_generator=traversal_graph_generator,
+                                                    debug=debug)
+            
+            # Assignment logic for delivery robots
+            self._assign_requests_for_delivery_robots(state=state, 
+                                                    motion_planner=motion_planner, 
+                                                    traversal_graph_generator=traversal_graph_generator,
+                                                    debug=debug)
+            
+            # Reset motion planning reservations
+            self._reset_motion_planning_reservations(state=state,
+                                                     motion_planner=motion_planner,
+                                                     traversal_graph_generator=traversal_graph_generator)
+            
+            # Generate motion plans for assigned requests and update state
+            self._generate_motion_plans_and_update_state(state=state,
+                                                        motion_planner=motion_planner,
+                                                        traversal_graph_generator=traversal_graph_generator)
         
-        # Determine robot priorities based on earliest deadlines
-        sorted_robot_ids = self._generate_robot_priorities(state=state,
-                                                           motion_planner=motion_planner,
-                                                           traversal_graph_generator=traversal_graph_generator)
-        
-        # Update the state with the new assignments and generate motion plans
-        self._update_state_with_assigned_requests_and_generate_plans(sorted_robot_ids=sorted_robot_ids,
-                                                                    state=state,
-                                                                    motion_planner=motion_planner,
-                                                                    traversal_graph_generator=traversal_graph_generator)
+        print("Final assigned requests:", self.assigned_requests)

@@ -46,7 +46,7 @@ class TimeReservation:
 
 @dataclass
 class CellReservationTable:
-    reservations: dict[GridIndex, list[TimeReservation]]
+    reservations: dict[GridIndex, list[TimeReservation]] = field(default_factory=dict)
     robot_cell_dict: dict[int, list[GridIndex]] = field(default_factory=dict)
 
     def get_reservations(self, cell: GridIndex) -> list[TimeReservation]:
