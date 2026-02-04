@@ -413,8 +413,7 @@ class MotionPlanner:
 
     def _reserve_path(self,
                       path: List[Tuple[TraversalNode, TimeInterval]],
-                      robot_profile: RobotProfile,
-                      wait_time_at_goal: float = 0.0) -> None:
+                      robot_profile: RobotProfile) -> None:
 
         # Add reservations to the reservation table
         for i in range(len(path) - 1):
@@ -437,16 +436,14 @@ class MotionPlanner:
         self._reserve_cells_for_time_interval(from_node=last_node,
                                             to_node=last_node,
                                             time_interval=TimeInterval(start=last_time_interval.start,
-                                                                        end=last_time_interval.start + wait_time_at_goal),
+                                                                        end=last_time_interval.end),
                                             robot_profile=robot_profile)
 
     def reserve_path_for_agent(self,
                                path: List[Tuple[TraversalNode, TimeInterval]],
-                               robot_profile: RobotProfile,
-                               wait_time_at_goal: float = 0.0) -> None:
+                               robot_profile: RobotProfile) -> None:
         self._reserve_path(path=path,
-                           robot_profile=robot_profile,
-                           wait_time_at_goal=wait_time_at_goal)
+                           robot_profile=robot_profile)
         
     def clear_reservations_for_agent(self,
                                    robot_profile: RobotProfile) -> None:

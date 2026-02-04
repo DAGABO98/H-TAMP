@@ -161,8 +161,7 @@ class AssignmentHelpers:
             
         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
         motion_planner.reserve_path_for_agent(path=planned_path,
-                                                robot_profile=state.simulator_config.robot_profiles[robot_id],
-                                                wait_time_at_goal=state.simulator_config.horizon)
+                                              robot_profile=state.simulator_config.robot_profiles[robot_id])
         
         state.assign_request_to_robot(request_id=request_id, 
                                     robot_id=robot_id, 

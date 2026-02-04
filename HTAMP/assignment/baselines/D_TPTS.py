@@ -1,13 +1,10 @@
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers
-from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
-from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest
 from HTAMP.planning.state import PlanningState
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class DeadlineAwareTokenPassingwithTaskSwaps():
     
@@ -16,7 +13,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         self.monitoring_requests_dict: dict[str, float] = {}
         self.assigned_monitoring_requests_dict: dict[str, tuple[int, float]] = {}
         self.delivery_requests_dict: dict[str, float] = {}
-        self.assigned_delivery_requests_dict: dict[str, float] = {}
+        self.assigned_delivery_requests_dict: dict[str, tuple[int, float]] = {}
         self.robots_to_be_sent_to_depot: list[int] = list()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
     
@@ -312,8 +309,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
             assert return_path is not None, "Return path to depot could not be found."
             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
             motion_planner.reserve_path_for_agent(path=return_path,
-                                                    robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id],
-                                                    wait_time_at_goal=state.simulator_config.horizon)
+                                                  robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
             state.assign_robot_path(robot_id=robot_to_depot_id, 
                                     path=return_path, 
                                     traversal_graph=traversal_graph_generator.traversal_graph)

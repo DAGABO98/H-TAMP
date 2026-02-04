@@ -457,8 +457,7 @@ def main():
                 planner.clear_reservations_for_agent(robot_profile=robot_profiles[i])
                 final_path = planner.combine_paths(sub_paths)
                 planner.reserve_path_for_agent(path=final_path, 
-                                           robot_profile=robot_profiles[i], 
-                                           wait_time_at_goal=100.0)
+                                           robot_profile=robot_profiles[i])
                 paths.append(final_path)
                 state.assign_request_to_robot(robot_id=i, 
                                               request_id=current_request.request_id, 
