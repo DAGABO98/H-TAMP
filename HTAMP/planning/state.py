@@ -430,7 +430,8 @@ def main():
                                                     goal_traversal_node=goal_node,
                                                     robot_profile=robot_profiles[i],
                                                     current_time=current_time,
-                                                    wait_time_at_goal=current_request.wait_times_at_goals_seconds[j])
+                                                    wait_time_at_goal=current_request.wait_times_at_goals_seconds[j],
+                                                    horizon=current_request.time_for_service)
             if not sub_path:
                 sub_paths = []
                 break
@@ -446,7 +447,8 @@ def main():
                                                        goal_traversal_node=selected_start_nodes[i],
                                                        robot_profile=robot_profiles[i],
                                                        current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=simulator_config.horizon)
+                                                       wait_time_at_goal=simulator_config.horizon,
+                                                       horizon=2*simulator_config.horizon)
             if return_path:
                 sub_paths.append(return_path)
                 current_request.schedule_task(planned_time=sub_paths[-2][-1][1].end,
