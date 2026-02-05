@@ -261,7 +261,7 @@ class PlanningState:
             if len(self.assigned_requests[robot_id]) == 0:
                 profile = self.simulator_config.robot_profiles[robot_id]
                 if profile.robot_type == robot_type:
-                    available_robots.append(robot_id)
+                    available_robots.append(profile.robot_id)
         return available_robots
     
     def get_robots_of_type(self, robot_type: str) -> list[int]:
@@ -269,7 +269,7 @@ class PlanningState:
         for robot_id in self.robots_positions:
             profile = self.simulator_config.robot_profiles[robot_id]
             if profile.robot_type == robot_type:
-                robots_of_type.append(robot_id)
+                robots_of_type.append(profile.robot_id)
         return robots_of_type
 
     def step(self, traversal_graph: TraversalGraph) -> None:
