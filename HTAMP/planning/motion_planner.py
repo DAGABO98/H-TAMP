@@ -268,7 +268,8 @@ class SIPPwRT:
                   robot_profile: RobotProfile,
                   current_time: float = 0.0,
                   wait_time_at_goal: float = 0.0,
-                  horizon: float = float('inf')) -> Optional[List[Tuple[TraversalNode, TimeInterval]]]:
+                  horizon: float = float('inf'),
+                  tolerance: float = 1e-9) -> Optional[List[Tuple[TraversalNode, TimeInterval]]]:
         # Plan the path from start to goal while avoiding obstacles
         start_safe_intervals = self._get_safe_intervals_for_current_node(start_traversal_node,
                                                                        robot_profile,
@@ -278,10 +279,14 @@ class SIPPwRT:
 
         sipp_node_list: List[SIPPNode] = []
         for time_reservation in start_safe_intervals:
-            if time_reservation.interval.end < current_time:
+            if time_reservation.interval.end < current_time - tolerance:
                 continue
-            arrival_time = max(current_time, time_reservation.interval.start)
-            sipp_node_list.append(SIPPNode(traversal_node=start_traversal_node, interval=time_reservation.interval, arrival=arrival_time))
+            elif current_time + tolerance < time_reservation.interval.start:
+                continue
+            else:
+                arrival_time = current_time
+                sipp_node_list.append(SIPPNode(traversal_node=start_traversal_node, interval=time_reservation.interval, arrival=arrival_time))
+                break
 
         if not sipp_node_list:
             print("No valid start SIPP nodes found after filtering by current time.")
