@@ -90,17 +90,24 @@ class PlanningState:
         self.robots_next_nodes[robot_id] = end_node
         self.robots_current_time[robot_id] = start_time_interval.start
         self.robots_next_time[robot_id] = end_time_interval.start
-        extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
-                                                                            end_node, 
-                                                                            traversal_graph)
-        zipped_samples, cumulative_lengths, edge_length = extraction_results
-        self.edge_samples[robot_id] = zipped_samples
-        self.cumulative_path_lengths[robot_id] = cumulative_lengths
-        self.edge_lengths[robot_id] = edge_length
-        self.previous_traversed_distances[robot_id] = 0.0
         self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
         self.robots_current_node_index[robot_id] = 0
-        self.point_indices_on_edge[robot_id] = 0
+        if start_node.label == end_node.label:
+            self.edge_samples[robot_id] = np.array([])
+            self.cumulative_path_lengths[robot_id] = np.array([])
+            self.edge_lengths[robot_id] = 0.0
+            self.previous_traversed_distances[robot_id] = 0.0
+            self.point_indices_on_edge[robot_id] = 0
+        else:
+            extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
+                                                                                end_node, 
+                                                                                traversal_graph)
+            zipped_samples, cumulative_lengths, edge_length = extraction_results
+            self.edge_samples[robot_id] = zipped_samples
+            self.cumulative_path_lengths[robot_id] = cumulative_lengths
+            self.edge_lengths[robot_id] = edge_length
+            self.previous_traversed_distances[robot_id] = 0.0
+            self.point_indices_on_edge[robot_id] = 0
     
     def assign_robot_path(self, 
                           robot_id: int, 
@@ -196,20 +203,28 @@ class PlanningState:
             else:
                 end_node, end_time_interval = path[next_index]
                 self.robots_next_nodes[robot_id] = end_node
-
-                extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
-                                                                                    end_node, 
-                                                                                    traversal_graph=traversal_graph)
-                zipped_samples, cumulative_lengths, edge_length = extraction_results
-                self.edge_samples[robot_id] = zipped_samples
-                self.cumulative_path_lengths[robot_id] = cumulative_lengths
-                self.edge_lengths[robot_id] = edge_length
-                self.previous_traversed_distances[robot_id] = 0.0
-                self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
-                self.robots_current_node_index[robot_id] = current_index
-                self.point_indices_on_edge[robot_id] = 0
                 self.robots_current_time[robot_id] = start_time_interval.start
                 self.robots_next_time[robot_id] = end_time_interval.start
+                self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
+                self.robots_current_node_index[robot_id] = current_index
+
+                if start_node.label == end_node.label:
+                    self.edge_samples[robot_id] = np.array([])
+                    self.cumulative_path_lengths[robot_id] = np.array([])
+                    self.edge_lengths[robot_id] = 0.0
+                    self.previous_traversed_distances[robot_id] = 0.0
+                    self.point_indices_on_edge[robot_id] = 0
+                else:
+                    extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
+                                                                                        end_node, 
+                                                                                        traversal_graph)
+                    zipped_samples, cumulative_lengths, edge_length = extraction_results
+                    self.edge_samples[robot_id] = zipped_samples
+                    self.cumulative_path_lengths[robot_id] = cumulative_lengths
+                    self.edge_lengths[robot_id] = edge_length
+                    self.previous_traversed_distances[robot_id] = 0.0
+                    self.point_indices_on_edge[robot_id] = 0
+
         else:
             self.robots_next_nodes[robot_id] = None
             self.edge_samples[robot_id] = np.array([])
