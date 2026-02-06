@@ -3,17 +3,12 @@
 # Requests that enter the system are placed in a priority queue, where requests with earlier released times have higher priority.
 # Requests are assigned when they reach the front of the queue and there is at least one available robot.
 
-import heapq
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
-from HTAMP.environment.loc_dataclasses import TimeInterval
-from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest
+from HTAMP.planning.planning_dataclasses import RequestsLists
 from HTAMP.planning.state import PlanningState
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
-
 
 class FleetManager:
     def __init__(self):
@@ -45,23 +40,26 @@ class FleetManager:
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         requests_to_add_back = []
-        print(f"Available robots for {robot_type}: {available_robots}")
+        if debug:
+            print(f"Available robots for {robot_type}: {available_robots}")
         while available_robots:
             if not requests_queue.heap:
                 break  # No more requests to assign
 
             # Get the next request from the highest priority queue
             next_request_id = requests_queue.pop_task()
-            print(f"Assigning request {next_request_id} to {robot_type} robot")
+            if debug:
+                print(f"Attempting to assign request {next_request_id} of type {robot_type}")
             closest_robot_results = AssignmentHelpers.determine_closest_robot_to_request(request_id=next_request_id, 
                                                                   available_robots=available_robots, 
                                                                   state=state, 
                                                                   motion_planner=motion_planner,
-                                                                  traversal_graph_generator=traversal_graph_generator)
+                                                                  traversal_graph_generator=traversal_graph_generator,
+                                                                  debug=debug)
             
             closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
 
-            print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
+            print(f"Closest robot for request {next_request_id}: {closest_robot} with path {closest_path} and time {shortest_time}")
             
             if closest_robot is not None:
                 AssignmentHelpers.assign_request_to_robot(state=state,
@@ -78,6 +76,8 @@ class FleetManager:
                 # No feasible robot found for this request, re-add it to the queue
                 request = state.requests[next_request_id]
                 requests_to_add_back.append(request)
+                print(f"No available robot could be assigned to request {next_request_id} at this time. It will be re-added to the queue.")
+
         for request in requests_to_add_back:
             AssignmentHelpers.add_request_to_queue(request, requests_queue)
     
