@@ -201,6 +201,7 @@ class AssignmentEvaluator:
                                          minute: int,
                                          request_handler: DailyRequestHandler,
                                          look_ahead_minutes: int = 60) -> RequestsLists:
+        
         time_signal = TimeSignal(year=self.date_stamp.year,
                                  month=self.date_stamp.month,
                                  day=self.date_stamp.day,
@@ -222,6 +223,8 @@ class AssignmentEvaluator:
         print(f"Temperature Requests: {len(requests_lists.temperature_requests)}")
         print(f"Oxygen Saturation Requests: {len(requests_lists.oxygen_saturation_requests)}")
         print(f"Medications Requests: {len(requests_lists.medications_requests)}")
+
+        return requests_lists
     
     def _assign_requests_and_step_simulator(self,
                                             requests_lists: Optional[RequestsLists] = None,
