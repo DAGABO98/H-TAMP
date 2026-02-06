@@ -139,19 +139,23 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         for assigned_request_id, (assigned_robot_id, assigned_deadline) in assigned_requests_dict.items():
             if request_pickup_deadline < assigned_deadline:
                 # Check if the newly arrived request can be assigned to the robot
+                robot_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=assigned_robot_id, 
+                                                                                             state=state)
                 new_request = state.requests[request.request_id]
                 new_trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=new_request,
-                                                                robot_id=assigned_robot_id,
-                                                                state=state,
-                                                                motion_planner=motion_planner,
-                                                                traversal_graph_generator=traversal_graph_generator)
+                                                                                       robot_node=robot_node,
+                                                                                       robot_id=assigned_robot_id,
+                                                                                       state=state,
+                                                                                       motion_planner=motion_planner,
+                                                                                       traversal_graph_generator=traversal_graph_generator)
                 
                 prev_request = state.requests[assigned_request_id]
                 prev_trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=prev_request,
-                                                                 robot_id=assigned_robot_id,
-                                                                 state=state,
-                                                                 motion_planner=motion_planner,
-                                                                 traversal_graph_generator=traversal_graph_generator)
+                                                                                        robot_node=robot_node,
+                                                                                        robot_id=assigned_robot_id,
+                                                                                        state=state,
+                                                                                        motion_planner=motion_planner,
+                                                                                        traversal_graph_generator=traversal_graph_generator)
                 
                 if new_trip_time < prev_trip_time:
                     assigned_request = state.requests[assigned_request_id]

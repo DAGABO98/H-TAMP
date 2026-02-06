@@ -49,12 +49,15 @@ class IdleTaskPrediction:
                                    debug: bool) -> Optional[TaskRequest]:
         shortest_time = float('inf')
         selected_task = None
+        robot_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                     state=state)
         for prediction_task in self.prediction_tasks:
             trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=prediction_task,
-                                                       robot_id=robot_id,
-                                                       state=state,
-                                                       motion_planner=motion_planner,
-                                                       traversal_graph_generator=traversal_graph_generator)
+                                                                               robot_node=robot_node,
+                                                                               robot_id=robot_id,
+                                                                               state=state,
+                                                                               motion_planner=motion_planner,
+                                                                               traversal_graph_generator=traversal_graph_generator)
             if trip_time < shortest_time:
                 shortest_time = trip_time
                 selected_task = prediction_task

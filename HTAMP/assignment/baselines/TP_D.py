@@ -103,11 +103,11 @@ class TokenPassingWithDeadlines:
                                    traversal_graph_generator: TraversalGraphGenerator) -> Optional[str]:
         closest_request_id = None
         smallest_cost = float('inf')
+        start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                         state=state)
         for request_id in request_dict.keys():
             request_pickup_deadline = request_dict[request_id]
             current_request = state.requests[request_id]
-            start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
-                                                                                         state=state)
             trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=current_request,
                                                                                robot_node=start_node,
                                                                                robot_id=robot_id,
