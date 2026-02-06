@@ -21,12 +21,18 @@ class TaskQueue:
 class AssignmentHelpers:
     
     @staticmethod
-    def determine_robot_locations(robot_id: int, state: PlanningState) -> TraversalNode:
-        if state.robots_next_nodes[robot_id] is None:
-            robot_location = state.robots_current_nodes[robot_id]
+    def determine_robot_nodes_and_times(robot_id: int, 
+                                        state: PlanningState) -> tuple[TraversalNode, float]:
+        if state.current_wait_times[robot_id] > 0.0:
+            robot_node = state.robots_current_nodes[robot_id]
+            robot_time = state.robots_current_time[robot_id]
         else:
-            robot_location =  state.robots_next_nodes[robot_id]
-        return robot_location
+            if state.robots_next_nodes[robot_id] is not None:
+                robot_node = state.robots_next_nodes[robot_id]
+            else:
+                robot_node = state.robots_current_nodes[robot_id]
+            robot_time = state.robots_next_time[robot_id] 
+        return robot_node, robot_time
     
     @staticmethod
     def remove_expired_requests_from_queue(queue: TaskQueue, state: PlanningState):
