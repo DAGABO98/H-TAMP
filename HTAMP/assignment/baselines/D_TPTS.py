@@ -248,7 +248,8 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                                                                     robot_id=robot_id,
                                                                                                     state=state,
                                                                                                     motion_planner=motion_planner,
-                                                                                                    traversal_graph_generator=traversal_graph_generator)
+                                                                                                    traversal_graph_generator=traversal_graph_generator,
+                                                                                                    debug=debug)
                 if planned_path:
                     if request_id in unassigned_requests_dict:
                         unassigned_requests_dict.pop(request_id)

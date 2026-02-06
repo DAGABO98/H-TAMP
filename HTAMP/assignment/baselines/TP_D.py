@@ -144,7 +144,8 @@ class TokenPassingWithDeadlines:
                                                                   robot_id=robot_id,
                                                                   state=state,
                                                                   motion_planner=motion_planner,
-                                                                  traversal_graph_generator=traversal_graph_generator)
+                                                                  traversal_graph_generator=traversal_graph_generator,
+                                                                  debug=debug)
                 
                 closest_path, closest_planned_goal_indices, shortest_time = planning_results
                 if not closest_path:

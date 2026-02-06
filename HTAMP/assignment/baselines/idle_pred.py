@@ -172,7 +172,8 @@ class IdleTaskPrediction:
                                                                     available_robots=available_robots, 
                                                                   state=state, 
                                                                   motion_planner=motion_planner,
-                                                                  traversal_graph_generator=traversal_graph_generator)
+                                                                  traversal_graph_generator=traversal_graph_generator,
+                                                                  debug=debug)
             
             closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
 

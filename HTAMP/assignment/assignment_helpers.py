@@ -1,4 +1,5 @@
 import heapq
+from typing import Optional
 
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.traversal_dataclasses import TraversalNode
@@ -57,7 +58,8 @@ class AssignmentHelpers:
                                                       robot_id: int, 
                                                       state: PlanningState,
                                                       motion_planner: MotionPlanner,
-                                                      traversal_graph_generator: TraversalGraphGenerator) \
+                                                      traversal_graph_generator: TraversalGraphGenerator,
+                                                      debug: bool) \
                                     -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         current_request = state.requests[request_id]
         start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id, 
@@ -66,17 +68,23 @@ class AssignmentHelpers:
         planned_goal_indices: list[int] = []
         planned_time_to_service_request: float = float('inf')
         current_time = initial_time
-        print(f"Generating motion plan for robot {robot_id} starting at node {start_node.label} and time {initial_time}.")
+        if debug:
+            print(f"Generating motion plan for robot {robot_id} starting at node {start_node.label} and time {initial_time}.")
         for j, goal_node_label in enumerate(current_request.goal_nodes):
             goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            print(f"  Planning path to goal node {goal_node.label} from start node {start_node.label} at time {current_time}.")
+            if debug:
+                print(f"  Planning path to goal node {goal_node.label} from start node {start_node.label} at time {current_time}.")
             sub_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                     goal_traversal_node=goal_node,
                                                     robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                     current_time=current_time,
                                                     wait_time_at_goal=current_request.wait_times_at_goals_seconds[j],
                                                     horizon=current_request.time_for_service)
-            print(f"    Obtained sub-path: {sub_path}")
+            if debug:
+                if sub_path is not None:
+                    print(f"  Planned sub-path to goal node {goal_node.label}: {sub_path}")
+                else:
+                    print(f"  No feasible path found to goal node {goal_node.label} from start node {start_node.label} at time {current_time}.")
             if sub_path is None:
                 sub_paths = []
                 planned_goal_indices = []
@@ -106,7 +114,8 @@ class AssignmentHelpers:
                     planned_time_to_service_request = float('inf')
                 else:
                     final_path = motion_planner.combine_paths(sub_paths)
-                    print(f"  Final planned path for robot {robot_id} to service request {request_id}: {final_path}")
+                    if debug:
+                        print(f"Combined path for request {request_id} from robot {robot_id}: {final_path}")
 
             else:
                 final_path = []
@@ -123,7 +132,8 @@ class AssignmentHelpers:
                                            available_robots: list[int], 
                                            state: PlanningState, 
                                            motion_planner: MotionPlanner, 
-                                           traversal_graph_generator: TraversalGraphGenerator):
+                                           traversal_graph_generator: TraversalGraphGenerator,
+                                           debug: bool) -> tuple[Optional[int], list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         closest_robot = None
         closest_path = []
         closest_planned_goal_indices = []
@@ -134,7 +144,8 @@ class AssignmentHelpers:
                 robot_id=robot_id,
                 state=state,
                 motion_planner=motion_planner,
-                traversal_graph_generator=traversal_graph_generator
+                traversal_graph_generator=traversal_graph_generator,
+                debug=debug
             )
             if len(path) > 0 and planned_time < shortest_time:
                 shortest_time = planned_time
@@ -171,7 +182,8 @@ class AssignmentHelpers:
                 robot_profile=state.simulator_config.robot_profiles[robot_id]
             )
 
-        print(f"Reserving motion plan for robot {robot_id}: {planned_path}")
+        if debug:
+            print(f"Reserving motion plan for robot {robot_id}: {planned_path}")
             
         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
         motion_planner.reserve_path_for_agent(path=planned_path,
