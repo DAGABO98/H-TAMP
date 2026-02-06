@@ -30,8 +30,8 @@ class SequentialGreedy:
                                        traversal_graph_generator: TraversalGraphGenerator):
         for robot_id in self.assigned_requests.keys():
             if len(self.assigned_requests[robot_id]) == 0:
-                start_node = AssignmentHelpers.determine_robot_locations(robot_id, state)
-                current_time: float = state.robots_current_time[robot_id]
+                start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                             state=state)
                 self.start_times[robot_id] = current_time
                 self.start_nodes[robot_id] = start_node
                 self.first_request_started[robot_id] = False
@@ -44,8 +44,8 @@ class SequentialGreedy:
                     start_node = traversal_graph_generator.traversal_graph.nodes_dict[start_node_label]
                     current_time = state.requests[first_request_id].planned_time
                 else:
-                    start_node = AssignmentHelpers.determine_robot_locations(robot_id, state)
-                    current_time: float = state.robots_current_time[robot_id]
+                    start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                                 state=state)
                 self.start_times[robot_id] = current_time
                 self.start_nodes[robot_id] = start_node
                 self.first_request_started[robot_id] = first_task_started
@@ -548,10 +548,9 @@ class SequentialGreedy:
                                                     state: PlanningState,
                                                     motion_planner: MotionPlanner,
                                                     traversal_graph_generator: TraversalGraphGenerator):
-        start_node = AssignmentHelpers.determine_robot_locations(robot_id=robot_id, 
-                                                                state=state)
+        start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                     state=state)
         failed_request_id = None
-        current_time = state.robots_current_time[robot_id]
         print(f"Generating motion plan for robot {robot_id} starting at node {start_node.label} and time {current_time}.")
         planned_goal_indices_list: list[list[int]] = []
         planned_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
@@ -593,10 +592,9 @@ class SequentialGreedy:
                                       state: PlanningState,
                                       motion_planner: MotionPlanner,
                                       traversal_graph_generator: TraversalGraphGenerator):
-        start_node = AssignmentHelpers.determine_robot_locations(robot_id=robot_id, 
-                                                                state=state)
+        start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                        state=state)
         depot_node = state.robot_depots[robot_id]
-        current_time = state.robots_current_time[robot_id]
         planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                         goal_traversal_node=depot_node,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id],

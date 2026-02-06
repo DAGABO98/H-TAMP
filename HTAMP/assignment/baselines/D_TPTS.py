@@ -207,14 +207,15 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
             else:
                 request_pickup_deadline = unassigned_requests_dict[request_id]
             current_request = state.requests[request_id]
+            start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id, state=state)
             trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=current_request,
-                                                       robot_id=robot_id,
-                                                       state=state,
-                                                       motion_planner=motion_planner,
-                                                       traversal_graph_generator=traversal_graph_generator)
+                                                                               robot_node=start_node,
+                                                                               robot_id=robot_id,
+                                                                               state=state,
+                                                                               motion_planner=motion_planner,
+                                                                               traversal_graph_generator=traversal_graph_generator)
             
-            current_cost = (self.alpha * (request_pickup_deadline - state.robots_current_time[robot_id]) + \
-                            ((1 - self.alpha) * (trip_time)))
+            current_cost = (self.alpha * (request_pickup_deadline - initial_time) + ((1 - self.alpha) * (trip_time)))
             allocations.append((request_id, current_cost))
         
         allocations.sort(key=lambda x: x[1])  # Sort by cost
@@ -300,10 +301,12 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         while self.robots_to_be_sent_to_depot:
             robot_to_depot_id = self.robots_to_be_sent_to_depot.pop(0)
             print(f"No suitable requests found for robot {robot_to_depot_id}. Planning return to depot.")
-            return_path = motion_planner.obtain_path_for_agent(start_traversal_node=AssignmentHelpers.determine_robot_locations(robot_to_depot_id, state),
+            start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_to_depot_id, 
+                                                                                         state)
+            return_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                     goal_traversal_node=state.robot_depots[robot_to_depot_id],
                                                     robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id],
-                                                    current_time=state.robots_current_time[robot_to_depot_id],
+                                                    current_time=initial_time,
                                                     wait_time_at_goal=state.simulator_config.horizon,
                                                     horizon=2*state.simulator_config.horizon)
             assert return_path is not None, "Return path to depot could not be found."

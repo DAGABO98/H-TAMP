@@ -106,14 +106,16 @@ class TokenPassingWithDeadlines:
         for request_id in request_dict.keys():
             request_pickup_deadline = request_dict[request_id]
             current_request = state.requests[request_id]
+            start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                         state=state)
             trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=current_request,
+                                                                               robot_node=start_node,
                                                                                robot_id=robot_id,
                                                                                state=state,
                                                                                motion_planner=motion_planner,
                                                                                traversal_graph_generator=traversal_graph_generator)
             
-            current_cost = (self.alpha * (request_pickup_deadline - state.robots_current_time[robot_id])) + \
-                            (1 - self.alpha) * (trip_time)
+            current_cost = (self.alpha * (request_pickup_deadline - initial_time)) + ((1 - self.alpha) * trip_time)
             if current_cost < smallest_cost:
                 smallest_cost = current_cost
                 closest_request_id = request_id

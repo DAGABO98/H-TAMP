@@ -60,12 +60,13 @@ class AssignmentHelpers:
                                                       traversal_graph_generator: TraversalGraphGenerator) \
                                     -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         current_request = state.requests[request_id]
-        start_node = AssignmentHelpers.determine_robot_locations(robot_id, state)
+        start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id, 
+                                                                                     state=state)
         sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
         planned_goal_indices: list[int] = []
         planned_time_to_service_request: float = float('inf')
-        current_time = state.robots_current_time[robot_id]
-        print(f"Generating motion plan for robot {robot_id} starting at node {start_node.label} and time {state.robots_current_time[robot_id]}.")
+        current_time = initial_time
+        print(f"Generating motion plan for robot {robot_id} starting at node {start_node.label} and time {initial_time}.")
         for j, goal_node_label in enumerate(current_request.goal_nodes):
             goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
             print(f"  Planning path to goal node {goal_node.label} from start node {start_node.label} at time {current_time}.")
@@ -183,13 +184,13 @@ class AssignmentHelpers:
     
     @staticmethod
     def heuristic_cost_from_robot_to_request(current_request: TaskRequest,
+                                             robot_node: TraversalNode,
                                             robot_id: int, 
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator) -> float:
-        start_node = AssignmentHelpers.determine_robot_locations(robot_id, state)
         trip_time: float = 0.0
-
+        start_node = robot_node
         for j, goal_node_label in enumerate(current_request.goal_nodes):
             goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
             subpath_length = motion_planner.planner.heuristic(start_traversal_node=start_node,
