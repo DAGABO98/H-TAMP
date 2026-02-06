@@ -281,7 +281,8 @@ class TaskRequest:
 
     def mark_completed(self, completion_time: float) -> None:
         self.completed = True
-        assert math.isclose(self.planned_time, completion_time, abs_tol=1e-4), "Completion time does not match planned time."
+        assert math.isclose(self.planned_time, completion_time, abs_tol=1e-4), \
+            f"Completion time {completion_time} does not match planned time {self.planned_time} for request {self.request_id}."
         self.total_cost = completion_time - self.scheduled_time
         print(f"Request {self.request_id} completed at time {completion_time:.2f} with total cost {self.total_cost:.2f}.")
     
