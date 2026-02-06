@@ -79,35 +79,59 @@ class PlanningState:
         for request in requests:
             self.add_request(request=request)
     
+    def _assign_full_path_to_robot(self, 
+                                   robot_id: int, 
+                                   path: list[tuple[TraversalNode, TimeInterval]], 
+                                   traversal_graph: TraversalGraph) -> None:
+        self.robot_paths[robot_id] = path
+        start_node, start_time_interval = path[0]
+        end_node, end_time_interval = path[1]
+        self.robots_current_nodes[robot_id] = start_node
+        self.robots_next_nodes[robot_id] = end_node
+        self.robots_current_time[robot_id] = start_time_interval.start
+        self.robots_next_time[robot_id] = end_time_interval.start
+        extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
+                                                                            end_node, 
+                                                                            traversal_graph)
+        zipped_samples, cumulative_lengths, edge_length = extraction_results
+        self.edge_samples[robot_id] = zipped_samples
+        self.cumulative_path_lengths[robot_id] = cumulative_lengths
+        self.edge_lengths[robot_id] = edge_length
+        self.previous_traversed_distances[robot_id] = 0.0
+        self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
+        self.robots_current_node_index[robot_id] = 0
+        self.point_indices_on_edge[robot_id] = 0
+    
     def assign_robot_path(self, 
                           robot_id: int, 
                           path: list[tuple[TraversalNode, TimeInterval]], 
                           traversal_graph: TraversalGraph) -> None:
         if len(path) >= 2:
-            if path[0][0].label == self.robots_current_nodes[robot_id].label:
-                self.robot_paths[robot_id] = path
-                start_node, start_time_interval = path[0]
-                end_node, _ = path[1]
-                self.robots_current_nodes[robot_id] = start_node
-                self.robots_next_nodes[robot_id] = end_node
-
-                extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
-                                                                                    end_node, 
-                                                                                    traversal_graph)
-                zipped_samples, cumulative_lengths, edge_length = extraction_results
-                self.edge_samples[robot_id] = zipped_samples
-                self.cumulative_path_lengths[robot_id] = cumulative_lengths
-                self.edge_lengths[robot_id] = edge_length
-                self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
-                self.robots_current_node_index[robot_id] = 0
-                self.point_indices_on_edge[robot_id] = 0
+            if self.current_wait_times[robot_id] > 0.0:
+                assert path[0][0].label == self.robots_current_nodes[robot_id].label, \
+                    f"Path start node {path[0][0].label} does not match robot {robot_id} current node {self.robots_current_nodes[robot_id].label} while robot is waiting."
+                assert path[0][1].start == self.robot_paths[robot_id][self.robots_current_node_index[robot_id]][1].start, \
+                    f"Path start time {path[0][1].start} does not match robot {robot_id} current node start time {self.robot_paths[robot_id][self.robots_current_node_index[robot_id]][1].start} while robot is waiting."
+                self._assign_full_path_to_robot(robot_id=robot_id, 
+                                                path=path, 
+                                                traversal_graph=traversal_graph)
+                
             else:
-                assert path[0][0].label == self.robots_next_nodes[robot_id].label, \
-                    f"Path start node {path[0][0].label} does not match robot {robot_id} current or next node."
-                assert path[0][1].start == self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start, \
-                    f"Path start time {path[0][1].start} does not match robot {robot_id} next node start time {self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start}."
-                self.robot_paths[robot_id] = [self.robot_paths[robot_id][self.robots_current_node_index[robot_id]]] + path
-                self.robots_current_node_index[robot_id] = 0
+                if self.robots_next_nodes[robot_id] is not None:
+                    assert path[0][0].label == self.robots_next_nodes[robot_id].label, \
+                        f"Path start node {path[0][0].label} does not match robot {robot_id} next node {self.robots_next_nodes[robot_id].label} while robot is moving."
+                    assert path[0][1].start == self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start, \
+                        f"Path start time {path[0][1].start} does not match robot {robot_id} next node start time {self.robot_paths[robot_id][self.robots_current_node_index[robot_id]+1][1].start} while robot is moving."
+                    self.robot_paths[robot_id] = [self.robot_paths[robot_id][self.robots_current_node_index[robot_id]]] + path
+                    self.robots_current_node_index[robot_id] = 0
+                else:
+                    assert path[0][0].label == self.robots_current_nodes[robot_id].label, \
+                        f"Path start node {path[0][0].label} does not match robot {robot_id} current node {self.robots_current_nodes[robot_id].label} while robot is idle."
+                    assert path[0][1].start == self.robots_next_time[robot_id], \
+                        f"Path start time {path[0][1].start} does not match robot {robot_id} current node start time {self.robots_next_time[robot_id]} while robot is idle."
+                    self._assign_full_path_to_robot(robot_id=robot_id, 
+                                                    path=path, 
+                                                    traversal_graph=traversal_graph)
         else:
             self.robot_paths[robot_id] = path
             self.robots_next_nodes[robot_id] = None
@@ -140,7 +164,7 @@ class PlanningState:
         self.assigned_requests[robot_id] = request_ids
         self.assign_robot_path(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
 
-    def _check_if_next_node_is_task_start(self, robot_id: int, traversal_node: TraversalNode) -> None:
+    def _check_if_node_is_task_start(self, robot_id: int, traversal_node: TraversalNode) -> None:
         assigned_requests = self.assigned_requests[robot_id]
         if assigned_requests:
             current_request_id = assigned_requests[0]
@@ -156,6 +180,8 @@ class PlanningState:
             next_index = current_index + 1
             start_node, start_time_interval = path[current_index]
             self.robots_current_nodes[robot_id] = start_node
+            self._check_if_node_is_task_start(robot_id=robot_id, 
+                                              traversal_node=start_node)
             if next_index >= len(path):
                 self.robots_next_nodes[robot_id] = None
                 self.edge_samples[robot_id] = np.array([])
@@ -170,9 +196,6 @@ class PlanningState:
             else:
                 end_node, end_time_interval = path[next_index]
                 self.robots_next_nodes[robot_id] = end_node
-
-                self._check_if_next_node_is_task_start(robot_id=robot_id,
-                                                       traversal_node=end_node)
 
                 extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
                                                                                     end_node, 
