@@ -208,13 +208,13 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator):
         allocations = []
+        start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id, state=state)
         for request_id in list(unassigned_requests_dict.keys()) + list(assigned_requests_dict.keys()):
             if request_id in assigned_requests_dict:
                 request_pickup_deadline = assigned_requests_dict[request_id][1]
             else:
                 request_pickup_deadline = unassigned_requests_dict[request_id]
             current_request = state.requests[request_id]
-            start_node, _ = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id, state=state)
             trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=current_request,
                                                                                robot_node=start_node,
                                                                                robot_id=robot_id,
@@ -222,7 +222,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                                                motion_planner=motion_planner,
                                                                                traversal_graph_generator=traversal_graph_generator)
             
-            current_cost = (self.alpha * (request_pickup_deadline - state.simulator_time) + ((1 - self.alpha) * (trip_time)))
+            current_cost = (self.alpha * (request_pickup_deadline - initial_time) + ((1 - self.alpha) * (trip_time)))
             allocations.append((request_id, current_cost))
         
         allocations.sort(key=lambda x: x[1])  # Sort by cost
