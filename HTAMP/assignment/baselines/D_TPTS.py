@@ -16,6 +16,8 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         self.assigned_delivery_requests_dict: dict[str, tuple[int, float]] = {}
         self.robots_to_be_sent_to_depot: list[int] = list()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
+        self.previous_available_monitoring_robots: list[int] = list()
+        self.previous_available_delivery_robots: list[int] = list()
     
     def _calculate_pickup_deadline(self, 
                                    request: TaskRequest,
@@ -179,7 +181,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator):
         if requests_lists is None:
-            return
+            return False
         for request in requests_lists.blood_pressure_requests + requests_lists.heart_rate_requests + \
                        requests_lists.respiratory_rate_requests + requests_lists.temperature_requests + \
                        requests_lists.oxygen_saturation_requests:
@@ -196,6 +198,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                              assigned_requests_dict=self.assigned_delivery_requests_dict,
                                                              motion_planner=motion_planner,
                                                              traversal_graph_generator=traversal_graph_generator)
+        return True
     
     def _generate_sorted_allocation_costs_for_requests(self,
                                    robot_id: int,
@@ -232,10 +235,23 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                             robot_type: str,
                                             unassigned_requests_dict: dict[str, float],
                                             assigned_requests_dict: dict[str, tuple[int, float]],
+                                            new_requests_flag: bool,
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         if debug:
             print(f"Available robots for {robot_type}: {available_robots}")
+        
+        if robot_type == "monitoring":
+            if available_robots == self.previous_available_monitoring_robots and not new_requests_flag:
+                print("No new monitoring requests and no change in available monitoring robots. Skipping reassignment.")
+                return
+            self.previous_available_monitoring_robots = available_robots.copy()
+        else:
+            if available_robots == self.previous_available_delivery_robots and not new_requests_flag:
+                print("No new delivery requests and no change in available delivery robots. Skipping reassignment.")
+                return
+            self.previous_available_delivery_robots = available_robots.copy()
+            
         while available_robots:
             robot_id = available_robots.pop(0)
             allocations = self._generate_sorted_allocation_costs_for_requests(robot_id=robot_id,
@@ -327,6 +343,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                state: PlanningState, 
                                                motion_planner: MotionPlanner, 
                                                traversal_graph_generator: TraversalGraphGenerator,
+                                               new_requests_flag: bool,
                                                debug: bool):
         self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
@@ -340,6 +357,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                              state: PlanningState, 
                                              motion_planner: MotionPlanner, 
                                              traversal_graph_generator: TraversalGraphGenerator,
+                                             new_requests_flag: bool,
                                              debug: bool):
         self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
@@ -364,19 +382,21 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                          motion_planner=motion_planner,
                                          traversal_graph_generator=traversal_graph_generator)
 
-        self._add_new_requests_to_dicts(requests_lists=requests_lists, 
-                                        state=state, 
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator)
+        new_requests_flag = self._add_new_requests_to_dicts(requests_lists=requests_lists, 
+                                                            state=state, 
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator)
 
         # Assignment logic for monitoring robots
         self._assign_requests_for_monitoring_robots(state=state, 
                                                    motion_planner=motion_planner, 
                                                    traversal_graph_generator=traversal_graph_generator,
+                                                   new_requests_flag=new_requests_flag,
                                                    debug=debug)
         
         # Assignment logic for delivery robots
         self._assign_requests_for_delivery_robots(state=state, 
                                                  motion_planner=motion_planner, 
                                                  traversal_graph_generator=traversal_graph_generator,
+                                                 new_requests_flag=new_requests_flag,
                                                  debug=debug)

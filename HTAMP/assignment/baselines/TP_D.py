@@ -16,6 +16,8 @@ class TokenPassingWithDeadlines:
         self.monitoring_requests_dict: dict[str, float] = {}
         self.delivery_requests_dict: dict[str, float] = {}
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
+        self.previously_available_monitoring_robots: set[int] = set()
+        self.previously_available_delivery_robots: set[int] = set()
     
     def _add_request_to_dict(self, 
                              request: TaskRequest, 
@@ -80,20 +82,15 @@ class TokenPassingWithDeadlines:
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator):
         if requests_lists is None:
-            return
+            return False
         for request in requests_lists.blood_pressure_requests + requests_lists.heart_rate_requests + \
                        requests_lists.respiratory_rate_requests + requests_lists.temperature_requests + \
                        requests_lists.oxygen_saturation_requests:
             self._add_request_to_dict(request, self.monitoring_requests_dict, state, motion_planner, traversal_graph_generator)
         for request in requests_lists.medications_requests:
             self._add_request_to_dict(request, self.delivery_requests_dict, state, motion_planner, traversal_graph_generator)
-    
-    def _determine_robot_locations(self, robot_id: int, state: PlanningState) -> TraversalNode:
-        if state.robots_next_nodes[robot_id] is None:
-            robot_location = state.robots_current_nodes[robot_id]
-        else:
-            robot_location =  state.robots_next_nodes[robot_id]
-        return robot_location
+        
+        return True
     
     def _determine_closest_request(self,
                                    robot_id: int,
@@ -128,10 +125,25 @@ class TokenPassingWithDeadlines:
                                             traversal_graph_generator: TraversalGraphGenerator,
                                             robot_type: str,
                                             requests_dict: dict[str, float],
+                                            new_requests_flag: bool,
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         if debug:
             print(f"Available robots for {robot_type}: {available_robots}")
+
+        if robot_type == "monitoring":
+            if available_robots == self.previously_available_monitoring_robots and not new_requests_flag:
+                if debug:
+                    print("No new monitoring requests and no change in available monitoring robots. Skipping assignment.")
+                return
+            self.previously_available_monitoring_robots = available_robots.copy()
+        else:
+            if available_robots == self.previously_available_delivery_robots and not new_requests_flag:
+                if debug:
+                    print("No new delivery requests and no change in available delivery robots. Skipping assignment.")
+                return
+            self.previously_available_delivery_robots = available_robots.copy()
+            
         for robot_id in available_robots:
             closest_request_id = self._determine_closest_request(robot_id=robot_id,
                                                                  request_dict=requests_dict,
@@ -171,24 +183,28 @@ class TokenPassingWithDeadlines:
                                                state: PlanningState, 
                                                motion_planner: MotionPlanner, 
                                                traversal_graph_generator: TraversalGraphGenerator,
+                                               new_requests_flag: bool,
                                                debug: bool):
         self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  robot_type="monitoring",
                                                  requests_dict=self.monitoring_requests_dict,
+                                                 new_requests_flag=new_requests_flag,
                                                  debug=debug)
     
     def _assign_requests_for_delivery_robots(self, 
                                              state: PlanningState, 
                                              motion_planner: MotionPlanner, 
                                              traversal_graph_generator: TraversalGraphGenerator,
+                                             new_requests_flag: bool,
                                              debug: bool):
         self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  robot_type="delivery",
                                                  requests_dict=self.delivery_requests_dict,
+                                                 new_requests_flag=new_requests_flag,
                                                  debug=debug)
 
     def assign_requests_to_robots(self, 
@@ -201,19 +217,22 @@ class TokenPassingWithDeadlines:
         self._check_if_requests_in_dicts_expired(state=state, 
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator)
-        self._add_all_requests_to_dicts(requests_lists=requests_lists, 
-                                        state=state, 
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator)
+        
+        new_requests_flag = self._add_all_requests_to_dicts(requests_lists=requests_lists, 
+                                                            state=state, 
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator)
 
         # Assignment logic for monitoring robots
         self._assign_requests_for_monitoring_robots(state=state, 
                                                    motion_planner=motion_planner, 
                                                    traversal_graph_generator=traversal_graph_generator,
+                                                   new_requests_flag=new_requests_flag,
                                                    debug=debug)
         
         # Assignment logic for delivery robots
         self._assign_requests_for_delivery_robots(state=state, 
                                                  motion_planner=motion_planner, 
                                                  traversal_graph_generator=traversal_graph_generator,
+                                                 new_requests_flag=new_requests_flag,
                                                  debug=debug)
