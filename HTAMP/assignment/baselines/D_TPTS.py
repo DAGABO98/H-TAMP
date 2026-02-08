@@ -243,12 +243,14 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
         
         if robot_type == "monitoring":
             if available_robots == self.previous_available_monitoring_robots and not new_requests_flag:
-                print("No new monitoring requests and no change in available monitoring robots. Skipping reassignment.")
+                if debug:
+                    print("No new monitoring requests and no change in available monitoring robots. Skipping reassignment.")
                 return
             self.previous_available_monitoring_robots = available_robots.copy()
         else:
             if available_robots == self.previous_available_delivery_robots and not new_requests_flag:
-                print("No new delivery requests and no change in available delivery robots. Skipping reassignment.")
+                if debug:
+                    print("No new delivery requests and no change in available delivery robots. Skipping reassignment.")
                 return
             self.previous_available_delivery_robots = available_robots.copy()
             
@@ -351,6 +353,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                  robot_type="monitoring",
                                                  unassigned_requests_dict=self.monitoring_requests_dict,
                                                  assigned_requests_dict=self.assigned_monitoring_requests_dict,
+                                                 new_requests_flag=new_requests_flag,
                                                  debug=debug)
     
     def _assign_requests_for_delivery_robots(self, 
@@ -365,6 +368,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                  robot_type="delivery",
                                                  unassigned_requests_dict=self.delivery_requests_dict,
                                                  assigned_requests_dict=self.assigned_delivery_requests_dict,
+                                                 new_requests_flag=new_requests_flag,
                                                  debug=debug)
 
     def assign_requests_to_robots(self, 
