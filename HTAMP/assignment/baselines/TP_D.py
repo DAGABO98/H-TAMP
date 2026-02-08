@@ -130,7 +130,8 @@ class TokenPassingWithDeadlines:
                                             requests_dict: dict[str, float],
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
-        print(f"Available robots for {robot_type}: {available_robots}")
+        if debug:
+            print(f"Available robots for {robot_type}: {available_robots}")
         for robot_id in available_robots:
             closest_request_id = self._determine_closest_request(robot_id=robot_id,
                                                                  request_dict=requests_dict,
@@ -138,8 +139,8 @@ class TokenPassingWithDeadlines:
                                                                  motion_planner=motion_planner,
                                                                  traversal_graph_generator=traversal_graph_generator)
             
-            print(f"Robot {robot_id} closest request: {closest_request_id}")
             if closest_request_id is not None:
+                print(f"Robot {robot_id} closest request: {closest_request_id}")
                 planning_results = AssignmentHelpers.determine_path_from_robot_location_to_request(request_id=closest_request_id,
                                                                   robot_id=robot_id,
                                                                   state=state,
@@ -163,7 +164,8 @@ class TokenPassingWithDeadlines:
                 
                 requests_dict.pop(closest_request_id)
             else:
-                print(f"No feasible request found for robot {robot_id}")
+                if debug:
+                    print(f"No feasible request found for robot {robot_id}")
     
     def _assign_requests_for_monitoring_robots(self, 
                                                state: PlanningState, 
