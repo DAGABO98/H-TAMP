@@ -103,7 +103,7 @@ class TokenPassingWithDeadlines:
                                    traversal_graph_generator: TraversalGraphGenerator) -> Optional[str]:
         closest_request_id = None
         smallest_cost = float('inf')
-        start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+        start_node, _ = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                          state=state)
         for request_id in request_dict.keys():
             request_pickup_deadline = request_dict[request_id]
@@ -115,7 +115,7 @@ class TokenPassingWithDeadlines:
                                                                                motion_planner=motion_planner,
                                                                                traversal_graph_generator=traversal_graph_generator)
             
-            current_cost = (self.alpha * (request_pickup_deadline - initial_time)) + ((1 - self.alpha) * trip_time)
+            current_cost = (self.alpha * (request_pickup_deadline - state.simulator_time)) + ((1 - self.alpha) * trip_time)
             if current_cost < smallest_cost:
                 smallest_cost = current_cost
                 closest_request_id = request_id
