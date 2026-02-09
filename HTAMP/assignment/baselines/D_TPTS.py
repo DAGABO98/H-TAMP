@@ -8,8 +8,8 @@ from HTAMP.planning.state import PlanningState
 
 class DeadlineAwareTokenPassingwithTaskSwaps():
     
-    def __init__(self):
-        self.alpha: float = 0.1  # Weighting factor between urgency and travel time
+    def __init__(self, alpha: float = 0.1):
+        self.alpha: float = alpha  # Weighting factor between urgency and travel time
         self.monitoring_requests_dict: dict[str, float] = {}
         self.assigned_monitoring_requests_dict: dict[str, tuple[int, float]] = {}
         self.delivery_requests_dict: dict[str, float] = {}

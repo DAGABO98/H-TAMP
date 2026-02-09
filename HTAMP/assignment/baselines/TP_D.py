@@ -11,8 +11,8 @@ from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 
 class TokenPassingWithDeadlines:
-    def __init__(self):
-        self.alpha: float = 0.1  # Weighting factor between urgency and travel time
+    def __init__(self, alpha: float = 0.1):
+        self.alpha: float = alpha  # Weighting factor between urgency and travel time
         self.monitoring_requests_dict: dict[str, float] = {}
         self.delivery_requests_dict: dict[str, float] = {}
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")

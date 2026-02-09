@@ -49,7 +49,8 @@ class AssignmentEvaluator:
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
                      SequentialGreedy | VanillaRollout | AdaptiveRollout | \
-                        AdaptiveHeuristicPolicy = self._initialize_policy(args.mode)
+                        AdaptiveHeuristicPolicy = self._initialize_policy(mode=args.mode, 
+                                                                          alpha=args.alpha)
     
     def _initialize_traversal_graph_generator(self):
         print("Generating Traversal Graph...")
@@ -121,7 +122,7 @@ class AssignmentEvaluator:
                                               use_saved_data=use_saved_request_data)
         return request_handler
     
-    def _initialize_policy(self, mode: int) -> FleetManager | TokenPassingWithDeadlines | \
+    def _initialize_policy(self, mode: int, alpha: float) -> FleetManager | TokenPassingWithDeadlines | \
                                                 DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
                                                     SequentialGreedy | VanillaRollout | AdaptiveRollout | AdaptiveHeuristicPolicy:
         print("Initializing Policy...")
@@ -141,7 +142,11 @@ class AssignmentEvaluator:
         if mode not in policy_dict:
             raise ValueError(f"Invalid mode {mode} selected for policy initialization.")
         
-        policy = policy_dict[mode]()
+        if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
+            policy = policy_dict[mode](alpha=alpha)
+            print(f"Initialized policy with alpha: {alpha}")
+        else:
+            policy = policy_dict[mode]()
         print("Policy initialized.")
         return policy
     
@@ -517,6 +522,7 @@ def main():
 
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
+    parser.add_argument("--alpha", type=float, dest='alpha', default=0.1, help='Alpha parameter for token passing policies.')
     parser.add_argument("--policy_name", type=str, dest='policy_name', default='fleet_manager', help='Name of the policy for saving results.')
     parser.add_argument("--num_monitoring_robots", type=int, default=6, help="Number of monitoring robots to be used in the team")
     parser.add_argument("--num_delivery_robots", type=int, default=3, help="Number of delivery robots to be used in the team")
