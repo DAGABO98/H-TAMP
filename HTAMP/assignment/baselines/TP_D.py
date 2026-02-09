@@ -1,13 +1,10 @@
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers
-from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
-from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest
 from HTAMP.planning.state import PlanningState
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 
 class TokenPassingWithDeadlines:
