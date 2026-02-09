@@ -138,6 +138,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                   traversal_graph_generator=traversal_graph_generator,
                                   assigned=False)
         request_pickup_deadline = unassigned_requests_dict[request.request_id]
+        requests_to_remove_from_assigned_dict = []
         for assigned_request_id, (assigned_robot_id, assigned_deadline) in assigned_requests_dict.items():
             if request_pickup_deadline < assigned_deadline:
                 # Check if the newly arrived request can be assigned to the robot
@@ -168,12 +169,15 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                 motion_planner=motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator,
                                                 assigned=False)
-                    assigned_requests_dict.pop(assigned_request_id)
+                    requests_to_remove_from_assigned_dict.append(assigned_request_id)
                     assigned_request.reset_assignment()
                     state.remove_request_from_robot(robot_id=assigned_robot_id,
                                                     request_id=assigned_request_id)
                     motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[assigned_robot_id])
                     self.robots_to_be_sent_to_depot.append(assigned_robot_id)
+                
+        for request_id in requests_to_remove_from_assigned_dict:
+            assigned_requests_dict.pop(request_id)
     
     def _add_new_requests_to_dicts(self,
                                    requests_lists: Optional[RequestsLists], 
