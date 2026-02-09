@@ -368,19 +368,7 @@ class MotionPlanner:
                       paths: List[List[Tuple[TraversalNode, TimeInterval]]]) -> List[Tuple[TraversalNode, TimeInterval]]:
         combined_path: List[Tuple[TraversalNode, TimeInterval]] = []
         for path in paths:
-            if not combined_path:
-                combined_path.extend(path)
-            else:
-                if len(path) == 1:
-                    combined_path.append(path[0])
-                    continue
-                # Avoid duplicating the connecting node
-                if combined_path[-1][0].label == path[0][0].label:
-                    new_time_interval = TimeInterval(start=combined_path[-1][1].start, end=path[0][1].end)
-                    combined_path[-1] = (combined_path[-1][0], new_time_interval)
-                    combined_path.extend(path[1:])
-                else:
-                    combined_path.extend(path)
+            combined_path.extend(path)
         return combined_path
 
     def _reserve_cells_for_time_interval(self,

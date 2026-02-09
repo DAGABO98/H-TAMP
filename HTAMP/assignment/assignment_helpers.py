@@ -92,7 +92,7 @@ class AssignmentHelpers:
                 break
             sub_paths.append(sub_path)
             if planned_goal_indices:
-                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
+                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path))
             else:
                 planned_goal_indices.append(len(sub_path) - 1)
             start_node = goal_node
