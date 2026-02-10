@@ -1,4 +1,5 @@
 import copy
+import math
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.environment.loc_dataclasses import TimeInterval
@@ -16,6 +17,7 @@ class SequentialGreedy:
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
+        self.robots_to_be_sent_to_depot: list[int] = []
 
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -106,8 +108,8 @@ class SequentialGreedy:
                     request_struct.reset_assignment()
                     state.remove_request_from_robot(request_id=request_id, 
                                                     robot_id=robot_id)
-                    
-                state.assigned_requests[robot_id] = self.assigned_requests[robot_id]
+        
+        state.assigned_requests = copy.deepcopy(self.assigned_requests)
                     
         for robot_id in robots_with_deallocated_requests:
             motion_planner.clear_reservations_for_agent(robot_id=robot_id)
@@ -125,6 +127,7 @@ class SequentialGreedy:
                     motion_planner.reserve_path_for_agent(path=planned_path,
                                                           robot_profile=state.simulator_config.robot_profiles[robot_id])
                     state.robot_paths[robot_id] = planned_path
+                    self.robots_to_be_sent_to_depot.append(robot_id)
                     
             else:
                 last_assigned_request_id = self.assigned_requests[robot_id][-1]
@@ -243,12 +246,37 @@ class SequentialGreedy:
         start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
         depot_node = state.robot_depots[robot_id]
-        planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
+        if self.assigned_requests[robot_id]:
+            last_assigned_request_id = self.assigned_requests[robot_id][-1]
+            last_assigned_request_struct = state.requests[last_assigned_request_id]
+            planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
+            last_path_step = state.robot_paths[robot_id][planned_goal_index]
+            start_node = last_path_step[0]
+            current_time = last_path_step[1].end
+            current_path = state.robot_paths[robot_id][:planned_goal_index+1]
+            planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                         goal_traversal_node=depot_node,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                         current_time=current_time,
                                                         wait_time_at_goal=state.simulator_config.horizon,
                                                         horizon=2*state.simulator_config.horizon)
+            assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
+            planned_path = motion_planner.combine_paths([current_path, planned_path])
+            state.robot_paths[robot_id] = planned_path
+        else:
+            start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                        state=state)
+            
+            planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
+                                                            goal_traversal_node=depot_node,
+                                                            robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                            current_time=current_time,
+                                                            wait_time_at_goal=state.simulator_config.horizon,
+                                                            horizon=2*state.simulator_config.horizon)
+            assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
+            state.assign_robot_path(robot_id=robot_id, 
+                                    path=planned_path, 
+                                    traversal_graph=traversal_graph_generator.traversal_graph)
     
     def _determine_potential_assignments_for_request(self,
                                                      request_id: str,
@@ -395,12 +423,43 @@ class SequentialGreedy:
                                                               traversal_graph_generator=traversal_graph_generator,
                                                               debug=debug)
                     self.assigned_requests[min_robot_id].append(next_request_id)
+                    if min_robot_id in self.robots_to_be_sent_to_depot:
+                        self.robots_to_be_sent_to_depot.remove(min_robot_id)
                     if debug:
                         print(f"Assigned request {next_request_id} to robot {min_robot_id}")
                 else:
                     print(f"Failed to find a valid path for any of the potential assignments of request {next_request_id}. Request is rejected.")
                     request = state.requests[next_request_id]
                     request.mark_rejected()
+    
+    def _determine_if_there_are_robots_close_to_finish(self,
+                                                   state: PlanningState):
+        for robot_id in self.assigned_requests.keys():
+            if not self.assigned_requests[robot_id]:
+                continue
+            last_assigned_request_id = self.assigned_requests[robot_id][-1]
+            last_assigned_request_struct = state.requests[last_assigned_request_id]
+            planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
+            time_to_finish = state.robot_paths[robot_id][planned_goal_index][1].end
+            if math.isclose(time_to_finish - state.simulator_time, 1.0, abs_tol=1e-3):
+                if robot_id not in self.robots_to_be_sent_to_depot:
+                    self.robots_to_be_sent_to_depot.append(robot_id)
+    
+    def send_unallocated_robots_to_depot(self,
+                                        state: PlanningState,
+                                        motion_planner: MotionPlanner,
+                                        traversal_graph_generator: TraversalGraphGenerator):
+        for robot_id in self.robots_to_be_sent_to_depot:
+            planned_path_to_depot = self._generate_motion_plan_to_depot(robot_id=robot_id,
+                                                                        state=state,
+                                                                        motion_planner=motion_planner,
+                                                                        traversal_graph_generator=traversal_graph_generator)
+            assert planned_path_to_depot is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
+            motion_planner.reserve_path_for_agent(path=planned_path_to_depot,
+                                                    robot_profile=state.simulator_config.robot_profiles[robot_id])
+            state.robot_paths[robot_id] = planned_path_to_depot
+
+        self.robots_to_be_sent_to_depot = []
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
@@ -421,10 +480,18 @@ class SequentialGreedy:
                                                                    state=state,
                                                                    motion_planner=motion_planner,
                                                                    traversal_graph_generator=traversal_graph_generator)
+            
             self._extract_node_reservations_from_state(state=state)
 
-        # Assignment logic for robots
-        self._assign_requests_to_robots(state=state,
-                                        motion_planner=motion_planner,
-                                        traversal_graph_generator=traversal_graph_generator,
-                                        debug=debug)
+            # Assignment logic for robots
+            self._assign_requests_to_robots(state=state,
+                                            motion_planner=motion_planner,
+                                            traversal_graph_generator=traversal_graph_generator,
+                                            debug=debug)
+        
+        self._determine_if_there_are_robots_close_to_finish(state=state)
+            
+        # Generate motion plans to depot for robots that were deallocated from requests and had no new requests assigned
+        self.send_unallocated_robots_to_depot(state=state,
+                                              motion_planner=motion_planner,
+                                              traversal_graph_generator=traversal_graph_generator)
