@@ -75,13 +75,16 @@ class SequentialGreedy:
     def _determine_initial_index_for_state_path(self,
                                                  robot_id: int,
                                                  state: PlanningState) -> int:
-        if state.current_wait_times[robot_id] > 0.0:
-            current_index = state.robots_current_node_index[robot_id]
-        else:
-            if state.robots_next_nodes[robot_id] is not None:
-                current_index = state.robots_current_node_index[robot_id] + 1
-            else:
+        if state.robots_next_nodes[robot_id] is not None:
+            assert state.robots_next_nodes[robot_id].label == state.robot_paths[robot_id][state.robots_current_node_index[robot_id]+1][0].label, \
+                f"Mismatch in robot {robot_id} next node label and state path next node label: {state.robots_next_nodes[robot_id].label} vs {state.robot_paths[robot_id][state.robots_current_node_index[robot_id]+1][0].label}"
+            if state.current_wait_times[robot_id] > 0.0:
                 current_index = state.robots_current_node_index[robot_id]
+            else:
+                current_index = state.robots_current_node_index[robot_id] + 1
+        else:
+            current_index = state.robots_current_node_index[robot_id]
+
         return current_index
     
     def _deallocate_requests_with_larger_pickup_deadlines(self,
@@ -468,11 +471,11 @@ class SequentialGreedy:
                                     planned_goal_indices=planned_goal_indices,
                                     planned_time=planned_time_to_reach_last_goal)
         self.assigned_requests[robot_id].append(request_id)
-        state.assigned_requests[robot_id].append(request_id)
         self._update_path_and_requests_indices(robot_id=robot_id,
                                               planned_path=combined_path,
                                               state=state,
                                               traversal_graph_generator=traversal_graph_generator)
+        state.assigned_requests[robot_id].append(request_id)
         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
         motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_id],
                                             robot_profile=state.simulator_config.robot_profiles[robot_id])
