@@ -404,15 +404,17 @@ class SequentialGreedy:
                                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                                           state: PlanningState,
                                           traversal_graph_generator: TraversalGraphGenerator):
-        current_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
+        next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
                                                                           state=state)
-        final_path = planned_path[current_node_index:]
+        final_path = planned_path[next_node_index:]
+        current_node_index = state.robots_current_node_index[robot_id]
 
         for new_request_id in self.assigned_requests[robot_id]:
             request_struct = state.requests[new_request_id]
             for i in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
                 request_struct.planned_goal_indices[i] = request_struct.planned_goal_indices[i] - current_node_index
-                current_step = final_path[request_struct.planned_goal_indices[i]]
+                checking_index = request_struct.planned_goal_indices[i] + (current_node_index - next_node_index)
+                current_step = final_path[checking_index]
                 current_node = current_step[0]
                 assert current_node.label == request_struct.goal_nodes[i], \
                     f"Mismatch in planned goal node label and current node label after path update with index {current_node_index}: {request_struct.goal_nodes[i]} vs {current_node.label}"
@@ -517,6 +519,8 @@ class SequentialGreedy:
                                   debug: bool):
         while self.requests_queue.heap:
             next_request_id = self.requests_queue.pop_task()
+            if next_request_id == "oxygen_saturation.187" or next_request_id == "heart_rate.263":
+                print("Debugging assignment of request " + next_request_id)
             if debug:
                 print(f"Attempting to assign request {next_request_id} with pickup deadline {self.requests_queue.priorities[next_request_id]}")
             potential_assignments = self._determine_potential_assignments_for_request(request_id=next_request_id,
@@ -568,7 +572,7 @@ class SequentialGreedy:
                 
                 if min_planned_path:
                     request_struct = state.requests[next_request_id]
-                    print(f"2) assigned requests for robot {min_robot_id}: {self.assigned_requests[min_robot_id]}")
+                    print(f"2) assigned requests for robot {min_robot_id}: {self.assigned_requests[min_robot_id]} at time {state.simulator_time}")
                     print(f"2) State path: {state.robot_paths[min_robot_id]}")
                     print(f"2) Planned path for assignment of request {next_request_id} to robot {min_robot_id}: {min_planned_path}")
                     self._schedule_request(robot_id=min_robot_id,
@@ -595,7 +599,8 @@ class SequentialGreedy:
             last_assigned_request_struct = state.requests[last_assigned_request_id]
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
             time_to_finish = state.robot_paths[robot_id][planned_goal_index][1].end
-            if math.isclose(time_to_finish - state.simulator_time, 1.0, abs_tol=1e-3):
+            if time_to_finish - state.simulator_time < 1.0:
+                print(f"Robot {robot_id} is close to finishing its assigned requests. Time to finish: {time_to_finish - state.simulator_time}")
                 if robot_id not in self.robots_to_be_sent_to_depot:
                     self.robots_to_be_sent_to_depot.append(robot_id)
     
