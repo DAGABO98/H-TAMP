@@ -113,8 +113,7 @@ class PlanningState:
     def assign_robot_path(self, 
                           robot_id: int, 
                           path: list[tuple[TraversalNode, TimeInterval]], 
-                          traversal_graph: TraversalGraph,
-                          terminal_node: bool = False) -> None:
+                          traversal_graph: TraversalGraph) -> None:
         if len(path) >= 2:
             if self.current_wait_times[robot_id] > 0.0:
                 assert path[0][0].label == self.robots_current_nodes[robot_id].label, \
@@ -136,12 +135,8 @@ class PlanningState:
                 else:
                     assert path[0][0].label == self.robots_current_nodes[robot_id].label, \
                         f"Path start node {path[0][0].label} does not match robot {robot_id} current node {self.robots_current_nodes[robot_id].label} while robot is idle."
-                    if not terminal_node:
-                        assert path[0][1].start == self.robots_next_time[robot_id], \
-                            f"Path start time {path[0][1].start} does not match robot {robot_id} current node start time {self.robots_next_time[robot_id]} while robot is idle."
-                    else:
-                        assert path[0][1].start == self.robots_current_time[robot_id], \
-                            f"Path start time {path[0][1].start} does not match robot {robot_id} current time {self.robots_current_time[robot_id]} while robot is idle and path is terminal."
+                    assert path[0][1].start == self.robots_next_time[robot_id], \
+                        f"Path start time {path[0][1].start} does not match robot {robot_id} current node start time {self.robots_next_time[robot_id]} while robot is idle."
                     self._assign_full_path_to_robot(robot_id=robot_id, 
                                                     path=path, 
                                                     traversal_graph=traversal_graph)

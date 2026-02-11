@@ -282,8 +282,7 @@ class SequentialGreedy:
             self._update_path_and_requests_indices(robot_id=robot_id,
                                                   planned_path=planned_path,
                                                   state=state,
-                                                  traversal_graph_generator=traversal_graph_generator,
-                                                  terminal_node=True)
+                                                  traversal_graph_generator=traversal_graph_generator)
         else:
             start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
@@ -408,8 +407,7 @@ class SequentialGreedy:
                                           robot_id: int,
                                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                                           state: PlanningState,
-                                          traversal_graph_generator: TraversalGraphGenerator,
-                                          terminal_node: bool = False):
+                                          traversal_graph_generator: TraversalGraphGenerator):
         next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
                                                                           state=state)
         final_path = planned_path[next_node_index:]
@@ -427,8 +425,7 @@ class SequentialGreedy:
         
         state.assign_robot_path(robot_id=robot_id, 
                                 path=final_path, 
-                                traversal_graph=traversal_graph_generator.traversal_graph,
-                                terminal_node=terminal_node)
+                                traversal_graph=traversal_graph_generator.traversal_graph)
         
         if robot_id in self.robots_to_be_sent_to_depot:
             self.robots_to_be_sent_to_depot.remove(robot_id)
