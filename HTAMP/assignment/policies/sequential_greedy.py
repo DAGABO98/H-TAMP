@@ -258,9 +258,12 @@ class SequentialGreedy:
             last_assigned_request_id = self.assigned_requests[robot_id][-1]
             last_assigned_request_struct = state.requests[last_assigned_request_id]
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
+            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
             last_path_step = state.robot_paths[robot_id][planned_goal_index]
             start_node = last_path_step[0]
             current_time = last_path_step[1].end
+            assert planned_goal_node_label == start_node.label, \
+                f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
             current_path = state.robot_paths[robot_id][:planned_goal_index+1]
             planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                         goal_traversal_node=depot_node,
@@ -304,10 +307,13 @@ class SequentialGreedy:
         if self.assigned_requests[robot_id]:
             last_assigned_request_id = self.assigned_requests[robot_id][-1]
             last_assigned_request_struct = state.requests[last_assigned_request_id]
+            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
             last_planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
             last_path_step = state.robot_paths[robot_id][last_planned_goal_index]
             start_node = last_path_step[0]
             start_time = last_path_step[1].end
+            assert planned_goal_node_label == start_node.label, \
+                f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
         else:
             start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                     state=state)
@@ -374,6 +380,8 @@ class SequentialGreedy:
             last_path_step = state.robot_paths[robot_id][last_planned_goal_index]
             start_node = last_path_step[0]
             start_time = last_path_step[1].end
+            assert last_assigned_request_struct.goal_nodes[-1] == start_node.label, \
+                f"Mismatch in planned goal node label and start node label: {last_assigned_request_struct.goal_nodes[-1]} vs {start_node.label}"
             initial_planned_goal_index = last_planned_goal_index
         else:
             start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
@@ -404,6 +412,10 @@ class SequentialGreedy:
             request_struct = state.requests[new_request_id]
             for i in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
                 request_struct.planned_goal_indices[i] = request_struct.planned_goal_indices[i] - current_node_index
+                current_step = final_path[request_struct.planned_goal_indices[i]]
+                current_node = current_step[0]
+                assert current_node.label == request_struct.goal_nodes[i], \
+                    f"Mismatch in planned goal node label and current node label after path update with index {current_node_index}: {request_struct.goal_nodes[i]} vs {current_node.label}"
         
         state.assign_robot_path(robot_id=robot_id, 
                                 path=final_path, 
