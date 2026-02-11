@@ -90,7 +90,8 @@ class PlanningState:
         self.robots_next_nodes[robot_id] = end_node
         self.robots_current_time[robot_id] = start_time_interval.start
         self.robots_next_time[robot_id] = end_time_interval.start
-        self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
+        if self.current_wait_times[robot_id] <= 0.0:
+            self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
         self.robots_current_node_index[robot_id] = 0
         if start_node.label == end_node.label:
             self.edge_samples[robot_id] = np.array([])
