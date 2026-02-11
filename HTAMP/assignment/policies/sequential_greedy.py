@@ -122,7 +122,7 @@ class SequentialGreedy:
                                                     robot_id=robot_id)
                     
         for robot_id in robots_with_deallocated_requests:
-            motion_planner.clear_reservations_for_agent(robot_id=robot_id)
+            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
             current_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                           state=state)
             if not self.assigned_requests[robot_id]:
@@ -256,6 +256,7 @@ class SequentialGreedy:
         depot_node = state.robot_depots[robot_id]
         if self.assigned_requests[robot_id]:
             # TODO: Fix this logic to consider the case where the robot is currently waiting at a goal node and has not yet reached the planned goal node in its path
+            print(f"Generating motion plan to depot for robot {robot_id} after deallocation from requests. Robot has assigned requests: {self.assigned_requests[robot_id]}")
             last_assigned_request_id = self.assigned_requests[robot_id][-1]
             last_assigned_request_struct = state.requests[last_assigned_request_id]
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
@@ -275,10 +276,14 @@ class SequentialGreedy:
 
             current_path = state.robot_paths[robot_id][:planned_goal_index+1]
             planned_path = motion_planner.combine_paths([current_path, planned_path])
+            print(f"Planned path to depot for robot {robot_id} after deallocation: {planned_path}")
+            print(f"State path for robot {robot_id} before path update: {state.robot_paths[robot_id]}")
+            print(f"Current wait time for robot {robot_id} before path update: {state.current_wait_times[robot_id]}")
             self._update_path_and_requests_indices(robot_id=robot_id,
                                                   planned_path=planned_path,
                                                   state=state,
-                                                  traversal_graph_generator=traversal_graph_generator)
+                                                  traversal_graph_generator=traversal_graph_generator,
+                                                  terminal_node=True)
         else:
             start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
@@ -293,7 +298,7 @@ class SequentialGreedy:
             state.assign_robot_path(robot_id=robot_id, 
                                     path=planned_path, 
                                     traversal_graph=traversal_graph_generator.traversal_graph)
-        motion_planner.clear_reservations_for_agent(robot_id=robot_id)
+        motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
         motion_planner.reserve_path_for_agent(path=planned_path,
                                               robot_profile=state.simulator_config.robot_profiles[robot_id])
     
@@ -403,7 +408,8 @@ class SequentialGreedy:
                                           robot_id: int,
                                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                                           state: PlanningState,
-                                          traversal_graph_generator: TraversalGraphGenerator):
+                                          traversal_graph_generator: TraversalGraphGenerator,
+                                          terminal_node: bool = False):
         next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
                                                                           state=state)
         final_path = planned_path[next_node_index:]
@@ -421,7 +427,8 @@ class SequentialGreedy:
         
         state.assign_robot_path(robot_id=robot_id, 
                                 path=final_path, 
-                                traversal_graph=traversal_graph_generator.traversal_graph)
+                                traversal_graph=traversal_graph_generator.traversal_graph,
+                                terminal_node=terminal_node)
         
         if robot_id in self.robots_to_be_sent_to_depot:
             self.robots_to_be_sent_to_depot.remove(robot_id)
@@ -600,7 +607,7 @@ class SequentialGreedy:
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
             time_to_finish = state.robot_paths[robot_id][planned_goal_index][1].end
             if time_to_finish - state.simulator_time < 1.0:
-                print(f"Robot {robot_id} is close to finishing its assigned requests. Time to finish: {time_to_finish - state.simulator_time}")
+                print(f"Robot {robot_id} is close to finishing its assigned requests. Time to finish: {time_to_finish - state.simulator_time}, simulator time: {state.simulator_time}")
                 if robot_id not in self.robots_to_be_sent_to_depot:
                     self.robots_to_be_sent_to_depot.append(robot_id)
     
