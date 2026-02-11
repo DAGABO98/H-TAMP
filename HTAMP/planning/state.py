@@ -266,7 +266,7 @@ class PlanningState:
                             print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
 
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
-        if self.robots_next_nodes[robot_id] is None:
+        if self.robots_next_nodes[robot_id] is None and self.current_wait_times[robot_id] <= 0.0:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
             self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
             return
