@@ -255,6 +255,7 @@ class SequentialGreedy:
                                       traversal_graph_generator: TraversalGraphGenerator):
         depot_node = state.robot_depots[robot_id]
         if self.assigned_requests[robot_id]:
+            # TODO: Fix this logic to consider the case where the robot is currently waiting at a goal node and has not yet reached the planned goal node in its path
             last_assigned_request_id = self.assigned_requests[robot_id][-1]
             last_assigned_request_struct = state.requests[last_assigned_request_id]
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
@@ -264,7 +265,6 @@ class SequentialGreedy:
             current_time = last_path_step[1].end
             assert planned_goal_node_label == start_node.label, \
                 f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
-            current_path = state.robot_paths[robot_id][:planned_goal_index+1]
             planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                         goal_traversal_node=depot_node,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id],
@@ -272,13 +272,13 @@ class SequentialGreedy:
                                                         wait_time_at_goal=state.simulator_config.horizon,
                                                         horizon=2*state.simulator_config.horizon)
             assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
+
+            current_path = state.robot_paths[robot_id][:planned_goal_index+1]
             planned_path = motion_planner.combine_paths([current_path, planned_path])
-            current_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
-                                                                         state=state)
-            
-            state.assign_robot_path(robot_id=robot_id, 
-                                    path=planned_path[current_index:], 
-                                    traversal_graph=traversal_graph_generator.traversal_graph)
+            self._update_path_and_requests_indices(robot_id=robot_id,
+                                                  planned_path=planned_path,
+                                                  state=state,
+                                                  traversal_graph_generator=traversal_graph_generator)
         else:
             start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
