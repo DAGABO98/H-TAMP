@@ -292,6 +292,8 @@ class PlanningState:
         if self.robots_next_nodes[robot_id] is None and self.assigned_requests[robot_id] == []:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
             self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
+            self.robots_current_node_index[robot_id] = 0
+            self.robot_paths[robot_id] = []
             return
 
         if self.current_wait_times[robot_id] > time_step:

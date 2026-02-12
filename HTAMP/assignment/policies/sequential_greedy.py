@@ -119,10 +119,11 @@ class SequentialGreedy:
                     request_struct = state.requests[request_id]
                     self.requests_queue.add_task(priority=pickup_deadline, 
                                                 task_id=request_id)
-                    self.assigned_requests[robot_id].remove(request_id)
                     request_struct.reset_assignment()
                     state.remove_request_from_robot(request_id=request_id, 
                                                     robot_id=robot_id)
+                    
+                self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:deallocation_index]
                     
         for robot_id in robots_with_deallocated_requests:
             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
@@ -258,7 +259,6 @@ class SequentialGreedy:
                                       traversal_graph_generator: TraversalGraphGenerator):
         depot_node = state.robot_depots[robot_id]
         if self.assigned_requests[robot_id]:
-            # TODO: Fix this logic to consider the case where the robot is currently waiting at a goal node and has not yet reached the planned goal node in its path
             print(f"Generating motion plan to depot for robot {robot_id} after deallocation from requests. Robot has assigned requests: {self.assigned_requests[robot_id]}")
             last_assigned_request_id = self.assigned_requests[robot_id][-1]
             last_assigned_request_struct = state.requests[last_assigned_request_id]
@@ -411,10 +411,17 @@ class SequentialGreedy:
                                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                                           state: PlanningState,
                                           traversal_graph_generator: TraversalGraphGenerator):
-        next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
-                                                                          state=state)
-        final_path = planned_path[next_node_index:]
-        current_node_index = state.robots_current_node_index[robot_id]
+        if state.assigned_requests[robot_id]:
+            next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
+                                                                            state=state)
+            final_path = planned_path[next_node_index:]
+            current_node_index = state.robots_current_node_index[robot_id]
+        else:
+            next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
+                                                                            state=state)
+            final_path = planned_path[next_node_index:]
+            next_node_index = next_node_index - state.robots_current_node_index[robot_id]
+            current_node_index = next_node_index
 
         for new_request_id in self.assigned_requests[robot_id]:
             request_struct = state.requests[new_request_id]
@@ -526,7 +533,7 @@ class SequentialGreedy:
                                   debug: bool):
         while self.requests_queue.heap:
             next_request_id = self.requests_queue.pop_task()
-            if next_request_id == "oxygen_saturation.187" or next_request_id == "heart_rate.263":
+            if next_request_id == "blood_pressure.202":
                 print("Debugging assignment of request " + next_request_id)
             if debug:
                 print(f"Attempting to assign request {next_request_id} with pickup deadline {self.requests_queue.priorities[next_request_id]}")
@@ -638,10 +645,10 @@ class SequentialGreedy:
                                                                     traversal_graph_generator=traversal_graph_generator)
         
         if smallest_pickup_deadline:
-            self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
-                                                                   state=state,
-                                                                   motion_planner=motion_planner,
-                                                                   traversal_graph_generator=traversal_graph_generator)
+            # self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
+            #                                                        state=state,
+            #                                                        motion_planner=motion_planner,
+            #                                                        traversal_graph_generator=traversal_graph_generator)
             
             self._extract_node_reservations_from_state(state=state)
 
