@@ -8,8 +8,8 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            "module": "HTAMP.motion_planner",
-            "args": ["--use_saved_data"],
+            "module": "HTAMP.evaluate_assignment",
+            "args": ["--use_saved_data", "--use_saved_request_data", "--mode", "4", "--policy_name", "sequential_greedy"],
             "console": "integratedTerminal"
         },
     ]
