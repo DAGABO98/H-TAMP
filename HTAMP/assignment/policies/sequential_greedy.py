@@ -411,17 +411,34 @@ class SequentialGreedy:
                                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                                           state: PlanningState,
                                           traversal_graph_generator: TraversalGraphGenerator):
-        if state.assigned_requests[robot_id]:
-            next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
-                                                                            state=state)
-            final_path = planned_path[next_node_index:]
-            current_node_index = state.robots_current_node_index[robot_id]
+        if state.robots_next_nodes[robot_id] is not None:
+            if state.assigned_requests[robot_id]:
+                if state.current_wait_times[robot_id] > 0.0:
+                    current_node_index = state.robots_current_node_index[robot_id]
+                    next_node_index = state.robots_current_node_index[robot_id]
+                    final_path = planned_path[next_node_index:]
+                else:
+                    current_node_index = state.robots_current_node_index[robot_id]
+                    next_node_index = state.robots_current_node_index[robot_id] + 1
+                    final_path = planned_path[next_node_index:]
+            else:
+                if state.current_wait_times[robot_id] > 0.0:
+                    current_node_index = 0
+                    next_node_index = 0
+                    final_path = planned_path
+                else:
+                    current_node_index = -1
+                    next_node_index = 0
+                    final_path = planned_path
         else:
-            next_node_index = self._determine_initial_index_for_state_path(robot_id=robot_id,
-                                                                            state=state)
-            final_path = planned_path[next_node_index:]
-            next_node_index = next_node_index - state.robots_current_node_index[robot_id]
-            current_node_index = next_node_index
+            if state.assigned_requests[robot_id]:
+                current_node_index = state.robots_current_node_index[robot_id]
+                next_node_index = state.robots_current_node_index[robot_id]
+                final_path = planned_path[next_node_index:]
+            else:
+                current_node_index = 0
+                next_node_index = 0
+                final_path = planned_path
 
         for new_request_id in self.assigned_requests[robot_id]:
             request_struct = state.requests[new_request_id]
@@ -472,7 +489,10 @@ class SequentialGreedy:
                           state: PlanningState,
                           motion_planner: MotionPlanner,
                           traversal_graph_generator: TraversalGraphGenerator):
-        combined_path = motion_planner.combine_paths([state.robot_paths[robot_id], planned_path])
+        if state.assigned_requests[robot_id]:
+            combined_path = motion_planner.combine_paths([state.robot_paths[robot_id], planned_path])
+        else:
+            combined_path = planned_path
         request_struct = state.requests[request_id]
         request_struct.schedule_task(assigned_robot_id=robot_id,
                                     planned_goal_indices=planned_goal_indices,
