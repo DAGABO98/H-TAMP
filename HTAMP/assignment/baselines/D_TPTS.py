@@ -123,7 +123,25 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                 state=state,
                                                 motion_planner=motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
-        
+    
+    def _remove_reservations_for_robot(self, robot_id: int, motion_planner: MotionPlanner, state: PlanningState):
+        motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+        current_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                          state=state)
+        if current_node == state.robot_depots[robot_id]:
+            motion_planner._initialize_robot_reservations(initial_node=current_node,
+                                                            robot_profile=state.simulator_config.robot_profiles[robot_id],
+                                                            current_time=current_time,
+                                                            horizon=state.simulator_config.horizon)
+            state.robot_paths[robot_id] = []
+        else:
+            planned_path = state.robot_paths[robot_id][:state.robots_current_node_index[robot_id]+2]
+            motion_planner.reserve_path_for_agent(path=planned_path,
+                                                    robot_profile=state.simulator_config.robot_profiles[robot_id])
+            state.robot_paths[robot_id] = planned_path
+            if robot_id not in self.robots_to_be_sent_to_depot:
+                self.robots_to_be_sent_to_depot.append(robot_id)
+    
     def _check_if_new_request_triggers_reassignment(self,
                                                     request: TaskRequest,
                                                     state: PlanningState,
@@ -173,9 +191,9 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                     assigned_request.reset_assignment()
                     state.remove_request_from_robot(robot_id=assigned_robot_id,
                                                     request_id=assigned_request_id)
-                    motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[assigned_robot_id])
-                    self.robots_to_be_sent_to_depot.append(assigned_robot_id)
-                
+                    self._remove_reservations_for_robot(robot_id=assigned_robot_id,
+                                                        motion_planner=motion_planner,
+                                                        state=state)
         for request_id in requests_to_remove_from_assigned_dict:
             assigned_requests_dict.pop(request_id)
     
@@ -304,7 +322,9 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                             assigned_request.reset_assignment()
                             state.remove_request_from_robot(robot_id=assigned_robot_id,
                                                             request_id=request_id)
-                            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[assigned_robot_id])
+                            self._remove_reservations_for_robot(robot_id=assigned_robot_id,
+                                                               motion_planner=motion_planner,
+                                                               state=state)
                             AssignmentHelpers.assign_request_to_robot(state=state,
                                                     request_id=request_id,
                                                     robot_id=robot_id,  
@@ -322,7 +342,6 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                       assigned=True)
                             if robot_id in self.robots_to_be_sent_to_depot:
                                 self.robots_to_be_sent_to_depot.remove(robot_id)
-                            self.robots_to_be_sent_to_depot.append(assigned_robot_id)
                             available_robots.append(assigned_robot_id)
                             break
 
@@ -338,12 +357,12 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                                     wait_time_at_goal=state.simulator_config.horizon,
                                                     horizon=2*state.simulator_config.horizon)
             assert return_path is not None, "Return path to depot could not be found."
-            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
-            motion_planner.reserve_path_for_agent(path=return_path,
-                                                  robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
             state.assign_robot_path(robot_id=robot_to_depot_id, 
                                     path=return_path, 
                                     traversal_graph=traversal_graph_generator.traversal_graph)
+            motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
+            motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_to_depot_id],
+                                                  robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id])
                 
     def _assign_requests_for_monitoring_robots(self, 
                                                state: PlanningState, 
