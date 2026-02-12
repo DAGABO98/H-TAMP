@@ -11,13 +11,14 @@ from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest, Node
 from HTAMP.planning.state import PlanningState
 
 class SequentialGreedy:
-    def __init__(self):
+    def __init__(self, allow_deallocation: bool = True):
         self.requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
         self.robots_to_be_sent_to_depot: list[int] = []
+        self.allow_deallocation = allow_deallocation
 
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -112,6 +113,7 @@ class SequentialGreedy:
 
             if deallocation_index is not None:
                 for j in range(deallocation_index, len(self.assigned_requests[robot_id])):
+                    print(f"Deallocating request {self.assigned_requests[robot_id][j]} from robot {robot_id} due to pickup deadline larger than smallest pickup deadline of {smallest_pickup_deadline}.")
                     pickup_deadline = self._calculate_pickup_deadline(request=request_struct,
                                                                   motion_planner=motion_planner,
                                                                   traversal_graph_generator=traversal_graph_generator)
@@ -665,10 +667,11 @@ class SequentialGreedy:
                                                                     traversal_graph_generator=traversal_graph_generator)
         
         if smallest_pickup_deadline:
-            # self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
-            #                                                        state=state,
-            #                                                        motion_planner=motion_planner,
-            #                                                        traversal_graph_generator=traversal_graph_generator)
+            if self.allow_deallocation:
+                self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
+                                                                       state=state,
+                                                                       motion_planner=motion_planner,
+                                                                       traversal_graph_generator=traversal_graph_generator)
             
             self._extract_node_reservations_from_state(state=state)
 

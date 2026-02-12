@@ -145,6 +145,9 @@ class AssignmentEvaluator:
         if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
             policy = policy_dict[mode](alpha=alpha)
             print(f"Initialized policy with alpha: {alpha}")
+        elif mode in [4]:
+            policy = policy_dict[mode](allow_deallocation=self.args.allow_deallocation)
+            print(f"Initialized Sequential Greedy policy with allow_deallocation: {self.args.allow_deallocation}")
         else:
             policy = policy_dict[mode]()
         print("Policy initialized.")
@@ -522,14 +525,18 @@ def main():
 
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
-    parser.add_argument("--alpha", type=float, dest='alpha', default=0.1, help='Alpha parameter for token passing policies.')
     parser.add_argument("--policy_name", type=str, dest='policy_name', default='fleet_manager', help='Name of the policy for saving results.')
     parser.add_argument("--num_monitoring_robots", type=int, default=6, help="Number of monitoring robots to be used in the team")
     parser.add_argument("--num_delivery_robots", type=int, default=3, help="Number of delivery robots to be used in the team")
     parser.add_argument("--rejection_penalty", type=int, dest='rejection_penalty', default=28800, help='Penalty for rejecting a request. Default value set to the number of seconds in 8 hours.')
 
-    args = parser.parse_args()
+    # Baseline parameters
+    parser.add_argument("--alpha", type=float, dest='alpha', default=0.1, help='Alpha parameter for token passing policies.')
 
+    # Policies parameters
+    parser.add_argument("--allow_deallocation", action='store_true', help="Whether to allow deallocation of previously assigned requests in the Sequential Greedy policy.")
+
+    args = parser.parse_args()
     run_experiment(args)
     
 
