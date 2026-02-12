@@ -189,15 +189,15 @@ class AssignmentHelpers:
 
         if debug:
             print(f"Reserving motion plan for robot {robot_id}: {planned_path}")
-            
-        motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-        motion_planner.reserve_path_for_agent(path=planned_path,
-                                              robot_profile=state.simulator_config.robot_profiles[robot_id])
         
         state.assign_request_to_robot(request_id=request_id, 
                                     robot_id=robot_id, 
                                     path=planned_path, 
                                     traversal_graph=traversal_graph_generator.traversal_graph)
+        
+        motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
+        motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_id],
+                                              robot_profile=state.simulator_config.robot_profiles[robot_id])
     
     @staticmethod
     def heuristic_cost_from_robot_to_request(current_request: TaskRequest,

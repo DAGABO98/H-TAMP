@@ -303,7 +303,7 @@ class SequentialGreedy:
                                     path=planned_path, 
                                     traversal_graph=traversal_graph_generator.traversal_graph)
         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-        motion_planner.reserve_path_for_agent(path=planned_path,
+        motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_id],
                                               robot_profile=state.simulator_config.robot_profiles[robot_id])
     
     def _estimate_heuristic_cost_to_fulfill_request(self,
