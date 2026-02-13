@@ -212,7 +212,6 @@ class StabilityEvaluator:
                             hour_range: Optional[tuple[int, int]],
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
-                            save_frame_data: bool = False,
                             look_ahead_minutes: int = 30,
                             debug = False) -> Optional[str]:
         request_handler = self._get_request_handler(start_date=start_date,
@@ -233,8 +232,7 @@ class StabilityEvaluator:
                 
         for minute in range(60):
             reject_type = self._assign_requests_and_step_simulator(requests_lists=None,
-                                                     save_frame_data=save_frame_data,
-                                                     debug=debug)
+                                                                   debug=debug)
             if reject_type is not None:
                 return reject_type
         
