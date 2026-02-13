@@ -17,7 +17,6 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, RequestsLists, SimulatorConfig, TaskProperties, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class StabilityEvaluator:
     def __init__(self, 
@@ -247,6 +246,7 @@ class StabilityExperiment():
                  args,
                  start_date: str,
                  end_date: str):
+        self.args = args
         self.start_date = start_date
         self.end_date = end_date
         self.all_task_properties = self._generate_task_properties()
@@ -323,7 +323,37 @@ class StabilityExperiment():
             robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=num_monitoring_robots + j, robot_type="delivery")
             robot_profiles[num_monitoring_robots + j] = robot_profile
         return robot_profiles
-
+    
+    def determine_team_composition(self, random_seed: Optional[int] = None):
+        valid_assignment = False
+        num_monitoring_robots = 1
+        num_delivery_robots = 1
+        while not valid_assignment:
+            print(f"Evaluating team composition: {num_monitoring_robots} monitoring robots, {num_delivery_robots} delivery robots")
+            robot_profiles = self._generate_robot_profiles(num_monitoring_robots=num_monitoring_robots,
+                                                            num_delivery_robots=num_delivery_robots)
+            stability_evaluator = StabilityEvaluator(args=self.args,
+                                                   team_size=num_monitoring_robots + num_delivery_robots,
+                                                   robot_profiles=robot_profiles,
+                                                   annotated_data_files=self.annotated_data_files,
+                                                   all_task_properties=self.all_task_properties,
+                                                   random_seed=random_seed)
+            reject_type = stability_evaluator.evaluate_assignment(start_date=self.start_date,
+                                                                end_date=self.end_date,
+                                                                hour_range=(self.args.hour_start, self.args.hour_end),
+                                                                request_dir=self.args.request_dir,
+                                                                use_saved_request_data=self.args.use_saved_request_data,
+                                                                look_ahead_minutes=60)
+            if reject_type is None:
+                print(f"Valid team composition found!!!!")
+                print(f"Monitoring Robots: {num_monitoring_robots}, Delivery Robots: {num_delivery_robots}")
+                valid_assignment = True
+            else:
+                print(f"Rejected request type: {reject_type}")
+                if reject_type == "medication":
+                    num_delivery_robots += 1
+                else:
+                    num_monitoring_robots += 1
 
 def run_experiment(args):
     start_date="2024-06-24"
@@ -334,6 +364,8 @@ def run_experiment(args):
     experiment = StabilityExperiment(args,
                             start_date=start_date,
                             end_date=end_date)
+    
+    experiment.determine_team_composition(random_seed=random_seed)
 
 def main():
     parser = argparse.ArgumentParser(prog='evaluate_assignment.py',
@@ -364,20 +396,6 @@ def main():
     parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
-
-
-    # simulation parameters
-    parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
-    parser.add_argument("--policy_name", type=str, dest='policy_name', default='fleet_manager', help='Name of the policy for saving results.')
-    parser.add_argument("--num_monitoring_robots", type=int, default=6, help="Number of monitoring robots to be used in the team")
-    parser.add_argument("--num_delivery_robots", type=int, default=3, help="Number of delivery robots to be used in the team")
-    parser.add_argument("--rejection_penalty", type=int, dest='rejection_penalty', default=28800, help='Penalty for rejecting a request. Default value set to the number of seconds in 8 hours.')
-
-    # Baseline parameters
-    parser.add_argument("--alpha", type=float, dest='alpha', default=0.1, help='Alpha parameter for token passing policies.')
-
-    # Policies parameters
-    parser.add_argument("--allow_deallocation", action='store_true', help="Whether to allow deallocation of previously assigned requests in the Sequential Greedy policy.")
 
     args = parser.parse_args()
     run_experiment(args)
