@@ -342,8 +342,7 @@ class StabilityExperiment():
                                                                 end_date=self.end_date,
                                                                 hour_range=(self.args.hour_start, self.args.hour_end),
                                                                 request_dir=self.args.request_dir,
-                                                                use_saved_request_data=self.args.use_saved_request_data,
-                                                                look_ahead_minutes=60)
+                                                                use_saved_request_data=self.args.use_saved_request_data)
             if reject_type is None:
                 print(f"Valid team composition found!!!!")
                 print(f"Monitoring Robots: {num_monitoring_robots}, Delivery Robots: {num_delivery_robots}")
