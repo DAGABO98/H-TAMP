@@ -523,7 +523,7 @@ class AdaptiveHeuristicPolicy:
                 break
             sub_paths.append(sub_path)
             if planned_goal_indices:
-                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path) - 1)
+                planned_goal_indices.append(planned_goal_indices[-1] + len(sub_path))
             else:
                 planned_goal_indices.append(len(sub_path) - 1)
             start_node = goal_node
@@ -536,25 +536,6 @@ class AdaptiveHeuristicPolicy:
             planned_time_to_reach_last_goal = float('inf')
 
         return final_path, planned_goal_indices, planned_time_to_reach_last_goal
-    
-    def _generate_robot_priorities(self,
-                                   state: PlanningState,
-                                   motion_planner: MotionPlanner,
-                                   traversal_graph_generator: TraversalGraphGenerator) -> list[int]:
-        robot_priorities = []
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
-                robot_priorities.append((robot_id, state.simulator_config.horizon))
-                continue
-            first_request_id = self.assigned_requests[robot_id][0]
-            pickup_deadline = self._calculate_pickup_deadline(request=state.requests[first_request_id],
-                                                              motion_planner=motion_planner,
-                                                              traversal_graph_generator=traversal_graph_generator)
-            
-            robot_priorities.append((robot_id, pickup_deadline))
-        robot_priorities.sort(key=lambda x: x[1])
-        sorted_robot_ids = [robot_priority[0] for robot_priority in robot_priorities]
-        return sorted_robot_ids
     
     def _update_state_with_assigned_requests_and_generate_plans(self, 
                                                                 sorted_robot_ids: list[int],
