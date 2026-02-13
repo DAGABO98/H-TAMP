@@ -578,7 +578,7 @@ class SequentialGreedy:
                 planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
                 
                 if planned_path:
-                    print(f"1) assigned requests for robot {min_robot_id}: {self.assigned_requests[min_robot_id]}")
+                    print(f"1) assigned requests for robot {robot_id}: {self.assigned_requests[robot_id]}")
                     print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
                     print(f"1) Planned path for assignment of request {next_request_id} to robot {robot_id}: {planned_path}")
                     self._schedule_request(robot_id=robot_id,
