@@ -154,7 +154,10 @@ class PlanningState:
         if len(path) >= 2:
             if self.robots_next_nodes[robot_id] is not None:
                 if self.current_wait_times[robot_id] > 0.0:
-                    self._assign_current_time_and_current_node_to_robot(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
+                    if self.assigned_requests[robot_id]:
+                        self._assign_current_time_and_current_node_to_robot(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
+                    else:
+                        self._assign_next_time_and_next_node_to_robot(robot_id=robot_id, path=path)
                 else:
                     self._assign_next_time_and_next_node_to_robot(robot_id=robot_id, path=path)
             else:

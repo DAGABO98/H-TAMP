@@ -26,8 +26,12 @@ class AssignmentHelpers:
                                         state: PlanningState) -> tuple[TraversalNode, float]:
         if state.robots_next_nodes[robot_id] is not None:
             if state.current_wait_times[robot_id] > 0.0:
-                robot_node = state.robots_current_nodes[robot_id]
-                robot_time = state.robots_current_time[robot_id]
+                if state.assigned_requests[robot_id]:
+                    robot_node = state.robots_current_nodes[robot_id]
+                    robot_time = state.robots_current_time[robot_id]
+                else:
+                    robot_node = state.robots_next_nodes[robot_id]
+                    robot_time = state.robots_next_time[robot_id]
             else:
                 robot_node = state.robots_next_nodes[robot_id]
                 robot_time = state.robots_next_time[robot_id]
