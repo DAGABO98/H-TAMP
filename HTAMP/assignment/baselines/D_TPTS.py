@@ -350,11 +350,12 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
             print(f"No suitable requests found for robot {robot_to_depot_id}. Planning return to depot.")
             start_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_to_depot_id, 
                                                                                          state)
+            wait_time_at_goal = state.simulator_config.horizon - initial_time
             return_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                     goal_traversal_node=state.robot_depots[robot_to_depot_id],
                                                     robot_profile=state.simulator_config.robot_profiles[robot_to_depot_id],
                                                     current_time=initial_time,
-                                                    wait_time_at_goal=state.simulator_config.horizon,
+                                                    wait_time_at_goal=wait_time_at_goal,
                                                     horizon=2*state.simulator_config.horizon)
             assert return_path is not None, "Return path to depot could not be found."
             state.assign_robot_path(robot_id=robot_to_depot_id, 

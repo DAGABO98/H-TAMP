@@ -104,11 +104,12 @@ class AssignmentHelpers:
             current_time = sub_paths[-1][-1][1].end
         
         if sub_paths:
+            wait_time_at_goal = state.simulator_config.horizon - sub_paths[-1][-1][1].end
             return_path = motion_planner.obtain_path_for_agent(start_traversal_node=sub_paths[-1][-1][0],
                                                        goal_traversal_node=state.robot_depots[robot_id],
                                                        robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                        current_time=sub_paths[-1][-1][1].end,
-                                                       wait_time_at_goal=state.simulator_config.horizon,
+                                                       wait_time_at_goal=wait_time_at_goal,
                                                        horizon=2*state.simulator_config.horizon)
             if return_path is not None:
                 sub_paths.append(return_path)

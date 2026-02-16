@@ -275,11 +275,12 @@ class SequentialGreedy:
             current_time = last_path_step[1].end
             assert planned_goal_node_label == start_node.label, \
                 f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
+            wait_time_at_goal = state.simulator_config.horizon - current_time
             planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                         goal_traversal_node=depot_node,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                         current_time=current_time,
-                                                        wait_time_at_goal=state.simulator_config.horizon,
+                                                        wait_time_at_goal=wait_time_at_goal,
                                                         horizon=2*state.simulator_config.horizon)
             assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
 
@@ -296,12 +297,12 @@ class SequentialGreedy:
         else:
             start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
-            
+            wait_time_at_goal = state.simulator_config.horizon - current_time
             planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                             goal_traversal_node=depot_node,
                                                             robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                             current_time=current_time,
-                                                            wait_time_at_goal=state.simulator_config.horizon,
+                                                            wait_time_at_goal=wait_time_at_goal,
                                                             horizon=2*state.simulator_config.horizon)
             assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
             state.assign_robot_path(robot_id=robot_id, 
