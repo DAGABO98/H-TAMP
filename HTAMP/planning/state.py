@@ -210,8 +210,6 @@ class PlanningState:
             next_index = current_index + 1
             start_node, start_time_interval = path[current_index]
             self.robots_current_nodes[robot_id] = start_node
-            self._check_if_node_is_task_start(robot_id=robot_id, 
-                                              traversal_node=start_node)
             if next_index >= len(path):
                 self.robots_next_nodes[robot_id] = None
                 self.edge_samples[robot_id] = np.array([])
@@ -225,6 +223,8 @@ class PlanningState:
                 self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
             else:
                 end_node, end_time_interval = path[next_index]
+                self._check_if_node_is_task_start(robot_id=robot_id, 
+                                              traversal_node=end_node)
                 self.robots_next_nodes[robot_id] = end_node
                 self.robots_current_time[robot_id] = start_time_interval.start
                 self.robots_next_time[robot_id] = end_time_interval.start
