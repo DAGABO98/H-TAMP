@@ -470,7 +470,8 @@ def run_experiment(args):
                                                      hour_range=(args.hour_start,args.hour_end),
                                                      request_dir=args.request_dir,
                                                      use_saved_request_data=args.use_saved_request_data,
-                                                     save_frame_data=False)
+                                                     save_frame_data=False,
+                                                     debug=args.debug)
     
     os.makedirs("results/policies", exist_ok=True)
     os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
@@ -521,6 +522,7 @@ def main():
     parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
+    parser.add_argument("--debug", action='store_true', help="Whether to save debug plots during execution.")
 
 
     # simulation parameters
