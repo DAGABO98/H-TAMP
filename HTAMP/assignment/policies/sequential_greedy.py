@@ -432,14 +432,9 @@ class SequentialGreedy:
                     next_node_index = state.robots_current_node_index[robot_id] + 1
                     final_path = planned_path[next_node_index:]
             else:
-                if state.current_wait_times[robot_id] > 0.0:
-                    current_node_index = 0
-                    next_node_index = 0
-                    final_path = planned_path
-                else:
-                    current_node_index = -1
-                    next_node_index = 0
-                    final_path = planned_path
+                current_node_index = -1
+                next_node_index = 0
+                final_path = planned_path
         else:
             if state.assigned_requests[robot_id]:
                 current_node_index = state.robots_current_node_index[robot_id]
