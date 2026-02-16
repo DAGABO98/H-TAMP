@@ -103,6 +103,8 @@ class SequentialGreedy:
             for i, request_id in enumerate(self.assigned_requests[robot_id]):
                 request_struct = state.requests[request_id]
                 if request_struct.started:
+                    if debug:
+                        print(f"Skipping deallocation of request {request_id} from robot {robot_id} because the request has already started.")
                     continue
                 pickup_deadline = self._calculate_pickup_deadline(request=request_struct,
                                                                   motion_planner=motion_planner,
@@ -562,7 +564,7 @@ class SequentialGreedy:
         while self.requests_queue.heap:
             next_request_id = self.requests_queue.pop_task()
             if debug:
-                print(f"Attempting to assign request {next_request_id} with pickup deadline {self.requests_queue.priorities[next_request_id]}")
+                print(f"Attempting to assign request {next_request_id} at simulator time {state.simulator_time}")
             potential_assignments = self._determine_potential_assignments_for_request(request_id=next_request_id,
                                                                                       state=state,
                                                                                       motion_planner=motion_planner,
