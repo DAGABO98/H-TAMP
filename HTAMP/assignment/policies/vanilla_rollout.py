@@ -91,7 +91,8 @@ class VanillaRollout:
                                                         smallest_pickup_deadline: float,
                                                         state: PlanningState,
                                                         motion_planner: MotionPlanner,
-                                                        traversal_graph_generator: TraversalGraphGenerator):
+                                                        traversal_graph_generator: TraversalGraphGenerator,
+                                                        debug: bool):
         robots_with_deallocated_requests = []
         for robot_id in self.assigned_requests.keys():
             if not self.assigned_requests[robot_id]:
@@ -101,6 +102,8 @@ class VanillaRollout:
             for i, request_id in enumerate(self.assigned_requests[robot_id]):
                 request_struct = state.requests[request_id]
                 if request_struct.started:
+                    if debug:
+                        print(f"Skipping deallocation of request {request_id} from robot {robot_id} because the request has already started.")
                     continue
                 pickup_deadline = self._calculate_pickup_deadline(request=request_struct,
                                                                   motion_planner=motion_planner,
@@ -112,7 +115,8 @@ class VanillaRollout:
 
             if deallocation_index is not None:
                 for j in range(deallocation_index, len(self.assigned_requests[robot_id])):
-                    print(f"Deallocating request {self.assigned_requests[robot_id][j]} from robot {robot_id} due to pickup deadline larger than smallest pickup deadline of {smallest_pickup_deadline}.")
+                    if debug:
+                        print(f"Deallocating request {self.assigned_requests[robot_id][j]} from robot {robot_id} due to pickup deadline larger than smallest pickup deadline of {smallest_pickup_deadline}.")
                     pickup_deadline = self._calculate_pickup_deadline(request=request_struct,
                                                                   motion_planner=motion_planner,
                                                                   traversal_graph_generator=traversal_graph_generator)
@@ -236,7 +240,7 @@ class VanillaRollout:
                 planned_time_to_reach_last_goal = float('inf')
                 break
             sub_paths.append(sub_path)
-            if initial_planned_goal_index == 0:
+            if initial_planned_goal_index == -1:
                 new_goal_index = len(sub_path) - 1
             else:
                 new_goal_index = initial_planned_goal_index + len(sub_path)
@@ -257,10 +261,12 @@ class VanillaRollout:
                                       robot_id: int,
                                       state: PlanningState,
                                       motion_planner: MotionPlanner,
-                                      traversal_graph_generator: TraversalGraphGenerator):
+                                      traversal_graph_generator: TraversalGraphGenerator,
+                                      debug: bool):
         depot_node = state.robot_depots[robot_id]
         if self.assigned_requests[robot_id]:
-            print(f"Generating motion plan to depot for robot {robot_id} after deallocation from requests. Robot has assigned requests: {self.assigned_requests[robot_id]}")
+            if debug:
+                print(f"Generating motion plan to depot for robot {robot_id} after deallocation from requests. Robot has assigned requests: {self.assigned_requests[robot_id]}")
             last_assigned_request_id = self.assigned_requests[robot_id][-1]
             last_assigned_request_struct = state.requests[last_assigned_request_id]
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
@@ -270,19 +276,21 @@ class VanillaRollout:
             current_time = last_path_step[1].end
             assert planned_goal_node_label == start_node.label, \
                 f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
+            wait_time_at_goal = state.simulator_config.horizon - current_time
             planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                         goal_traversal_node=depot_node,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                         current_time=current_time,
-                                                        wait_time_at_goal=state.simulator_config.horizon,
+                                                        wait_time_at_goal=wait_time_at_goal,
                                                         horizon=2*state.simulator_config.horizon)
             assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
 
             current_path = state.robot_paths[robot_id][:planned_goal_index+1]
             planned_path = motion_planner.combine_paths([current_path, planned_path])
-            print(f"Planned path to depot for robot {robot_id} after deallocation: {planned_path}")
-            print(f"State path for robot {robot_id} before path update: {state.robot_paths[robot_id]}")
-            print(f"Current wait time for robot {robot_id} before path update: {state.current_wait_times[robot_id]}")
+            if debug:
+                print(f"Planned path to depot for robot {robot_id} after deallocation: {planned_path}")
+                print(f"State path for robot {robot_id} before path update: {state.robot_paths[robot_id]}")
+                print(f"Current wait time for robot {robot_id} before path update: {state.current_wait_times[robot_id]}")
             self._update_path_and_requests_indices(robot_id=robot_id,
                                                   planned_path=planned_path,
                                                   state=state,
@@ -290,12 +298,12 @@ class VanillaRollout:
         else:
             start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
-            
+            wait_time_at_goal = state.simulator_config.horizon - current_time
             planned_path = motion_planner.obtain_path_for_agent(start_traversal_node=start_node,
                                                             goal_traversal_node=depot_node,
                                                             robot_profile=state.simulator_config.robot_profiles[robot_id],
                                                             current_time=current_time,
-                                                            wait_time_at_goal=state.simulator_config.horizon,
+                                                            wait_time_at_goal=wait_time_at_goal,
                                                             horizon=2*state.simulator_config.horizon)
             assert planned_path is not None, f"Failed to find a path to the depot for robot {robot_id} after deallocation. Robot will remain idle."
             state.assign_robot_path(robot_id=robot_id, 
@@ -394,7 +402,7 @@ class VanillaRollout:
         else:
             start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                     state=state)
-            initial_planned_goal_index = 0
+            initial_planned_goal_index = -1
         planned_path, planned_goal_indices, planned_time_to_reach_last_goal = self._find_path_for_goal_nodes(robot_id=robot_id,
                                                                                                             start_node=start_node,
                                                                                                             start_time=start_time,
@@ -423,14 +431,9 @@ class VanillaRollout:
                     next_node_index = state.robots_current_node_index[robot_id] + 1
                     final_path = planned_path[next_node_index:]
             else:
-                if state.current_wait_times[robot_id] > 0.0:
-                    current_node_index = 0
-                    next_node_index = 0
-                    final_path = planned_path
-                else:
-                    current_node_index = -1
-                    next_node_index = 0
-                    final_path = planned_path
+                current_node_index = -1
+                next_node_index = 0
+                final_path = planned_path
         else:
             if state.assigned_requests[robot_id]:
                 current_node_index = state.robots_current_node_index[robot_id]
@@ -554,10 +557,8 @@ class VanillaRollout:
                                   debug: bool):
         while self.requests_queue.heap:
             next_request_id = self.requests_queue.pop_task()
-            if next_request_id == "blood_pressure.202":
-                print("Debugging assignment of request " + next_request_id)
             if debug:
-                print(f"Attempting to assign request {next_request_id} with pickup deadline {self.requests_queue.priorities[next_request_id]}")
+                print(f"Attempting to assign request {next_request_id} at simulator time {state.simulator_time}")
             potential_assignments = self._determine_potential_assignments_for_request(request_id=next_request_id,
                                                                                       state=state,
                                                                                       motion_planner=motion_planner,
@@ -577,9 +578,10 @@ class VanillaRollout:
                 planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
                 
                 if planned_path:
-                    print(f"1) assigned requests for robot {min_robot_id}: {self.assigned_requests[min_robot_id]}")
-                    print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
-                    print(f"1) Planned path for assignment of request {next_request_id} to robot {robot_id}: {planned_path}")
+                    if debug:
+                        print(f"1) assigned requests for robot {robot_id}: {self.assigned_requests[robot_id]}")
+                        print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
+                        print(f"1) Planned path for assignment of request {next_request_id} to robot {robot_id}: {planned_path}")
                     self._schedule_request(robot_id=robot_id,
                                             request_id=next_request_id,
                                             planned_path=planned_path,
@@ -589,8 +591,7 @@ class VanillaRollout:
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator)
                     
-                    if debug:
-                        print(f"Assigned request {next_request_id} to robot {robot_id}")
+                    print(f"Assigned request {next_request_id} to robot {robot_id}")
                     
                 else:
                     print(f"Failed to find a valid path for the only potential assignment of request {next_request_id} to robot {robot_id}. Request is rejected.")
@@ -607,9 +608,10 @@ class VanillaRollout:
                 
                 if min_planned_path:
                     request_struct = state.requests[next_request_id]
-                    print(f"2) assigned requests for robot {min_robot_id}: {self.assigned_requests[min_robot_id]} at time {state.simulator_time}")
-                    print(f"2) State path: {state.robot_paths[min_robot_id]}")
-                    print(f"2) Planned path for assignment of request {next_request_id} to robot {min_robot_id}: {min_planned_path}")
+                    if debug:
+                        print(f"2) assigned requests for robot {min_robot_id}: {self.assigned_requests[min_robot_id]} at time {state.simulator_time}")
+                        print(f"2) State path: {state.robot_paths[min_robot_id]}")
+                        print(f"2) Planned path for assignment of request {next_request_id} to robot {min_robot_id}: {min_planned_path}")
                     self._schedule_request(robot_id=min_robot_id,
                                             request_id=next_request_id,
                                             planned_path=min_planned_path,
@@ -618,15 +620,16 @@ class VanillaRollout:
                                             state=state,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator)
-                    if debug:
-                        print(f"Assigned request {next_request_id} to robot {min_robot_id}")
+                    
+                    print(f"Assigned request {next_request_id} to robot {min_robot_id}")
                 else:
                     print(f"Failed to find a valid path for any of the potential assignments of request {next_request_id}. Request is rejected.")
                     request = state.requests[next_request_id]
                     request.mark_rejected()
     
     def _determine_if_there_are_robots_close_to_finish(self,
-                                                   state: PlanningState):
+                                                   state: PlanningState,
+                                                   debug: bool):
         for robot_id in self.assigned_requests.keys():
             if not self.assigned_requests[robot_id]:
                 continue
@@ -635,19 +638,22 @@ class VanillaRollout:
             planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
             time_to_finish = state.robot_paths[robot_id][planned_goal_index][1].end
             if time_to_finish - state.simulator_time < 1.0:
-                print(f"Robot {robot_id} is close to finishing its assigned requests. Time to finish: {time_to_finish - state.simulator_time}, simulator time: {state.simulator_time}")
+                if debug:
+                    print(f"Robot {robot_id} is close to finishing its assigned requests. Time to finish: {time_to_finish - state.simulator_time}, simulator time: {state.simulator_time}")
                 if robot_id not in self.robots_to_be_sent_to_depot:
                     self.robots_to_be_sent_to_depot.append(robot_id)
     
     def send_unallocated_robots_to_depot(self,
                                         state: PlanningState,
                                         motion_planner: MotionPlanner,
-                                        traversal_graph_generator: TraversalGraphGenerator):
+                                        traversal_graph_generator: TraversalGraphGenerator,
+                                        debug: bool):
         for robot_id in self.robots_to_be_sent_to_depot:
             self._generate_motion_plan_to_depot(robot_id=robot_id,
                                                 state=state,
                                                 motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator)
+                                                traversal_graph_generator=traversal_graph_generator,
+                                                debug=debug)
 
         self.robots_to_be_sent_to_depot = []
 
@@ -670,7 +676,8 @@ class VanillaRollout:
                 self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
                                                                        state=state,
                                                                        motion_planner=motion_planner,
-                                                                       traversal_graph_generator=traversal_graph_generator)
+                                                                       traversal_graph_generator=traversal_graph_generator,
+                                                                       debug=debug)
             
             self._extract_node_reservations_from_state(state=state)
 
@@ -680,9 +687,11 @@ class VanillaRollout:
                                             traversal_graph_generator=traversal_graph_generator,
                                             debug=debug)
         
-        self._determine_if_there_are_robots_close_to_finish(state=state)
+        self._determine_if_there_are_robots_close_to_finish(state=state,
+                                                            debug=debug)
             
         # Generate motion plans to depot for robots that were deallocated from requests and had no new requests assigned
         self.send_unallocated_robots_to_depot(state=state,
                                               motion_planner=motion_planner,
-                                              traversal_graph_generator=traversal_graph_generator)
+                                              traversal_graph_generator=traversal_graph_generator,
+                                              debug=debug)
