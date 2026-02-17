@@ -8,7 +8,7 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            "module": "HTAMP.evaluate_assignment",
+            "module": "HTAMP.assignment.evaluate_assignment",
             "args": ["--use_saved_data", "--use_saved_request_data", "--mode", "4", "--policy_name", "sequential_greedy", 
             "--year", "2024", "--month", "06", "--day", "24", "--floor_number", "2", "--num_monitoring_robots", "2",
             "--num_delivery_robots", "1", "--allow_deallocation", "--debug"],
