@@ -25,9 +25,9 @@ def run_one(day: dt.date, floor: int) -> tuple[dt.date, int, int]:
         "--floor_number", str(floor),
     ]
 
-    os.makedirs("results/logs", exist_ok=True)
-    out_path = f"results/logs/teamcomp_{day.isoformat()}_floor{floor}.out"
-    err_path = f"results/logs/teamcomp_{day.isoformat()}_floor{floor}.err"
+    os.makedirs("results/team_comp/logs", exist_ok=True)
+    out_path = f"results/team_comp/logs/teamcomp_{day.isoformat()}_floor{floor}.out"
+    err_path = f"results/team_comp/logs/teamcomp_{day.isoformat()}_floor{floor}.err"
 
     try:
         with open(out_path, "w") as out, open(err_path, "w") as err:
