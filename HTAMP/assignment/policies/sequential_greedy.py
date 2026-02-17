@@ -241,7 +241,7 @@ class SequentialGreedy:
                 planned_time_to_reach_last_goal = float('inf')
                 break
             sub_paths.append(sub_path)
-            if initial_planned_goal_index == 0:
+            if initial_planned_goal_index == -1:
                 new_goal_index = len(sub_path) - 1
             else:
                 new_goal_index = initial_planned_goal_index + len(sub_path)
@@ -403,7 +403,7 @@ class SequentialGreedy:
         else:
             start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                     state=state)
-            initial_planned_goal_index = 0
+            initial_planned_goal_index = -1
         planned_path, planned_goal_indices, planned_time_to_reach_last_goal = self._find_path_for_goal_nodes(robot_id=robot_id,
                                                                                                             start_node=start_node,
                                                                                                             start_time=start_time,
