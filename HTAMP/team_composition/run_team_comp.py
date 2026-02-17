@@ -9,7 +9,7 @@ FLOORS = [2, 3, 7, 9]
 MAX_WORKERS = 100
 
 BASE = [
-    "python", "-m", "HTAMP.team_composition",
+    "python", "-m", "HTAMP.team_composition.stability_eval",
     "--use_saved_data",
     "--use_saved_request_data",
     "--hour_start", "8",
