@@ -258,7 +258,7 @@ class DailyRequestHandler(GlobalRequestHandler):
                 supplies_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_supplies"])]
                 room_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_id"])]
                 goal_nodes = [supplies_node_label, room_node_label]
-                wait_times_at_goals_seconds = [wait_time_seconds, wait_time_seconds]
+                wait_times_at_goals_seconds = [20.0, wait_time_seconds]
                 ordered_time = (pd.Timestamp(row["Medication Order DTTM"]) - initial_time).total_seconds()
                 scheduled_time = (pd.Timestamp(row["Medication Scheduled DTTM"]) - initial_time).total_seconds()
             else:
