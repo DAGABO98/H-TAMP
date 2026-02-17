@@ -165,6 +165,17 @@ class PlanningState:
                     self._assign_current_time_and_current_node_to_robot(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
                 else:
                     self._assign_next_time_and_current_node_to_robot(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
+        elif len(path) == 1:
+            self.robot_paths[robot_id] = path
+            self.robots_next_nodes[robot_id] = None
+            self.edge_samples[robot_id] = np.array([])
+            self.cumulative_path_lengths[robot_id] = np.array([])
+            self.edge_lengths[robot_id] = 0.0
+            self.current_wait_times[robot_id] = path[0][1].end - path[0][1].start
+            self.robots_current_node_index[robot_id] = 0
+            self.point_indices_on_edge[robot_id] = 0
+            self.robots_current_time[robot_id] = path[0][1].start
+            self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time)  + self.simulator_config.time_step
         else:
             self.robot_paths[robot_id] = path
             self.robots_next_nodes[robot_id] = None
@@ -174,6 +185,8 @@ class PlanningState:
             self.current_wait_times[robot_id] = 0.0
             self.robots_current_node_index[robot_id] = 0
             self.point_indices_on_edge[robot_id] = 0
+            self.robots_current_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
+            self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time)  + self.simulator_config.time_step
     
     def assign_request_to_robot(self, 
                                 robot_id: int, 
@@ -213,6 +226,8 @@ class PlanningState:
             next_index = current_index + 1
             start_node, start_time_interval = path[current_index]
             self.robots_current_nodes[robot_id] = start_node
+            self._check_if_node_is_task_start(robot_id=robot_id, 
+                                              traversal_node=start_node)
             if next_index >= len(path):
                 self.robots_next_nodes[robot_id] = None
                 self.edge_samples[robot_id] = np.array([])
@@ -226,8 +241,6 @@ class PlanningState:
                 self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
             else:
                 end_node, end_time_interval = path[next_index]
-                self._check_if_node_is_task_start(robot_id=robot_id, 
-                                              traversal_node=end_node)
                 self.robots_next_nodes[robot_id] = end_node
                 self.robots_current_time[robot_id] = start_time_interval.start
                 self.robots_next_time[robot_id] = end_time_interval.start
@@ -292,12 +305,13 @@ class PlanningState:
                             print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
 
     def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
-        if self.robots_next_nodes[robot_id] is None and self.assigned_requests[robot_id] == []:
+        if self.robots_next_nodes[robot_id] is None:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
             self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
-            self.robots_current_node_index[robot_id] = 0
-            self.robot_paths[robot_id] = []
-            return
+            if self.assigned_requests[robot_id] == []:
+                self.robots_current_node_index[robot_id] = 0
+                self.robot_paths[robot_id] = []
+                return
 
         if self.current_wait_times[robot_id] > time_step:
             self.current_wait_times[robot_id] -= time_step
