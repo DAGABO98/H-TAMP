@@ -86,28 +86,42 @@ class PlanningState:
                                    consider_previous_wait_time: bool) -> None:
         self.robot_paths[robot_id] = path
         start_node, start_time_interval = path[0]
-        end_node, end_time_interval = path[1]
-        self.robots_current_nodes[robot_id] = start_node
-        self.robots_next_nodes[robot_id] = end_node
-        self.robots_current_time[robot_id] = start_time_interval.start
-        self.robots_next_time[robot_id] = end_time_interval.start
-        if self.current_wait_times[robot_id] <= 0.0 or not consider_previous_wait_time:
-            self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
-        self.robots_current_node_index[robot_id] = 0
-        if start_node.label == end_node.label:
+        if len(path) > 1:
+            end_node, end_time_interval = path[1]
+            self.robots_current_nodes[robot_id] = start_node
+            self.robots_next_nodes[robot_id] = end_node
+            self.robots_current_time[robot_id] = start_time_interval.start
+            self.robots_next_time[robot_id] = end_time_interval.start
+            if self.current_wait_times[robot_id] <= 0.0 or not consider_previous_wait_time:
+                self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
+            self.robots_current_node_index[robot_id] = 0
+            if start_node.label == end_node.label:
+                self.edge_samples[robot_id] = np.array([])
+                self.cumulative_path_lengths[robot_id] = np.array([])
+                self.edge_lengths[robot_id] = 0.0
+                self.previous_traversed_distances[robot_id] = 0.0
+                self.point_indices_on_edge[robot_id] = 0
+            else:
+                extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
+                                                                                    end_node, 
+                                                                                    traversal_graph)
+                zipped_samples, cumulative_lengths, edge_length = extraction_results
+                self.edge_samples[robot_id] = zipped_samples
+                self.cumulative_path_lengths[robot_id] = cumulative_lengths
+                self.edge_lengths[robot_id] = edge_length
+                self.previous_traversed_distances[robot_id] = 0.0
+                self.point_indices_on_edge[robot_id] = 0
+        else:
+            self.robots_current_nodes[robot_id] = start_node
+            self.robots_next_nodes[robot_id] = None
+            self.robots_current_time[robot_id] = start_time_interval.start
+            self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
+            if self.current_wait_times[robot_id] <= 0.0 or not consider_previous_wait_time:
+                self.current_wait_times[robot_id] = start_time_interval.end - start_time_interval.start
+            self.robots_current_node_index[robot_id] = 0
             self.edge_samples[robot_id] = np.array([])
             self.cumulative_path_lengths[robot_id] = np.array([])
             self.edge_lengths[robot_id] = 0.0
-            self.previous_traversed_distances[robot_id] = 0.0
-            self.point_indices_on_edge[robot_id] = 0
-        else:
-            extraction_results = self._extract_edge_samples_and_cumulative_lengths(start_node, 
-                                                                                end_node, 
-                                                                                traversal_graph)
-            zipped_samples, cumulative_lengths, edge_length = extraction_results
-            self.edge_samples[robot_id] = zipped_samples
-            self.cumulative_path_lengths[robot_id] = cumulative_lengths
-            self.edge_lengths[robot_id] = edge_length
             self.previous_traversed_distances[robot_id] = 0.0
             self.point_indices_on_edge[robot_id] = 0
     
@@ -151,7 +165,7 @@ class PlanningState:
                           robot_id: int, 
                           path: list[tuple[TraversalNode, TimeInterval]], 
                           traversal_graph: TraversalGraph) -> None:
-        if len(path) >= 2:
+        if len(path) >= 1:
             if self.robots_next_nodes[robot_id] is not None:
                 if self.current_wait_times[robot_id] > 0.0:
                     if self.assigned_requests[robot_id]:
@@ -165,17 +179,6 @@ class PlanningState:
                     self._assign_current_time_and_current_node_to_robot(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
                 else:
                     self._assign_next_time_and_current_node_to_robot(robot_id=robot_id, path=path, traversal_graph=traversal_graph)
-        elif len(path) == 1:
-            self.robot_paths[robot_id] = path
-            self.robots_next_nodes[robot_id] = None
-            self.edge_samples[robot_id] = np.array([])
-            self.cumulative_path_lengths[robot_id] = np.array([])
-            self.edge_lengths[robot_id] = 0.0
-            self.current_wait_times[robot_id] = path[0][1].end - path[0][1].start
-            self.robots_current_node_index[robot_id] = 0
-            self.point_indices_on_edge[robot_id] = 0
-            self.robots_current_time[robot_id] = path[0][1].start
-            self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time)  + self.simulator_config.time_step
         else:
             self.robot_paths[robot_id] = path
             self.robots_next_nodes[robot_id] = None
