@@ -108,7 +108,7 @@ class TeamCompPlotter:
             plt.close()
 
 def main():
-    plotter = TeamCompPlotter("results/old_logs")
+    plotter = TeamCompPlotter("results/team_comp/logs")
     plotter.plot_histograms()
 
 
