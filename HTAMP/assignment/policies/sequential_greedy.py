@@ -544,10 +544,13 @@ class SequentialGreedy:
                     min_planned_goal_indices = planned_goal_indices
                     min_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
                     min_robot_id = robot_id
-                    if real_cost < next_heuristic_cost:
-                        break
+                if min_path_cost < next_heuristic_cost:
+                    break
             else:
-                continue
+                if min_path_cost < next_heuristic_cost:
+                    break
+                else:
+                    continue
         
         return min_robot_id, min_planned_path, min_planned_goal_indices, min_planned_time_to_reach_last_goal
         
