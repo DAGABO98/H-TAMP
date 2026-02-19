@@ -10,8 +10,8 @@
             "request": "launch",
             "module": "HTAMP.assignment.evaluate_assignment",
             "args": ["--use_saved_data", "--use_saved_request_data", "--mode", "4", "--policy_name", "sequential_greedy", 
-            "--year", "2024", "--month", "06", "--day", "24", "--floor_number", "2", "--num_monitoring_robots", "2",
-            "--num_delivery_robots", "1", "--allow_deallocation", "--debug"],
+            "--year", "2024", "--month", "12", "--day", "21", "--floor_number", "7", "--num_monitoring_robots", "3",
+            "--num_delivery_robots", "1", "--debug"],
             "console": "integratedTerminal"
         },
     ]
