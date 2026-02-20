@@ -73,21 +73,6 @@ class SequentialGreedy:
         smallest_pickup_deadline = min(pickup_deadlines) if pickup_deadlines else None
         return smallest_pickup_deadline
     
-    def _determine_initial_index_for_state_path(self,
-                                                 robot_id: int,
-                                                 state: PlanningState) -> int:
-        if state.robots_next_nodes[robot_id] is not None:
-            assert state.robots_next_nodes[robot_id].label == state.robot_paths[robot_id][state.robots_current_node_index[robot_id]+1][0].label, \
-                f"Mismatch in robot {robot_id} next node label and state path next node label: {state.robots_next_nodes[robot_id].label} vs {state.robot_paths[robot_id][state.robots_current_node_index[robot_id]+1][0].label}"
-            if state.current_wait_times[robot_id] > 0.0:
-                current_index = state.robots_current_node_index[robot_id]
-            else:
-                current_index = state.robots_current_node_index[robot_id] + 1
-        else:
-            current_index = state.robots_current_node_index[robot_id]
-
-        return current_index
-    
     def _deallocate_requests_with_larger_pickup_deadlines(self,
                                                         smallest_pickup_deadline: float,
                                                         state: PlanningState,
@@ -132,6 +117,7 @@ class SequentialGreedy:
                 self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:deallocation_index]
                     
         for robot_id in robots_with_deallocated_requests:
+            # TODO: Generate motion plan to depot for robots with deallocated requests instead of just clearing their paths and reservations
             motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
             current_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                           state=state)
@@ -183,7 +169,6 @@ class SequentialGreedy:
                                                   interval=reservation_interval)
                     self.node_reservation_table.add_reservation(node=goal_node_label,
                                                                 reservation=reservation)
-                
     
     def _obtain_time_to_service_node(self,
                                      robot_id: int,
@@ -631,22 +616,6 @@ class SequentialGreedy:
                     request = state.requests[next_request_id]
                     request.mark_rejected()
     
-    def _determine_if_there_are_robots_close_to_finish(self,
-                                                   state: PlanningState,
-                                                   debug: bool):
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
-                continue
-            last_assigned_request_id = self.assigned_requests[robot_id][-1]
-            last_assigned_request_struct = state.requests[last_assigned_request_id]
-            planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
-            time_to_finish = state.robot_paths[robot_id][planned_goal_index][1].end
-            if time_to_finish - state.simulator_time < 1.0:
-                if debug:
-                    print(f"Robot {robot_id} is close to finishing its assigned requests. Time to finish: {time_to_finish - state.simulator_time}, simulator time: {state.simulator_time}")
-                if robot_id not in self.robots_to_be_sent_to_depot:
-                    self.robots_to_be_sent_to_depot.append(robot_id)
-    
     def send_unallocated_robots_to_depot(self,
                                         state: PlanningState,
                                         motion_planner: MotionPlanner,
@@ -690,12 +659,3 @@ class SequentialGreedy:
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
                                             debug=debug)
-        
-        self._determine_if_there_are_robots_close_to_finish(state=state,
-                                                            debug=debug)
-            
-        # Generate motion plans to depot for robots that were deallocated from requests and had no new requests assigned
-        self.send_unallocated_robots_to_depot(state=state,
-                                              motion_planner=motion_planner,
-                                              traversal_graph_generator=traversal_graph_generator,
-                                              debug=debug)
