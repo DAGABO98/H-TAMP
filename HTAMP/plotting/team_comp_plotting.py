@@ -9,10 +9,17 @@ import matplotlib.pyplot as plt
 class TeamCompPlotter:
         """Helper class to extract team composition counts from log files and plot histograms."""
         # (This is just a wrapper around the functions below, which you can also use directly.)
-        def __init__(self, folder: str | Path, pattern="*.out", out_dir="results/team_comp/plots"):
+        def __init__(self, 
+                     folder: str | Path, 
+                     weeks_to_ignore: list[tuple[int, int]],
+                     pattern="*.out", 
+                     out_dir="results/team_comp/plots"):
             os.makedirs(out_dir, exist_ok=True)
             self.out_dir = Path(out_dir)
+            self.date_in_name_regex = re.compile(r"(\d{4}-\d{2}-\d{2})")  # extract date from filename
             self.df = self.build_counts_df(folder, pattern)
+            self.df = self._add_week_columns(self.df)
+            self.df = self.filter_out_weeks(self.df, weeks_to_ignore=weeks_to_ignore)
         
         def _extract_valid_team_counts(self, path: str | Path):
             path = Path(path)
@@ -47,6 +54,36 @@ class TeamCompPlotter:
                 monitoring, delivery = counts
                 rows.append({"file": f.name, "monitoring_robots": monitoring, "delivery_robots": delivery})
             return pd.DataFrame(rows)
+
+        def _add_week_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+            """Add date + ISO week columns based on date in filename."""
+            df = df.copy()
+            df["date_str"] = df["file"].str.extract(self.date_in_name_regex, expand=False)
+            df["date"] = pd.to_datetime(df["date_str"], errors="coerce")
+
+            iso = df["date"].dt.isocalendar()  # year/week/day
+            df["iso_year"] = iso["year"].astype("Int64")
+            df["iso_week"] = iso["week"].astype("Int64")
+            df["year_week"] = df["iso_year"].astype(str) + "-W" + df["iso_week"].astype(str).str.zfill(2)
+            return df
+        
+        def filter_out_weeks(self, df: pd.DataFrame, 
+                             weeks_to_ignore: list[tuple[int, int]]) -> pd.DataFrame:
+            """
+            weeks_to_ignore can be:
+            - [(2024, 26), (2024, 27)]
+            """
+            if df.empty:
+                return df.copy()
+
+            df = df.copy()
+
+            if not weeks_to_ignore:
+                return df
+
+            ignore = set(weeks_to_ignore)
+            mask = ~df.apply(lambda r: (int(r["iso_year"]), int(r["iso_week"])) in ignore, axis=1)
+            return df[mask]
         
         def _integer_bins(self, series: pd.Series):
             """Nice bins for integer-valued histograms: one bar per integer."""
@@ -108,7 +145,10 @@ class TeamCompPlotter:
             plt.close()
 
 def main():
-    plotter = TeamCompPlotter("results/team_comp/logs")
+    #weeks_to_ignore = [(2024, 26), (2024, 27)]
+    weeks_to_ignore = []
+    plotter = TeamCompPlotter("results/team_comp/logs", 
+                              weeks_to_ignore=weeks_to_ignore)
     plotter.plot_histograms()
 
 
