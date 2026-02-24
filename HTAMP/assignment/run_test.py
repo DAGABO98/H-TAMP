@@ -19,6 +19,8 @@ BASE = [
     "python", "-m", "HTAMP.evaluate_assignment",
     "--use_saved_data",
     "--use_saved_request_data",
+    "--hour_start", "8",
+    "--hour_end", "9",
 ]
 
 LOG_ROOT = "results/policies/logs"
