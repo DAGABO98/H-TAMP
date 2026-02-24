@@ -12,7 +12,7 @@ from typing import Optional, Iterable
 
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
-
+FLOORS = [2, 3, 7, 9]
 MAX_WORKERS = 32  # tune for your machine / cluster
 
 BASE = [
@@ -110,13 +110,14 @@ def policy_run_tag(p: PolicySpec) -> str:
     return tag
 
 
-def build_cmd(day: dt.date, p: PolicySpec) -> list[str]:
+def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
     cmd = BASE + [
         "--mode", str(p.mode),
         "--policy_name", p.policy_name,
         "--year", str(day.year),
         "--month", str(day.month),
         "--day", str(day.day),
+        "--floor_number", str(floor),
     ]
     if p.alpha is not None:
         cmd += ["--alpha", str(p.alpha)]
@@ -127,25 +128,26 @@ def build_cmd(day: dt.date, p: PolicySpec) -> list[str]:
     return cmd
 
 
-def run_one(day: dt.date, p: PolicySpec) -> tuple[dt.date, PolicySpec, int]:
+def run_one(day: dt.date, floor: int, p: PolicySpec) -> tuple[dt.date, PolicySpec, int]:
     tag = policy_run_tag(p)
 
     # logs under results/policies/logs/<policy_name>/
     log_dir = os.path.join(LOG_ROOT, p.policy_name)
     os.makedirs(log_dir, exist_ok=True)
 
-    out_path = os.path.join(log_dir, f"{tag}_{day.isoformat()}.out")
-    err_path = os.path.join(log_dir, f"{tag}_{day.isoformat()}.err")
+    base_name = f"{tag}_{day.isoformat()}_floor{floor}"
+    out_path = os.path.join(log_dir, base_name + ".out")
+    err_path = os.path.join(log_dir, base_name + ".err")
 
-    cmd = build_cmd(day, p)
-    print(f"Running {tag} for {day}")
+    cmd = build_cmd(day, floor, p)
+    print(f"Running {base_name}")
 
     try:
         with open(out_path, "w") as out, open(err_path, "w") as err:
             subprocess.run(cmd, stdout=out, stderr=err, check=True)
-        return day, p, 0
+        return day, floor, p, 0
     except subprocess.CalledProcessError as e:
-        return day, p, e.returncode
+        return day, floor, p, e.returncode
 
 
 # ----------------------------
@@ -155,29 +157,31 @@ def run_one(day: dt.date, p: PolicySpec) -> tuple[dt.date, PolicySpec, int]:
 def main():
     days = list(daterange_iso_filtered(START, END, ALLOWED_ISO_WEEKS))
 
-    # sanity check: ensure we only run those six weeks
+    # sanity check: ensure we only run those weeks
     weeks_seen = sorted({(d.isocalendar().year, d.isocalendar().week) for d in days})
     print("Weeks to run:", weeks_seen)
     print("Total days:", len(days))
+    print("Floors:", FLOORS)
+    print("Policies:", [policy_run_tag(p) for p in POLICIES])
 
-    jobs = [(d, p) for d in days for p in POLICIES]
+    jobs = [(d, f, p) for d in days for f in FLOORS for p in POLICIES]
 
-    failures: list[tuple[dt.date, PolicySpec, int]] = []
+    failures: list[tuple[dt.date, int, PolicySpec, int]] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futs = [ex.submit(run_one, d, p) for d, p in jobs]
+        futs = [ex.submit(run_one, d, f, p) for d, f, p in jobs]
         for fut in as_completed(futs):
-            day, p, rc = fut.result()
+            day, floor, p, rc = fut.result()
             tag = policy_run_tag(p)
             if rc != 0:
-                failures.append((day, p, rc))
-                print(f"FAILED {day} {tag} rc={rc}")
+                failures.append((day, floor, p, rc))
+                print(f"FAILED {day} floor {floor} {tag} rc={rc}")
             else:
-                print(f"OK     {day} {tag}")
+                print(f"OK     {day} floor {floor} {tag}")
 
     if failures:
         print("\nSome jobs failed:")
-        for day, p, rc in failures:
-            print(f"  {day} {policy_run_tag(p)} rc={rc}")
+        for day, floor, p, rc in failures:
+            print(f"  {day} floor {floor} {policy_run_tag(p)} rc={rc}")
         raise SystemExit(1)
 
 
