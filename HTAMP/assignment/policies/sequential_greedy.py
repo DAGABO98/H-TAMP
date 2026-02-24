@@ -276,17 +276,17 @@ class SequentialGreedy:
                                                        horizon=2*state.simulator_config.horizon)
             if return_path is not None:
                 sub_paths.append(return_path)
-                planned_time_to_service_request = sub_paths[-2][-1][1].end
-                if planned_time_to_service_request > current_request.time_for_service:
+                planned_time_to_reach_last_goal = sub_paths[-2][-1][1].end
+                if planned_time_to_reach_last_goal > current_request.time_for_service:
                     final_path = []
                     planned_goal_indices = []
-                    planned_time_to_service_request = float('inf')
+                    planned_time_to_reach_last_goal = float('inf')
                 else:
                     final_path = motion_planner.combine_paths(sub_paths)
             else:
                 final_path = []
                 planned_goal_indices = []
-                planned_time_to_service_request = float('inf')
+                planned_time_to_reach_last_goal = float('inf')
         else:
             final_path = []
             planned_goal_indices = []
