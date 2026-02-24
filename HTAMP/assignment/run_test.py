@@ -26,12 +26,17 @@ LOG_ROOT = "results/policies/logs"
 
 # Only include dates whose (ISO year, ISO week) is in this explicit list
 ALLOWED_ISO_WEEKS: set[tuple[int, int]] = {
-    (2024, 26),
-    (2024, 27),
-    (2024, 28),
-    (2024, 29),
-    (2024, 30),
-    (2024, 31),
+    # Weeks with highest demand
+    (2024, 40),
+    (2025, 5),
+
+    #Weeks with medium demand
+    (2024, 44),
+    (2025, 14),
+
+    #Weeks with lowest demand
+    (2024, 36),
+    (2025, 26),
 }
 
 

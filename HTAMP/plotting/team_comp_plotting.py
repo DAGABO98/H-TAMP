@@ -145,8 +145,19 @@ class TeamCompPlotter:
             plt.close()
 
 def main():
-    #weeks_to_ignore = [(2024, 26), (2024, 27)]
-    weeks_to_ignore = []
+    weeks_to_ignore = [
+    # Weeks with highest demand
+    (2024, 40),
+    (2025, 5),
+
+    #Weeks with medium demand
+    (2024, 44),
+    (2025, 14),
+
+    #Weeks with lowest demand
+    (2024, 36),
+    (2025, 26)]
+
     plotter = TeamCompPlotter("results/team_comp/logs", 
                               weeks_to_ignore=weeks_to_ignore)
     plotter.plot_histograms()
