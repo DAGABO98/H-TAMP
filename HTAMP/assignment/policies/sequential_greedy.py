@@ -239,7 +239,8 @@ class SequentialGreedy:
                                  initial_planned_goal_index: int,
                                  state: PlanningState,
                                  motion_planner: MotionPlanner,
-                                 traversal_graph_generator: TraversalGraphGenerator) \
+                                 traversal_graph_generator: TraversalGraphGenerator,
+                                 debug: bool) \
                                     -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         sub_paths: list[list[tuple[TraversalNode, TimeInterval]]] = []
         planned_goal_indices: list[int] = []
@@ -278,16 +279,22 @@ class SequentialGreedy:
                 sub_paths.append(return_path)
                 planned_time_to_reach_last_goal = sub_paths[-2][-1][1].end
                 if planned_time_to_reach_last_goal > current_request.time_for_service:
+                    if debug:
+                        print(f"Planned time to reach last goal for robot {robot_id} and request {current_request.request_id} exceeds time for service. Planned time: {planned_time_to_reach_last_goal}, time for service: {current_request.time_for_service}.")
                     final_path = []
                     planned_goal_indices = []
                     planned_time_to_reach_last_goal = float('inf')
                 else:
                     final_path = motion_planner.combine_paths(sub_paths)
             else:
+                if debug:
+                    print(f"Failed to find a return path to the depot for robot {robot_id} after reaching last goal node {goal_node_label} for request {current_request.request_id}.")
                 final_path = []
                 planned_goal_indices = []
                 planned_time_to_reach_last_goal = float('inf')
         else:
+            if debug:
+                print(f"Failed to find a path for robot {robot_id} to at least one of the goal nodes for request {current_request.request_id}.")
             final_path = []
             planned_goal_indices = []
             planned_time_to_reach_last_goal = float('inf') 
@@ -370,7 +377,8 @@ class SequentialGreedy:
                                                  request_id: str,
                                                  state: PlanningState,
                                                  motion_planner: MotionPlanner,
-                                                 traversal_graph_generator: TraversalGraphGenerator) -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
+                                                 traversal_graph_generator: TraversalGraphGenerator,
+                                                 debug: bool) -> tuple[list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         request_struct = state.requests[request_id]
         currently_assigned_request_ids = self.assigned_requests[robot_id]
         if currently_assigned_request_ids:
@@ -394,7 +402,8 @@ class SequentialGreedy:
                                                                                                             initial_planned_goal_index=initial_planned_goal_index,
                                                                                                             state=state,
                                                                                                             motion_planner=motion_planner,
-                                                                                                            traversal_graph_generator=traversal_graph_generator)
+                                                                                                            traversal_graph_generator=traversal_graph_generator,
+                                                                                                            debug=debug)
         
         return planned_path, planned_goal_indices, planned_time_to_reach_last_goal
     
@@ -501,7 +510,8 @@ class SequentialGreedy:
                                                           request_id: str,
                                                           state: PlanningState,
                                                           motion_planner: MotionPlanner,
-                                                          traversal_graph_generator: TraversalGraphGenerator) -> tuple[int, list[tuple[TraversalNode, TimeInterval]], list[int], float]:
+                                                          traversal_graph_generator: TraversalGraphGenerator,
+                                                          debug: bool) -> tuple[int, list[tuple[TraversalNode, TimeInterval]], list[int], float]:
         min_path_cost = float('inf')
         min_planned_path = None
         min_planned_goal_indices = None
@@ -515,7 +525,8 @@ class SequentialGreedy:
                                                                         request_id=request_id,
                                                                         state=state,
                                                                         motion_planner=motion_planner,
-                                                                        traversal_graph_generator=traversal_graph_generator)
+                                                                        traversal_graph_generator=traversal_graph_generator,
+                                                                        debug=debug)
             planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
             if planned_path:
                 real_cost = planned_time_to_reach_last_goal - request_struct.scheduled_time
@@ -559,7 +570,8 @@ class SequentialGreedy:
                                                                             request_id=next_request_id,
                                                                             state=state,
                                                                             motion_planner=motion_planner,
-                                                                            traversal_graph_generator=traversal_graph_generator)
+                                                                            traversal_graph_generator=traversal_graph_generator,
+                                                                            debug=debug)
                 planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
                 
                 if planned_path:
@@ -588,7 +600,8 @@ class SequentialGreedy:
                                                                                       request_id=next_request_id,
                                                                                       state=state,
                                                                                       motion_planner=motion_planner,
-                                                                                      traversal_graph_generator=traversal_graph_generator)
+                                                                                      traversal_graph_generator=traversal_graph_generator,
+                                                                                      debug=debug)
                 min_robot_id, min_planned_path, min_planned_goal_indices, min_planned_time_to_reach_last_goal = path_results
                 
                 if min_planned_path:
