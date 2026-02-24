@@ -44,21 +44,48 @@ class DataStatisticsPlottingHelper:
         plt.close()
     
     @staticmethod
-    def plot_weekly_u_chart(weekly: pd.DataFrame, out_png: Path) -> None:
+    def plot_weekly_u_chart(weekly: pd.DataFrame, out_png: Path, annotate:bool = False) -> None:
         """
-        Plot u vs time with center line and control limits.
+        Plot u vs time with center line and control limits, and annotate each point
+        with precomputed ISO year/week stored in weekly (e.g., iso_year, iso_week).
         """
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        if weekly.empty:
+            # still save an empty figure if you prefer; here we just no-op
+            return
+
+        # Ensure week_start is datetime for nice plotting
+        x = pd.to_datetime(weekly["week_start"])
+
         plt.figure(figsize=(10, 5))
-        # x-axis as week_start
-        x = weekly["week_start"]
+
+        # Main series + limits
         plt.plot(x, weekly["u"], marker="o")
         plt.plot(x, weekly["ucl"], linestyle="--")
         plt.plot(x, weekly["lcl"], linestyle="--")
-        # center line (horizontal) using full span
-        if not weekly.empty:
-            u_bar = weekly.attrs.get("u_bar", weekly["u"].mean())
-            plt.axhline(u_bar, linestyle=":")
-        plt.xlabel("ISO Week (by week start)")
+
+        # Center line
+        u_bar = weekly.attrs.get("u_bar", weekly["u"].mean())
+        plt.axhline(u_bar, linestyle=":")
+
+        if annotate:
+            # Annotations: ISO year-week on each point
+            labels = [f"{y}-W{w:02d}" for y, w in zip(weekly["iso_year"], weekly["iso_week"])]
+
+            for xi, yi, lab in zip(x, weekly["u"], labels):
+                plt.annotate(
+                    lab,
+                    xy=(xi, yi),
+                    xytext=(0, 8),              # pixels above point
+                    textcoords="offset points",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                )
+
+        plt.xlabel("Week start date")
         plt.ylabel("Average requests per floor-day (u)")
         plt.title("Weekly Shewhart u-chart: requests per floor-day")
         plt.tight_layout()
