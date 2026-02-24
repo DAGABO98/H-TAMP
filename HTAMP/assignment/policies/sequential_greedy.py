@@ -240,6 +240,8 @@ class SequentialGreedy:
             final_path = []
             planned_goal_indices = []
             planned_time_to_reach_last_goal = float('inf')
+        
+        # TODO: Add code to return robot to depot 
 
         return final_path, planned_goal_indices, planned_time_to_reach_last_goal
     
