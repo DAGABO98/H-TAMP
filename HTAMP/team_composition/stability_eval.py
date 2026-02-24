@@ -113,7 +113,7 @@ class StabilityEvaluator:
     
     def _initialize_policy(self) -> SequentialGreedy:
         print("Initializing Sequential Greedy policy...")
-        policy = SequentialGreedy(allow_deallocation=True)
+        policy = SequentialGreedy(allow_deallocation=False)
         print("Policy initialized.")
         return policy
     
