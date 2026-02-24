@@ -471,8 +471,16 @@ def run_experiment(args):
                                                      debug=args.debug)
     
     os.makedirs("results/policies", exist_ok=True)
-    os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
-    results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+    if args.policy_name in ["tp_d", "d_tpts"]:
+        os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
+        results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+    elif args.policy_name == "sequential_greedy":
+        deallocation_str = "ropt" if args.allow_deallocation else "nopt"
+        os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}", exist_ok=True)
+        results_df.to_csv(f"results/policies/{args.policy_name}_{deallocation_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+    else:
+        os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
+        results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
