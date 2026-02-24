@@ -11,9 +11,9 @@ from typing import Optional, Iterable
 # ----------------------------
 
 START = dt.date(2024, 6, 24)
-END   = dt.date(2024, 7, 7)  # for quick testing; change to 2025-06-29 for full run
+END   = dt.date(2025, 6, 29)
 
-MAX_WORKERS = 100  # tune to your machine / cluster limits
+MAX_WORKERS = 32  # tune for your machine / cluster
 
 BASE = [
     "python", "-m", "HTAMP.evaluate_assignment",
@@ -22,6 +22,17 @@ BASE = [
 ]
 
 LOG_ROOT = "results/policies/logs"
+
+
+# Only include dates whose (ISO year, ISO week) is in this explicit list
+ALLOWED_ISO_WEEKS: set[tuple[int, int]] = {
+    (2024, 26),
+    (2024, 27),
+    (2024, 28),
+    (2024, 29),
+    (2024, 30),
+    (2024, 31),
+}
 
 
 # ----------------------------
@@ -34,7 +45,7 @@ class PolicySpec:
     mode: int
     alpha: Optional[float] = None
     allow_deallocation: bool = False
-    extra_args: tuple[str, ...] = ()  # for any other flags/params you might need
+    extra_args: tuple[str, ...] = ()  # any extra CLI args you want to add
 
 
 POLICIES: list[PolicySpec] = [
@@ -54,7 +65,7 @@ POLICIES: list[PolicySpec] = [
 
 
 # ----------------------------
-# HELPERS
+# DATE HELPERS
 # ----------------------------
 
 def daterange(start: dt.date, end: dt.date) -> Iterable[dt.date]:
@@ -64,9 +75,23 @@ def daterange(start: dt.date, end: dt.date) -> Iterable[dt.date]:
         d += dt.timedelta(days=1)
 
 
+def daterange_iso_filtered(start: dt.date, end: dt.date,
+                           allowed_iso_weeks: set[tuple[int, int]]) -> Iterable[dt.date]:
+    d = start
+    while d <= end:
+        iso_year, iso_week, _ = d.isocalendar()
+        if (iso_year, iso_week) in allowed_iso_weeks:
+            yield d
+        d += dt.timedelta(days=1)
+
+
+# ----------------------------
+# CMD / LOGGING HELPERS
+# ----------------------------
+
 def policy_run_tag(p: PolicySpec) -> str:
     """
-    Build a stable tag for filenames.
+    Stable tag for filenames.
     Examples:
       fleet_manager_m0
       tp_d_m1_a0p1
@@ -74,9 +99,7 @@ def policy_run_tag(p: PolicySpec) -> str:
     """
     tag = f"{p.policy_name}_m{p.mode}"
     if p.alpha is not None:
-        # file-safe alpha: 0.1 -> 0p1
-        a = str(p.alpha).replace(".", "p")
-        tag += f"_a{a}"
+        tag += f"_a{str(p.alpha).replace('.', 'p')}"
     if p.allow_deallocation:
         tag += "_ropt"
     return tag
@@ -102,7 +125,7 @@ def build_cmd(day: dt.date, p: PolicySpec) -> list[str]:
 def run_one(day: dt.date, p: PolicySpec) -> tuple[dt.date, PolicySpec, int]:
     tag = policy_run_tag(p)
 
-    # logs go under results/policies/logs/<policy_name>/
+    # logs under results/policies/logs/<policy_name>/
     log_dir = os.path.join(LOG_ROOT, p.policy_name)
     os.makedirs(log_dir, exist_ok=True)
 
@@ -110,7 +133,7 @@ def run_one(day: dt.date, p: PolicySpec) -> tuple[dt.date, PolicySpec, int]:
     err_path = os.path.join(log_dir, f"{tag}_{day.isoformat()}.err")
 
     cmd = build_cmd(day, p)
-    print(f"Running {tag} for {day} -> {out_path}")
+    print(f"Running {tag} for {day}")
 
     try:
         with open(out_path, "w") as out, open(err_path, "w") as err:
@@ -125,7 +148,14 @@ def run_one(day: dt.date, p: PolicySpec) -> tuple[dt.date, PolicySpec, int]:
 # ----------------------------
 
 def main():
-    jobs = [(d, p) for d in daterange(START, END) for p in POLICIES]
+    days = list(daterange_iso_filtered(START, END, ALLOWED_ISO_WEEKS))
+
+    # sanity check: ensure we only run those six weeks
+    weeks_seen = sorted({(d.isocalendar().year, d.isocalendar().week) for d in days})
+    print("Weeks to run:", weeks_seen)
+    print("Total days:", len(days))
+
+    jobs = [(d, p) for d in days for p in POLICIES]
 
     failures: list[tuple[dt.date, PolicySpec, int]] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
