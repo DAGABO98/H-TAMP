@@ -10,7 +10,6 @@ from typing import Optional
 from HTAMP.assignment.baselines.D_TPTS import DeadlineAwareTokenPassingwithTaskSwaps
 from HTAMP.assignment.baselines.TP_D import TokenPassingWithDeadlines
 from HTAMP.assignment.baselines.idle_pred import IdleTaskPrediction
-from HTAMP.assignment.policies.adaptive_heuristic import AdaptiveHeuristicPolicy
 from HTAMP.assignment.policies.adaptive_rollout import AdaptiveRollout
 from HTAMP.assignment.policies.vanilla_rollout import VanillaRollout
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
@@ -48,9 +47,8 @@ class AssignmentEvaluator:
         self.state = PlanningState(simulator_config=self.simulator_config)
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                     SequentialGreedy | VanillaRollout | AdaptiveRollout | \
-                        AdaptiveHeuristicPolicy = self._initialize_policy(mode=args.mode, 
-                                                                          alpha=args.alpha)
+                     SequentialGreedy | VanillaRollout | AdaptiveRollout = self._initialize_policy(mode=args.mode, 
+                                                                                                  alpha=args.alpha)
     
     def _initialize_traversal_graph_generator(self):
         print("Generating Traversal Graph...")
@@ -124,7 +122,7 @@ class AssignmentEvaluator:
     
     def _initialize_policy(self, mode: int, alpha: float) -> FleetManager | TokenPassingWithDeadlines | \
                                                 DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                                                    SequentialGreedy | VanillaRollout | AdaptiveRollout | AdaptiveHeuristicPolicy:
+                                                    SequentialGreedy | VanillaRollout | AdaptiveRollout:
         print("Initializing Policy...")
         print(f"Selected mode: {mode}")
         policy_dict = {
@@ -134,8 +132,7 @@ class AssignmentEvaluator:
             3: IdleTaskPrediction,
             4: SequentialGreedy,
             5: VanillaRollout,
-            6: AdaptiveRollout,
-            7: AdaptiveHeuristicPolicy
+            6: AdaptiveRollout
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
@@ -475,7 +472,7 @@ def run_experiment(args):
     
     os.makedirs("results/policies", exist_ok=True)
     os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
-    results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}_{args.month}_{args.day}.csv", index=False)
+    results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
