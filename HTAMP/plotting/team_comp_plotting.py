@@ -155,8 +155,8 @@ def main():
     (2025, 14),
 
     #Weeks with lowest demand
-    (2024, 36),
-    (2025, 26)]
+    (2024, 48),
+    (2024, 36)]
 
     plotter = TeamCompPlotter("results/team_comp/logs", 
                               weeks_to_ignore=weeks_to_ignore)
