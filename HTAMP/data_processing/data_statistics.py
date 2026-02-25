@@ -243,7 +243,8 @@ class DataStatistics:
                                          room_col: str,
                                          start_date: str,
                                          end_date: str,
-                                         label: str) -> None:
+                                         label: str,
+                                         annotate_flag: bool) -> None:
         df_prep = DataHelpers.prepare_df(
             original_df,
             time_col=time_col,
@@ -263,7 +264,8 @@ class DataStatistics:
         out_png = self.u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
-            out_png=out_png
+            out_png=out_png,
+            annotate=annotate_flag
         )
     
     def generate_and_plot_weekly_laney_u_chart(self,
@@ -272,7 +274,8 @@ class DataStatistics:
                                          room_col: str,
                                          start_date: str,
                                          end_date: str,
-                                         label: str) -> None:
+                                         label: str,
+                                         annotate_flag: bool) -> None:
         df_prep = DataHelpers.prepare_df(
             original_df,
             time_col=time_col,
@@ -292,7 +295,8 @@ class DataStatistics:
         out_png = self.u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
-            out_png=out_png
+            out_png=out_png,
+            annotate=annotate_flag
         )
     
     def build_per_day_all_tasks(self,
@@ -429,14 +433,16 @@ class DataStatistics:
     
     def generate_and_plot_all_weekly_laney_u_charts(self,
                                                     start_date: str,
-                                                    end_date: str) -> None:
+                                                    end_date: str,
+                                                    annotate_flag: bool) -> None:
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.bp_df,
             time_col="Scheduled DTTM",
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="blood_pressure"
+            label="blood_pressure",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.medications_df,
@@ -444,7 +450,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="medications"
+            label="medications",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.hr_df,
@@ -452,7 +459,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="heart_rate"
+            label="heart_rate",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.rr_df,
@@ -460,7 +468,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="respiratory_rate"
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.temp_df,
@@ -468,7 +477,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="temperature"
+            label="temperature",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.oximetry_df,
@@ -476,7 +486,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="oxygen_saturation"
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.admissions_discharges_df,
@@ -484,7 +495,8 @@ class DataStatistics:
             room_col="IN_DEP",
             start_date=start_date,
             end_date=end_date,
-            label="admissions"
+            label="admissions",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_laney_u_chart(
             original_df=self.admissions_discharges_df,
@@ -492,19 +504,22 @@ class DataStatistics:
             room_col="OUT_DEP",
             start_date=start_date,
             end_date=end_date,
-            label="discharges"
+            label="discharges",
+            annotate_flag=annotate_flag
         )
     
     def generate_and_plot_all_weekly_u_charts(self,
                                             start_date: str,
-                                            end_date: str) -> None:
+                                            end_date: str,
+                                            annotate_flag: bool) -> None:
         self.generate_and_plot_weekly_u_chart(
             original_df=self.bp_df,
             time_col="Scheduled DTTM",
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="blood_pressure"
+            label="blood_pressure", 
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.medications_df,
@@ -512,7 +527,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="medications"
+            label="medications",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.hr_df,
@@ -520,7 +536,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="heart_rate"
+            label="heart_rate",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.rr_df,
@@ -528,7 +545,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="respiratory_rate"
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.temp_df,
@@ -536,7 +554,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="temperature"
+            label="temperature",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.oximetry_df,
@@ -544,7 +563,8 @@ class DataStatistics:
             room_col="scheduled_room",
             start_date=start_date,
             end_date=end_date,
-            label="oxygen_saturation"
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.admissions_discharges_df,
@@ -552,7 +572,8 @@ class DataStatistics:
             room_col="IN_DEP",
             start_date=start_date,
             end_date=end_date,
-            label="admissions"
+            label="admissions",
+            annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_u_chart(
             original_df=self.admissions_discharges_df,
@@ -560,16 +581,17 @@ class DataStatistics:
             room_col="OUT_DEP",
             start_date=start_date,
             end_date=end_date,
-            label="discharges"
+            label="discharges",
+            annotate_flag=annotate_flag
         )
     
     def generate_and_plot_heatmap(self,
-                                        original_df: pd.DataFrame,
-                                        time_col: str,
-                                        room_col: str,
-                                        start_date: str,
-                                        end_date: str,
-                                        label: str) -> None:
+                                  original_df: pd.DataFrame,
+                                  time_col: str,
+                                  room_col: str,
+                                  start_date: str,
+                                  end_date: str,
+                                  label: str) -> None:
             df_prep = DataHelpers.prepare_df(
                 original_df,
                 time_col=time_col,
@@ -844,6 +866,7 @@ def main():
     parser.add_argument("--week-start", default="MON", help="Week anchor day: MON (default), SUN, TUE, ...")
     parser.add_argument("--outdir", default="results/data_statistics", help="Directory to write outputs (default: ./results/data_statistics)")
     parser.add_argument("--dist-data-dir", default="data/distributions", help="Directory to write distribution data outputs (default: ./data/distributions/)")
+    parser.add_argument("--annotate_u_chart", action='store_true', help="Flag to annotate u-chart points with ISO year/week")
     args = parser.parse_args()
 
     annotated_data_files = AnnotatedDataFiles(
@@ -871,12 +894,14 @@ def main():
 
     data_stats.generate_and_plot_all_weekly_u_charts(
         start_date="2024-06-24",
-        end_date="2025-06-29"
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
     )
 
     data_stats.generate_and_plot_all_weekly_laney_u_charts(
         start_date="2024-06-24",
-        end_date="2025-06-29"
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
     )
 
     data_stats.generate_and_plot_combined_weekly_u_chart(
