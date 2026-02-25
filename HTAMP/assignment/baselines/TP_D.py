@@ -55,8 +55,7 @@ class TokenPassingWithDeadlines:
                                             task_dict=task_dict, 
                                             state=state, 
                                             motion_planner=motion_planner,
-                                            traversal_graph_generator=traversal_graph_generator,
-                                            assigned=False)
+                                            traversal_graph_generator=traversal_graph_generator)
             else:
                 print(f"Request {request_id} has expired and is being removed from the list.")
                 request_ids_to_remove.append(request_id)
