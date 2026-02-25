@@ -87,6 +87,18 @@ class DataHelpers:
         return dff
     
     @staticmethod
+    def apply_online_requests_filters(df: pd.DataFrame, sched_time_label: str, ordered_time_label: str) -> pd.DataFrame:
+        df[sched_time_label] = pd.to_datetime(df[sched_time_label], errors="coerce")
+        df[ordered_time_label]   = pd.to_datetime(df[ordered_time_label], errors="coerce")
+
+        # Compute delta and filter
+        delta = df[sched_time_label] - df[ordered_time_label]
+        mask = delta < pd.Timedelta(minutes=30)
+        filtered = df.loc[mask].copy()
+
+        return filtered
+    
+    @staticmethod
     def get_daily_requests_for_floor(df: pd.DataFrame, date_stamp: pd.Timestamp, floor_number: int) -> pd.DataFrame:
         """
         Extract all requests for a specific date_stamp (date) and floor number.
