@@ -65,6 +65,7 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                            state: PlanningState,
                                            motion_planner: MotionPlanner,
                                            traversal_graph_generator: TraversalGraphGenerator):
+        request_ids_to_remove = []
         for request_id, deadline in task_dict.items():
             request = state.requests[request_id]
             if not request.is_expired(state.simulator_time):
@@ -76,8 +77,11 @@ class DeadlineAwareTokenPassingwithTaskSwaps():
                                             assigned=False)
             else:
                 print(f"Request {request_id} has expired and is being removed from the list.")
-                task_dict.pop(request_id)
-                request.mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
+                request_ids_to_remove.append(request_id)
+                
+        for request_id in request_ids_to_remove:
+            task_dict.pop(request_id)
+            state.requests[request_id].mark_rejected(rejection_penalty=state.simulator_config.rejection_penalty)
 
 
     def _check_if_requests_in_dicts_expired(self, 
