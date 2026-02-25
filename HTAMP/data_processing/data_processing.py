@@ -280,6 +280,7 @@ class DataProcessor:
         administered_df["scheduled_space_supplies"] = administered_df["scheduled_space_id"].apply(self._map_space_to_supplies)
         
         return administered_df
+    
     def parse_frequency_to_timedelta(self, s: str) -> Optional[pd.Timedelta]:
         """Convert an Order Frequency string to a Timedelta.
         Returns NaT when we intentionally want to 'default later'."""
@@ -426,6 +427,7 @@ class DataProcessor:
         )
 
         bp_annotated_df = self._annotate_orders_with_room(bp_df)
+        bp_annotated_df = bp_annotated_df.drop_duplicates(subset=["MRN", "Administered DTTM"]).reset_index(drop=True)
         return bp_annotated_df
     
     def _annotate_heart_rate_orders_with_room(self) -> pd.DataFrame:
@@ -437,6 +439,7 @@ class DataProcessor:
         )
 
         hr_annotated_df = self._annotate_orders_with_room(hr_df)
+        hr_annotated_df = hr_annotated_df.drop_duplicates(subset=["MRN", "Administered DTTM"]).reset_index(drop=True)
         return hr_annotated_df
     
     def _annotate_respiratory_rate_orders_with_room(self) -> pd.DataFrame:
@@ -448,6 +451,7 @@ class DataProcessor:
         )
 
         rr_annotated_df = self._annotate_orders_with_room(rr_df)
+        rr_annotated_df = rr_annotated_df.drop_duplicates(subset=["MRN", "Administered DTTM"]).reset_index(drop=True)
         return rr_annotated_df
     
     def _annotate_oxygen_saturation_orders_with_room(self) -> pd.DataFrame:
@@ -459,6 +463,7 @@ class DataProcessor:
         )
 
         spo2_annotated_df = self._annotate_orders_with_room(spo2_df)
+        spo2_annotated_df = spo2_annotated_df.drop_duplicates(subset=["MRN", "Administered DTTM"]).reset_index(drop=True)
         return spo2_annotated_df
     
     def _annotate_temperature_orders_with_room(self) -> pd.DataFrame:
@@ -470,6 +475,7 @@ class DataProcessor:
         )
 
         temp_annotated_df = self._annotate_orders_with_room(temp_df)
+        temp_annotated_df = temp_annotated_df.drop_duplicates(subset=["MRN", "Administered DTTM"]).reset_index(drop=True)
         return temp_annotated_df
     
     def _save_processed_data(self):
