@@ -19,7 +19,7 @@ DISALLOWED_ISO_WEEKS: set[tuple[int, int]] = {
     (2025, 14),
 
     #Weeks with lowest demand
-    (2024, 48),
+    (2024, 27),
     (2024, 36),
 }
 
