@@ -127,7 +127,7 @@ def run_one(day: dt.date, floor: int, p: PolicySpec) -> tuple[dt.date, PolicySpe
     tag = policy_run_tag(p)
 
     # logs under results/policies/logs/<policy_name>/
-    log_dir = os.path.join(LOG_ROOT, p.policy_name)
+    log_dir = os.path.join(LOG_ROOT, tag)
     os.makedirs(log_dir, exist_ok=True)
 
     base_name = f"{tag}_{day.isoformat()}_floor{floor}"
