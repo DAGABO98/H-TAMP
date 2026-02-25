@@ -13,10 +13,10 @@ from typing import Optional, Iterable
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
-MAX_WORKERS = 32  # tune for your machine / cluster
+MAX_WORKERS = 100
 
 BASE = [
-    "python", "-m", "HTAMP.evaluate_assignment",
+    "python", "-m", "HTAMP.assignment.evaluate_assignment",
     "--use_saved_data",
     "--use_saved_request_data",
     "--hour_start", "8",
@@ -29,16 +29,16 @@ LOG_ROOT = "results/policies/logs"
 # Only include dates whose (ISO year, ISO week) is in this explicit list
 ALLOWED_ISO_WEEKS: set[tuple[int, int]] = {
     # Weeks with highest demand
-    (2024, 40),
-    (2025, 5),
+    (2024, 40)
+    # (2025, 5),
 
-    #Weeks with medium demand
-    (2024, 44),
-    (2025, 14),
+    # #Weeks with medium demand
+    # (2024, 44),
+    # (2025, 14),
 
-    #Weeks with lowest demand
-    (2024, 48),
-    (2024, 36),
+    # #Weeks with lowest demand
+    # (2024, 48),
+    # (2024, 36),
 }
 
 
@@ -74,13 +74,6 @@ POLICIES: list[PolicySpec] = [
 # ----------------------------
 # DATE HELPERS
 # ----------------------------
-
-def daterange(start: dt.date, end: dt.date) -> Iterable[dt.date]:
-    d = start
-    while d <= end:
-        yield d
-        d += dt.timedelta(days=1)
-
 
 def daterange_iso_filtered(start: dt.date, end: dt.date,
                            allowed_iso_weeks: set[tuple[int, int]]) -> Iterable[dt.date]:
