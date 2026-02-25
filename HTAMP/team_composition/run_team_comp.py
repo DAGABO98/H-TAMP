@@ -2,11 +2,26 @@ import datetime as dt
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
+from typing import Iterable
 
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
 MAX_WORKERS = 100
+
+DISALLOWED_ISO_WEEKS: set[tuple[int, int]] = {
+    # Weeks with highest demand
+    (2024, 40),
+    (2025, 5),
+
+    #Weeks with medium demand
+    (2024, 44),
+    (2025, 14),
+
+    #Weeks with lowest demand
+    (2024, 48),
+    (2024, 36),
+}
 
 BASE = [
     "python", "-m", "HTAMP.team_composition.stability_eval",
@@ -37,7 +52,7 @@ def run_one(day: dt.date, floor: int) -> tuple[dt.date, int, int]:
         return day, floor, e.returncode
 
 def main():
-    jobs = [(d, f) for d in daterange(START, END) for f in FLOORS]
+    jobs = [(d, f) for d in daterange_iso_filtered(START, END, disallowed_iso_weeks=DISALLOWED_ISO_WEEKS) for f in FLOORS]
 
     failures = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -56,10 +71,13 @@ def main():
             print(f"  {day} floor {floor} rc={rc}")
         raise SystemExit(1)
 
-def daterange(start: dt.date, end: dt.date):
+def daterange_iso_filtered(start: dt.date, end: dt.date,
+                           disallowed_iso_weeks: set[tuple[int, int]]) -> Iterable[dt.date]:
     d = start
     while d <= end:
-        yield d
+        iso_year, iso_week, _ = d.isocalendar()
+        if (iso_year, iso_week) not in disallowed_iso_weeks:
+            yield d
         d += dt.timedelta(days=1)
 
 if __name__ == "__main__":
