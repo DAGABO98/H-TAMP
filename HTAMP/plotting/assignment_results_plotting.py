@@ -80,36 +80,54 @@ class AssignmentResultsPlotter:
         summary_by_type = summary_by_type.sort_values(["policy", "request_type"]).reset_index(drop=True)
         return summary_by_type, serviced_waits_by_policy_type
     
-    def generate_number_of_requests_plots_by_type(self):
-        out_dir = self.out_dir / "by_request_type"
-        out_dir.mkdir(parents=True, exist_ok=True)
+    def print_counts_per_policy_per_request_type(self) -> None:
+        """
+        For each request_type, print a per-policy table of rejected/serviced/total.
+        Requires columns: policy, request_type, rejected, serviced, total
+        """
+        required = {"policy", "request_type", "rejected", "serviced", "total"}
+        missing = required - set(self.summary_by_type.columns)
+        if missing:
+            raise ValueError(f"summary_by_type missing required columns: {sorted(missing)}")
 
-        for req_type, g in self.summary_by_type.groupby("request_type"):
-            g = g.sort_values("policy")
-            policies = g["policy"].tolist()
-            x = np.arange(len(policies))
-            width = 0.25
+        # Stable ordering
+        all_policies = sorted(self.summary_by_type["policy"].unique().tolist())
 
-            plt.figure(figsize=(max(10, len(policies) * 0.9), 5))
-            b1 = plt.bar(x - width, g["rejected"], width, label="Rejected")
-            b2 = plt.bar(x,         g["serviced"], width, label="Serviced")
-            b3 = plt.bar(x + width, g["total"],    width, label="Total")
+        # Order request types by overall total (largest first)
+        type_order = (
+            self.summary_by_type.groupby("request_type")["total"].sum()
+            .sort_values(ascending=False).index.tolist()
+        )
 
-            plt.xticks(x, policies, rotation=35, ha="right")
-            plt.ylabel("Count")
-            plt.title(f"Requests per policy — request_type={req_type}")
-            plt.legend()
+        for req_type in type_order:
+            g = self.summary_by_type[self.summary_by_type["request_type"] == req_type]
 
-            for bars in (b1, b2, b3):
-                for rect in bars:
-                    h = rect.get_height()
-                    plt.text(rect.get_x() + rect.get_width()/2, h, f"{int(h)}",
-                            ha="center", va="bottom", fontsize=8)
+            # Aggregate in case you have multiple rows per (policy, type)
+            tbl = (
+                g.groupby("policy", as_index=False)[["rejected", "serviced", "total"]]
+                .sum()
+                .set_index("policy")
+                .reindex(all_policies, fill_value=0)
+            )
 
-            plt.tight_layout()
-            safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(req_type))
-            plt.savefig(out_dir / f"policy_request_totals__{safe}.png", dpi=200)
-            plt.close()
+            print("\n" + "=" * 72)
+            print(f"Request type: {req_type}")
+            print("=" * 72)
+            print(f"{'Policy':30s}  {'Rejected':>10s}  {'Serviced':>10s}  {'Total':>10s}")
+            print("-" * 72)
+
+            for policy, row in tbl.iterrows():
+                r = int(row["rejected"])
+                s = int(row["serviced"])
+                t = int(row["total"])
+                print(f"{policy:30s}  {r:10d}  {s:10d}  {t:10d}")
+
+            # Optional: totals line for this request type
+            R = int(tbl["rejected"].sum())
+            S = int(tbl["serviced"].sum())
+            T = int(tbl["total"].sum())
+            print("-" * 72)
+            print(f"{'ALL POLICIES':30s}  {R:10d}  {S:10d}  {T:10d}")
 
     def generate_serviced_wait_time_box_plot_by_type(self):
         out_dir = self.out_dir / "by_request_type"
@@ -139,7 +157,7 @@ class AssignmentResultsPlotter:
 
 def main():
     plotter = AssignmentResultsPlotter(root_dir="results/policies")
-    plotter.generate_number_of_requests_plots_by_type()
+    plotter.print_counts_per_policy_per_request_type()
     plotter.generate_serviced_wait_time_box_plot_by_type()
 
 if __name__ == "__main__":
