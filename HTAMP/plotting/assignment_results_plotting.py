@@ -68,7 +68,9 @@ class AssignmentResultsPlotter:
         self.logs_df = self._parse_all_logs()
         iso = self.logs_df["day"].dt.isocalendar()
         self.logs_df["iso_year"] = iso["year"].astype(int)
-        self.logs_df["iso_week"] = iso["week"].astype(int)      
+        self.logs_df["iso_week"] = iso["week"].astype(int)
+
+        self.raw_requests_df = self._load_raw_requests_df()  
 
     @staticmethod
     def _safe_filename(x: str) -> str:
@@ -188,66 +190,94 @@ class AssignmentResultsPlotter:
         df = df.sort_values(["policy", "day", "floor"]).reset_index(drop=True)
         return df
     
-    def print_policy_totals(self) -> None:
-        """
-        Print total planning time and total requests aggregated across all logs per policy,
-        plus overall planning_time_per_request computed from totals.
-        """
-        g = (
-            self.logs_df.groupby("policy", as_index=False)[["planning_time_sec", "total_requests"]]
-            .sum()
-        )
-        g["planning_time_per_request_sec_from_totals"] = g["planning_time_sec"] / g["total_requests"].clip(lower=1)
+    def _load_raw_requests_df(self) -> pd.DataFrame:
+        rows = []
 
-        policies = self._ordered_policies(g["policy"].tolist())
-        g = g.set_index("policy").reindex(policies).reset_index()
+        if not self.root_dir.exists():
+            raise FileNotFoundError(f"root_dir not found: {self.root_dir}")
 
-        print("\n" + "=" * 80)
-        print("Planning time totals per policy (across all log files)")
-        print("=" * 80)
-        print(f"{'Policy':30s}  {'TotalReq':>10s}  {'PlanSec':>12s}  {'PlanSec/Req':>12s}")
-        print("-" * 80)
-        for _, r in g.iterrows():
-            print(
-                f"{r['policy'][:30]:30s}  "
-                f"{int(r['total_requests']):10d}  "
-                f"{float(r['planning_time_sec']):12.2f}  "
-                f"{float(r['planning_time_per_request_sec_from_totals']):12.4f}"
-            )
+        # Expect: root_dir/<policy_folder>/*.csv
+        for policy_dir in sorted([p for p in self.root_dir.iterdir() if p.is_dir()]):
+            policy = policy_dir.name
+            csv_files = sorted(policy_dir.glob("*.csv"))
+            if not csv_files:
+                continue
+
+            for f in csv_files:
+                try:
+                    df_one = pd.read_csv(f)
+                except Exception as e:
+                    print(f"[WARN] Failed reading {f}: {e}")
+                    continue
+
+                # parse day/floor from filename
+                try:
+                    day, floor = self._parse_day_floor_from_filename(f)
+                except Exception as e:
+                    print(f"[WARN] {e}")
+                    continue
+
+                required = {"completed", "rejected", self.type_col}
+                missing = required - set(df_one.columns)
+                if missing:
+                    raise ValueError(f"{f} missing required columns: {sorted(missing)}")
+
+                # normalize & keep only what we need for counting
+                tmp = pd.DataFrame({
+                    "policy": policy,
+                    "request_type": df_one[self.type_col].astype(str).fillna("UNKNOWN"),
+                    "completed": df_one["completed"].fillna(False).astype(bool),
+                    "rejected": df_one["rejected"].fillna(False).astype(bool),
+                    "_day": day,
+                    "_floor": floor,
+                })
+                rows.append(tmp)
+
+        if not rows:
+            raise ValueError(f"No readable CSVs found under {self.root_dir}")
+
+        df = pd.concat(rows, ignore_index=True)
+        iso = df["_day"].dt.isocalendar()
+        df["iso_year"] = iso["year"].astype(int)
+        df["iso_week"] = iso["week"].astype(int)
+        return df
     
     def print_policy_mean_pm_std(self) -> None:
         """
-        Mean ± 1 std of planning_time_per_request_sec across (day,floor) rows for each policy.
-        Units: seconds per request.
+        Prints mean ± std of planning_time_per_request_sec across (day,floor) units,
+        either overall or per week-bucket.
         """
-        g = (
-            self.logs_df.groupby("policy")["planning_time_per_request_sec"]
-            .agg(["count", "mean", "std"])
-            .reset_index()
-        )
 
-        policies = self._ordered_policies(g["policy"].tolist())
-        g = g.set_index("policy").reindex(policies).reset_index()
+        for label, weeks in self.week_buckets.items():
+            sub = self.filter_to_weeks(self.logs_df, weeks) if label != "ALL_WEEKS" else self.logs_df
+            if sub.empty:
+                print(f"\n[WARN] No rows for bucket '{label}'.")
+                continue
 
-        print("\n" + "=" * 80)
-        print("Planning time per request (across day-floor units): mean ± 1 std")
-        print("=" * 80)
-        print(f"{'Policy':30s}  {'N(day-floor)':>12s}  {'Mean (s/req)':>14s}  {'Std (s/req)':>14s}  {'Mean ± Std':>24s}")
-        print("-" * 80)
-
-        for _, r in g.iterrows():
-            policy = str(r["policy"])
-            n = int(r["count"])
-            mean = float(r["mean"]) if np.isfinite(r["mean"]) else float("nan")
-            std = float(r["std"]) if np.isfinite(r["std"]) else 0.0  # std is NaN if n==1
-
-            print(
-                f"{policy[:30]:30s}  "
-                f"{n:12d}  "
-                f"{mean:14.4f}  "
-                f"{std:14.4f}  "
-                f"{mean:10.4f} ± {std:10.4f}"
+            g = (
+                sub.groupby("policy")["planning_time_per_request_sec"]
+                .agg(["count", "mean", "std"])
+                .reset_index()
             )
+
+            policies = self._ordered_policies(g["policy"].tolist())
+            g = g.set_index("policy").reindex(policies).reset_index()
+
+            print("\n" + "=" * 80)
+            print(f"Planning time per request (day-floor): mean ± 1 std — {label}")
+            if self.week_buckets:
+                print(f"Weeks: {sorted(weeks)}")
+            print("=" * 80)
+            print(f"{'Policy':30s}  {'N(day-floor)':>12s}  {'Mean (s/req)':>14s}  {'Std (s/req)':>14s}  {'Mean ± Std':>24s}")
+            print("-" * 80)
+
+            for _, r in g.iterrows():
+                n = int(r["count"])
+                mean = float(r["mean"]) if np.isfinite(r["mean"]) else float("nan")
+                std = float(r["std"]) if np.isfinite(r["std"]) else 0.0  # NaN if n==1
+                print(
+                    f"{str(r['policy'])[:30]:30s}  {n:12d}  {mean:14.4f}  {std:14.4f}  {mean:10.4f} ± {std:10.4f}"
+                )
     
     def plot_box_per_policy_by_week_bucket(self) -> None:
         for label, weeks in self.week_buckets.items():
@@ -407,45 +437,98 @@ class AssignmentResultsPlotter:
         return summary_by_type, dailyfloor_wait_stats_by_policy_type, dailyfloor_stats_df
 
     def print_counts_per_policy_per_request_type(self) -> None:
-        required = {"policy", "request_type", "rejected", "serviced", "total"}
-        missing = required - set(self.summary_by_type.columns)
-        if missing:
-            raise ValueError(f"summary_by_type missing required columns: {sorted(missing)}")
+        """
+        Prints per-policy rejected/serviced/total counts by request_type
+        for each demand bucket (highest/medium/lowest).
+        """
+        df0 = self.raw_requests_df
 
-        all_policies = self._ordered_policies(self.summary_by_type["policy"].unique().tolist())
+        for label, weeks in self.week_buckets.items():
+            df = self.filter_to_weeks(df0, weeks)
+            if df.empty:
+                print(f"\n[WARN] No requests for bucket '{label}'.")
+                continue
 
-        type_order = (
-            self.summary_by_type.groupby("request_type")["total"].sum()
-            .sort_values(ascending=False)
-            .index.tolist()
-        )
+            print("\n" + "#" * 90)
+            print(f"Counts per policy — {label.upper()} demand weeks")
+            print(f"Weeks: {sorted(weeks)}")
+            print("#" * 90)
 
-        for req_type in type_order:
-            g = self.summary_by_type[self.summary_by_type["request_type"] == req_type]
-            tbl = (
-                g.groupby("policy", as_index=False)[["rejected", "serviced", "total"]]
-                .sum()
-                .set_index("policy")
-                .reindex(all_policies, fill_value=0)
+            pol_tbl = (
+                df.groupby("policy", as_index=False)
+                .agg(
+                    entered=("request_type", "size"),
+                    serviced=("completed", "sum"),
+                    rejected=("rejected", "sum"),
+                )
             )
 
-            print("\n" + "=" * 72)
-            print(f"Request type: {req_type}")
-            print("=" * 72)
-            print(f"{'Policy':30s}  {'Rejected':>10s}  {'Serviced':>10s}  {'Total':>10s}")
-            print("-" * 72)
+            policies = self._ordered_policies(pol_tbl["policy"].tolist())
+            pol_tbl = pol_tbl.set_index("policy").reindex(policies, fill_value=0).reset_index()
 
-            for policy, row in tbl.iterrows():
-                r = int(row["rejected"])
-                s = int(row["serviced"])
-                t = int(row["total"])
-                print(f"{policy:30s}  {r:10d}  {s:10d}  {t:10d}")
+            print("\n" + "-" * 90)
+            print(f"TOTALS PER POLICY — {label.upper()} demand weeks")
+            print("-" * 90)
+            print(f"{'Policy':30s}  {'Entered':>10s}  {'Serviced':>10s}  {'Rejected':>10s}")
+            print("-" * 90)
+            for _, r in pol_tbl.iterrows():
+                print(
+                    f"{str(r['policy'])[:30]:30s}  "
+                    f"{int(r['entered']):10d}  "
+                    f"{int(r['serviced']):10d}  "
+                    f"{int(r['rejected']):10d}"
+                )
+            print("-" * 90)
+            print(
+                f"{'ALL POLICIES':30s}  "
+                f"{int(pol_tbl['entered'].sum()):10d}  "
+                f"{int(pol_tbl['serviced'].sum()):10d}  "
+                f"{int(pol_tbl['rejected'].sum()):10d}"
+            )
 
-            R = int(tbl["rejected"].sum())
-            S = int(tbl["serviced"].sum())
-            T = int(tbl["total"].sum())
-            print("-" * 72)
-            print(f"{'ALL POLICIES':30s}  {R:10d}  {S:10d}  {T:10d}")
+            # Build bucket-specific summary like your original summary_by_type
+            summary = (
+                df.groupby(["policy", "request_type"], as_index=False)
+                .agg(
+                    total=("request_type", "size"),
+                    serviced=("completed", "sum"),
+                    rejected=("rejected", "sum"),
+                )
+            )
+
+            all_policies = self._ordered_policies(summary["policy"].unique().tolist())
+            type_order = (
+                summary.groupby("request_type")["total"].sum()
+                .sort_values(ascending=False)
+                .index.tolist()
+            )
+
+            for req_type in type_order:
+                g = summary[summary["request_type"] == req_type]
+                tbl = (
+                    g.groupby("policy", as_index=False)[["rejected", "serviced", "total"]]
+                    .sum()
+                    .set_index("policy")
+                    .reindex(all_policies, fill_value=0)
+                )
+
+                print("\n" + "=" * 72)
+                print(f"Request type: {req_type}")
+                print("=" * 72)
+                print(f"{'Policy':30s}  {'Rejected':>10s}  {'Serviced':>10s}  {'Total':>10s}")
+                print("-" * 72)
+
+                for policy, row in tbl.iterrows():
+                    r = int(row["rejected"])
+                    s = int(row["serviced"])
+                    t = int(row["total"])
+                    print(f"{policy:30s}  {r:10d}  {s:10d}  {t:10d}")
+
+                R = int(tbl["rejected"].sum())
+                S = int(tbl["serviced"].sum())
+                T = int(tbl["total"].sum())
+                print("-" * 72)
+                print(f"{'ALL POLICIES':30s}  {R:10d}  {S:10d}  {T:10d}")
 
     def plot_wait_time_by_week_bucket(self, week_buckets: dict[str, set[tuple[int,int]]]) -> None:
         df = self.dailyfloor_stats_df.copy()
@@ -502,7 +585,6 @@ def main():
     plotter.print_counts_per_policy_per_request_type()
     plotter.plot_wait_time_by_week_bucket(plotter.week_buckets)
     plotter.plot_box_per_policy_by_week_bucket()
-    plotter.print_policy_totals()
     plotter.print_policy_mean_pm_std()
 
 if __name__ == "__main__":
