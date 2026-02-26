@@ -28,10 +28,23 @@ class AssignmentResultsPlotter:
         out_dir: str | Path = "results/policies/plots",
         type_col: str = "request_type",
         daily_stat: str = "p95",
+        logs_root_dir: str | Path = "results/policies/logs",
+        file_glob: str = "*.out"
     ):
+        self.policy_order = ["fleet_manager",
+                             "tp_d_alpha0.0",
+                             "d_tpts_alpha0.0",
+                             "tp_d_alpha0.1",
+                             "d_tpts_alpha0.1",
+                             "tp_d_alpha0.2",
+                             "d_tpts_alpha0.2",
+                             "sequential_greedy_nopt",
+                             "sequential_greedy_ropt"]
         self.root_dir = Path(root_dir)
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_root_dir = Path(logs_root_dir)
+        self.file_glob = file_glob
 
         self.type_col = type_col
         self.daily_stat = daily_stat.lower()
@@ -43,6 +56,8 @@ class AssignmentResultsPlotter:
             self.dailyfloor_wait_stats_by_policy_type,
             self.dailyfloor_stats_df,
         ) = self._generate_results_summary_from_root_dir()
+
+        self.logs_df = self._parse_all_logs()
 
     @staticmethod
     def _safe_filename(x: str) -> str:
@@ -63,6 +78,165 @@ class AssignmentResultsPlotter:
         day = pd.to_datetime(m.group(1), format="%Y-%m-%d", errors="raise").floor("D")
         floor = int(m.group(2))
         return day, floor
+    
+    @staticmethod
+    def _extract_value(pattern: str, text: str) -> str | None:
+        m = re.search(pattern, text, flags=re.MULTILINE)
+        return m.group(1).strip() if m else None
+
+    @staticmethod
+    def _parse_timedelta_to_seconds(s: str) -> float | None:
+        """
+        Accepts strings like:
+        '0:01:45.747067'
+        '1 day, 0:01:45.747067' (just in case)
+        """
+        try:
+            td = pd.to_timedelta(s)
+            return float(td.total_seconds())
+        except Exception:
+            return None
+
+    def _ordered_policies(self, policies: list[str]) -> list[str]:
+        rank = {p: i for i, p in enumerate(self.policy_order)}
+        # unknown policies get rank after known ones, then sorted alphabetically among themselves
+        return sorted(policies, key=lambda p: (rank.get(p, 10**9), p))
+    
+    def _parse_all_logs(self) -> pd.DataFrame:
+        if not self.logs_root_dir.exists():
+            raise FileNotFoundError(f"logs_root_dir not found: {self.logs_root_dir}")
+
+        rows = []
+        # Expect: logs_root_dir/<policy_folder>/*.out
+        for policy_dir in sorted([p for p in self.logs_root_dir.iterdir() if p.is_dir()]):
+            policy = policy_dir.name
+
+            log_files = sorted(policy_dir.glob(self.file_glob))
+            if not log_files:
+                continue
+
+            for f in log_files:
+                try:
+                    text = f.read_text(errors="ignore")
+                except Exception as e:
+                    print(f"[WARN] Failed reading {f}: {e}")
+                    continue
+
+                day, floor = self._parse_day_floor_from_filename(f)
+
+                # From your example:
+                #   Total Planning Time: 0:01:45.747067
+                #   Total Number of Requests: 34
+                planning_str = self._extract_value(r"Total Planning Time:\s*([^\n\r]+)", text)
+                req_str = self._extract_value(r"Total Number of Requests:\s*(\d+)", text)
+
+                # Some logs might use a slightly different label; try a fallback
+                if req_str is None:
+                    req_str = self._extract_value(r"Number of Requests:\s*(\d+)", text)
+
+                planning_sec = self._parse_timedelta_to_seconds(planning_str) if planning_str else None
+                total_requests = int(req_str) if req_str is not None else None
+
+                if planning_sec is None or total_requests is None:
+                    print(f"[WARN] Missing planning/requests in {f.name} (policy={policy})")
+                    continue
+
+                if total_requests <= 0:
+                    # avoid divide-by-zero; skip files with zero requests
+                    continue
+
+                rows.append(
+                    {
+                        "policy": policy,
+                        "file": f.name,
+                        "day": day,
+                        "floor": floor,
+                        "planning_time_sec": planning_sec,
+                        "total_requests": total_requests,
+                        "planning_time_per_request_sec": planning_sec / total_requests,
+                    }
+                )
+
+        df = pd.DataFrame(rows)
+        if df.empty:
+            raise ValueError(
+                f"No parsable log entries found under {self.logs_root_dir} "
+                f"with glob '{self.file_glob}'."
+            )
+
+        # Helpful: keep only rows where day/floor parsed (you asked per-day-per-floor)
+        df = df.dropna(subset=["day", "floor"]).copy()
+        if df.empty:
+            raise ValueError(
+                "Parsed planning/request values, but couldn't parse (day,floor) from filenames. "
+                "Adjust the filename regex in _parse_day_floor_from_filename()."
+            )
+
+        # stable ordering
+        df["policy"] = df["policy"].astype(str)
+        df = df.sort_values(["policy", "day", "floor"]).reset_index(drop=True)
+        return df
+    
+    def print_policy_totals(self) -> None:
+        """
+        Print total planning time and total requests aggregated across all logs per policy,
+        plus overall planning_time_per_request computed from totals.
+        """
+        g = (
+            self.logs_df.groupby("policy", as_index=False)[["planning_time_sec", "total_requests"]]
+            .sum()
+        )
+        g["planning_time_per_request_sec_from_totals"] = g["planning_time_sec"] / g["total_requests"].clip(lower=1)
+
+        policies = self._ordered_policies(g["policy"].tolist())
+        g = g.set_index("policy").reindex(policies).reset_index()
+
+        print("\n" + "=" * 80)
+        print("Planning time totals per policy (across all log files)")
+        print("=" * 80)
+        print(f"{'Policy':30s}  {'TotalReq':>10s}  {'PlanSec':>12s}  {'PlanSec/Req':>12s}")
+        print("-" * 80)
+        for _, r in g.iterrows():
+            print(
+                f"{r['policy'][:30]:30s}  "
+                f"{int(r['total_requests']):10d}  "
+                f"{float(r['planning_time_sec']):12.2f}  "
+                f"{float(r['planning_time_per_request_sec_from_totals']):12.4f}"
+            )
+    
+    def plot_box_per_policy(self, filename: str | None = None) -> None:
+        """
+        One combined plot:
+          x-axis = policy
+          each policy's box = distribution of planning_time_per_request across (day,floor)
+        """
+        filename = filename or "planning_time_per_request_boxplot.png"
+        out_png = self.out_dir / filename
+
+        policies = self._ordered_policies(self.logs_df["policy"].unique().tolist())
+        data = []
+        labels = []
+        for p in policies:
+            vals = self.logs_df.loc[self.logs_df["policy"] == p, "planning_time_per_request_sec"].to_numpy()
+            vals = vals[np.isfinite(vals)]
+            if vals.size == 0:
+                continue
+            labels.append(p)
+            data.append(vals)
+
+        if not data:
+            print("[WARN] No data to plot.")
+            return
+
+        plt.figure(figsize=(max(10, len(labels) * 0.9), 5))
+        plt.boxplot(data, tick_labels=labels, showfliers=True)
+        plt.xticks(rotation=35, ha="right")
+        plt.ylabel("Planning time per request (seconds) [per day-floor]")
+        plt.title("Planning time per request by policy (daily-per-floor distribution)")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=200)
+        plt.close()
+        print(f"[INFO] Wrote plot: {out_png}")
 
     def _daily_agg(self, values: pd.Series) -> float:
         x = pd.to_numeric(values, errors="coerce").to_numpy()
@@ -196,7 +370,7 @@ class AssignmentResultsPlotter:
         if missing:
             raise ValueError(f"summary_by_type missing required columns: {sorted(missing)}")
 
-        all_policies = sorted(self.summary_by_type["policy"].unique().tolist())
+        all_policies = self._ordered_policies(self.summary_by_type["policy"].unique().tolist())
 
         type_order = (
             self.summary_by_type.groupby("request_type")["total"].sum()
@@ -250,7 +424,8 @@ class AssignmentResultsPlotter:
             return
 
         for req_type, g in kdf.groupby("request_type"):
-            g = g.sort_values("policy")
+            policies_in_plot = self._ordered_policies(g["policy"].tolist())
+            g = g.set_index("policy").reindex(policies_in_plot).reset_index()
             policies = g["policy"].tolist()
             data = g["vals"].tolist()
 
@@ -290,7 +465,8 @@ def main():
     )
     plotter.print_counts_per_policy_per_request_type()
     plotter.generate_dailyfloor_wait_time_box_plot_by_type()
-    plotter.generate_dailyfloor_wait_time_box_plot_all_requests()
+    plotter.print_policy_totals()
+    plotter.plot_box_per_policy(filename="planning_time_per_request_boxplot.png")
 
 if __name__ == "__main__":
     pStart = datetime.now()
