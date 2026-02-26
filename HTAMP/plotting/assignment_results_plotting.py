@@ -1,4 +1,3 @@
-
 import os
 import re
 import traceback
@@ -8,20 +7,83 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 
+
 class AssignmentResultsPlotter:
-    """Helper class to extract team composition counts from log files and plot histograms."""
-    # (This is just a wrapper around the functions below, which you can also use directly.)
-    def __init__(self, 
-                 root_dir: str | Path,
-                 out_dir="results/policies/plots"):
-        os.makedirs(out_dir, exist_ok=True)
-        self.out_dir = Path(out_dir)
+    """
+    Reads per-policy folders of CSVs.
+    Each CSV filename encodes day and floor, e.g. '2024-9-30_floor2.csv'.
+
+    Computes:
+      - counts per (policy, request_type): rejected/serviced/total
+      - serviced wait time = max(0, planned_time - scheduled_time)
+      - daily-per-floor summary statistic (mean or p95) per (policy, request_type, day, floor)
+
+    Plots:
+      - for each request_type: boxplot across policies using daily-per-floor stats
+    """
+
+    def __init__(
+        self,
+        root_dir: str | Path,
+        out_dir: str | Path = "results/policies/plots",
+        type_col: str = "request_type",
+        daily_stat: str = "p95",
+    ):
         self.root_dir = Path(root_dir)
-        self.summary_by_type, self.serviced_waits_by_policy_type = self._generate_results_summary_from_root_dir(type_col="request_type")
-    
-    def _generate_results_summary_from_root_dir(self, type_col: str = "request_type"):
+        self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+
+        self.type_col = type_col
+        self.daily_stat = daily_stat.lower()
+        if self.daily_stat not in ("mean", "p95", "median"):
+            raise ValueError("daily_stat must be 'mean', 'p95', or 'median'")
+
+        (
+            self.summary_by_type,
+            self.dailyfloor_wait_stats_by_policy_type,
+            self.dailyfloor_stats_df,
+        ) = self._generate_results_summary_from_root_dir()
+
+    @staticmethod
+    def _safe_filename(x: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(x))
+
+    @staticmethod
+    def _parse_day_floor_from_filename(f: Path) -> tuple[pd.Timestamp, int]:
+        """
+        Parse filename like '2024-9-30_floor2.csv' or '2024-09-30_floor2.csv'
+        -> (day, floor)
+        """
+        m = re.search(r"(\d{4}-\d{1,2}-\d{1,2})_floor(\d+)", f.stem)
+        if not m:
+            raise ValueError(
+                f"Could not parse day/floor from filename: {f.name}\n"
+                "Expected something like 'YYYY-M-D_floorN.csv' (e.g. 2024-9-30_floor2.csv)"
+            )
+        day = pd.to_datetime(m.group(1), format="%Y-%m-%d", errors="raise").floor("D")
+        floor = int(m.group(2))
+        return day, floor
+
+    def _daily_agg(self, values: pd.Series) -> float:
+        x = pd.to_numeric(values, errors="coerce").to_numpy()
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            return np.nan
+        if self.daily_stat == "mean":
+            return float(np.mean(x))
+        elif self.daily_stat == "p95":
+            return float(np.percentile(x, 95))
+        else:
+            return float(np.percentile(x, 50))
+
+    def _generate_results_summary_from_root_dir(self):
         rows = []
-        serviced_waits_by_policy_type: dict[tuple[str, str], np.ndarray] = {}
+
+        # maps (policy, request_type) -> np.array of daily-per-floor summary stats
+        dailyfloor_wait_stats_by_policy_type: dict[tuple[str, str], np.ndarray] = {}
+
+        # also keep a long dataframe of all daily-floor stats for debugging/export
+        dailyfloor_stats_frames = []
 
         for policy_dir in sorted([p for p in self.root_dir.iterdir() if p.is_dir()]):
             policy_name = policy_dir.name
@@ -32,7 +94,12 @@ class AssignmentResultsPlotter:
             frames = []
             for f in csv_files:
                 try:
-                    frames.append(pd.read_csv(f))
+                    df_one = pd.read_csv(f)
+                    day, floor = self._parse_day_floor_from_filename(f)
+                    df_one["_day"] = day
+                    df_one["_floor"] = floor
+                    df_one["_source_file"] = f.name
+                    frames.append(df_one)
                 except Exception as e:
                     print(f"[WARN] Failed reading {f}: {e}")
 
@@ -41,68 +108,88 @@ class AssignmentResultsPlotter:
 
             df = pd.concat(frames, ignore_index=True)
 
-            required = ["completed", "rejected", "planned_time", "scheduled_time", type_col]
+            required = ["completed", "rejected", "planned_time", "scheduled_time", self.type_col, "_day", "_floor"]
             missing = [c for c in required if c not in df.columns]
             if missing:
                 raise ValueError(f"Policy '{policy_name}' is missing columns: {missing}")
 
-            # Normalize request types (avoid NaN types breaking groups)
-            df[type_col] = df[type_col].astype(str).fillna("UNKNOWN")
+            # Normalize request types
+            df[self.type_col] = df[self.type_col].astype(str).fillna("UNKNOWN")
 
-            # Group per request type
-            for req_type, g in df.groupby(type_col, dropna=False):
+            # --------- Counts per (policy, request_type) ----------
+            for req_type, g in df.groupby(self.type_col, dropna=False):
                 total = int(len(g))
                 serviced = int(g["completed"].fillna(False).astype(bool).sum())
                 rejected = int(g["rejected"].fillna(False).astype(bool).sum())
 
-                rows.append({
-                    "policy": policy_name,
-                    "request_type": req_type,
-                    "rejected": rejected,
-                    "serviced": serviced,
-                    "total": total,
-                })
+                rows.append(
+                    {
+                        "policy": policy_name,
+                        "request_type": req_type,
+                        "rejected": rejected,
+                        "serviced": serviced,
+                        "total": total,
+                    }
+                )
 
-                # wait time for SERVICED in this (policy, type)
-                serviced_g = g[g["completed"].fillna(False).astype(bool)].copy()
-                planned = pd.to_numeric(serviced_g["planned_time"], errors="coerce")
-                scheduled = pd.to_numeric(serviced_g["scheduled_time"], errors="coerce")
-                wait_time = (planned - scheduled).clip(lower=0)
+            # --------- Daily-per-floor wait stat (serviced only) ----------
+            serviced_df = df[df["completed"].fillna(False).astype(bool)].copy()
+            if serviced_df.empty:
+                continue
 
-                waits = wait_time.to_numpy()
-                waits = waits[np.isfinite(waits)]
-                serviced_waits_by_policy_type[(policy_name, req_type)] = waits
+            planned = pd.to_numeric(serviced_df["planned_time"], errors="coerce")
+            scheduled = pd.to_numeric(serviced_df["scheduled_time"], errors="coerce")
+            serviced_df["_wait"] = (planned - scheduled).clip(lower=0)
+
+            # one value per (request_type, day, floor)
+            dailyfloor = (
+                serviced_df.dropna(subset=["_day", "_floor"])
+                .groupby([self.type_col, "_day", "_floor"], as_index=False)["_wait"]
+                .apply(self._daily_agg)
+                .rename(columns={"_wait": "dailyfloor_wait_stat"})
+            )
+            dailyfloor["policy"] = policy_name
+            dailyfloor["daily_stat"] = self.daily_stat
+
+            dailyfloor_stats_frames.append(dailyfloor)
+
+            # store arrays per (policy, request_type)
+            for req_type, g2 in dailyfloor.groupby(self.type_col):
+                vals = pd.to_numeric(g2["dailyfloor_wait_stat"], errors="coerce").to_numpy()
+                vals = vals[np.isfinite(vals)]
+                dailyfloor_wait_stats_by_policy_type[(policy_name, str(req_type))] = vals
 
         summary_by_type = pd.DataFrame(rows)
         if summary_by_type.empty:
             raise ValueError(f"No policy folders with readable CSVs found under: {self.root_dir}")
 
         summary_by_type = summary_by_type.sort_values(["policy", "request_type"]).reset_index(drop=True)
-        return summary_by_type, serviced_waits_by_policy_type
-    
+
+        dailyfloor_stats_df = None
+        if dailyfloor_stats_frames:
+            dailyfloor_stats_df = pd.concat(dailyfloor_stats_frames, ignore_index=True)
+            dailyfloor_stats_df = dailyfloor_stats_df.sort_values(["policy", self.type_col, "_day", "_floor"]).reset_index(
+                drop=True
+            )
+
+        return summary_by_type, dailyfloor_wait_stats_by_policy_type, dailyfloor_stats_df
+
     def print_counts_per_policy_per_request_type(self) -> None:
-        """
-        For each request_type, print a per-policy table of rejected/serviced/total.
-        Requires columns: policy, request_type, rejected, serviced, total
-        """
         required = {"policy", "request_type", "rejected", "serviced", "total"}
         missing = required - set(self.summary_by_type.columns)
         if missing:
             raise ValueError(f"summary_by_type missing required columns: {sorted(missing)}")
 
-        # Stable ordering
         all_policies = sorted(self.summary_by_type["policy"].unique().tolist())
 
-        # Order request types by overall total (largest first)
         type_order = (
             self.summary_by_type.groupby("request_type")["total"].sum()
-            .sort_values(ascending=False).index.tolist()
+            .sort_values(ascending=False)
+            .index.tolist()
         )
 
         for req_type in type_order:
             g = self.summary_by_type[self.summary_by_type["request_type"] == req_type]
-
-            # Aggregate in case you have multiple rows per (policy, type)
             tbl = (
                 g.groupby("policy", as_index=False)[["rejected", "serviced", "total"]]
                 .sum()
@@ -122,43 +209,72 @@ class AssignmentResultsPlotter:
                 t = int(row["total"])
                 print(f"{policy:30s}  {r:10d}  {s:10d}  {t:10d}")
 
-            # Optional: totals line for this request type
             R = int(tbl["rejected"].sum())
             S = int(tbl["serviced"].sum())
             T = int(tbl["total"].sum())
             print("-" * 72)
             print(f"{'ALL POLICIES':30s}  {R:10d}  {S:10d}  {T:10d}")
 
-    def generate_serviced_wait_time_box_plot_by_type(self):
+    def generate_dailyfloor_wait_time_box_plot_by_type(self):
+        """
+        For each request_type:
+          - x-axis: policy
+          - each policy's box: distribution of DAILY-PER-FLOOR wait stats across (day,floor)
+        """
         out_dir = self.out_dir / "by_request_type"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build a DataFrame view for easier grouping
         keys = []
-        for (policy, req_type), waits in self.serviced_waits_by_policy_type.items():
-            keys.append({"policy": policy, "request_type": req_type, "waits": waits})
+        for (policy, req_type), vals in self.dailyfloor_wait_stats_by_policy_type.items():
+            keys.append({"policy": policy, "request_type": req_type, "vals": vals})
         kdf = pd.DataFrame(keys)
+
+        if kdf.empty:
+            print("[WARN] No daily-per-floor serviced stats found. Skipping plots.")
+            return
 
         for req_type, g in kdf.groupby("request_type"):
             g = g.sort_values("policy")
             policies = g["policy"].tolist()
-            data = g["waits"].tolist()
+            data = g["vals"].tolist()
 
-            plt.figure(figsize=(max(10, len(policies) * 0.9), 5))
-            plt.boxplot(data, tick_labels=policies, showfliers=True)
+            # Filter empty arrays (matplotlib boxplot complains)
+            policies2, data2 = [], []
+            for p, d in zip(policies, data):
+                if isinstance(d, np.ndarray) and d.size > 0:
+                    policies2.append(p)
+                    data2.append(d)
+
+            if not data2:
+                continue
+
+            plt.figure(figsize=(max(10, len(policies2) * 0.9), 5))
+            plt.boxplot(data2, tick_labels=policies2, showfliers=True)
             plt.xticks(rotation=35, ha="right")
-            plt.ylabel("Wait time (seconds) = max(0, planned_time - scheduled_time)")
-            plt.title(f"Serviced request wait time per policy — request_type={req_type}")
+            plt.ylabel(
+                f"Daily-per-floor {self.daily_stat} wait time (seconds), serviced only\n"
+                "wait = max(0, planned_time - scheduled_time)"
+            )
+            plt.title(f"Daily-per-floor {self.daily_stat} serviced wait time per policy — request_type={req_type}")
             plt.tight_layout()
 
-            safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(req_type))
-            plt.savefig(out_dir / f"policy_serviced_wait_time_box__{safe}.png", dpi=200)
+            safe = self._safe_filename(req_type)
+            out_png = out_dir / f"policy_dailyfloor_{self.daily_stat}_wait_time_box__{safe}.png"
+            plt.savefig(out_png, dpi=200)
             plt.close()
+            print(f"[INFO] Wrote plot: {out_png}")
+
 
 def main():
-    plotter = AssignmentResultsPlotter(root_dir="results/policies")
+    plotter = AssignmentResultsPlotter(
+        root_dir="results/policies",
+        out_dir="results/policies/plots",
+        type_col="request_type",
+        daily_stat="median",
+    )
     plotter.print_counts_per_policy_per_request_type()
-    plotter.generate_serviced_wait_time_box_plot_by_type()
+    plotter.generate_dailyfloor_wait_time_box_plot_by_type()
+
 
 if __name__ == "__main__":
     pStart = datetime.now()
