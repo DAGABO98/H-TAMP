@@ -41,6 +41,28 @@ class AssignmentResultsPlotter:
                              "d_tpts_alpha0.2",
                              "sequential_greedy_nopt",
                              "sequential_greedy_ropt"]
+
+        self.baseline_colors = {"human_team": "#7f0000",
+                                "fleet_manager": "#b30000",
+                                "tp_d_alpha0.0": "#d7301f",
+                                "d_tpts_alpha0.0": "#ef6548",
+                                "tp_d_alpha0.1": "#fc8d59",
+                                "d_tpts_alpha0.1": "#fdbb84",
+                                "tp_d_alpha0.2": "#fdd49e",
+                                "d_tpts_alpha0.2": "#fee8c8",
+                                "idle_prediction": "#fdd49e",
+                                "vanilla_rollout": "#fee8c8"}
+        
+        self.our_methods_colors = {"sequential_greedy_nopt": "#d9f0a3",
+                                   "sequential_greedy_ropt": "#006837",
+                                    "adaptive_rollout": "#006837"}
+        
+        self.ablation_study_colors = {"sequential_greedy_nopt": "#d9f0a3",
+                                     "weighting_nopt": "#addd8e",
+                                     "no_weighting_opt": "#78c679",
+                                     "no_weighting_nopt": "#31a354",
+                                     "adaptive_rollout": "#006837"}
+        
         self.week_buckets: dict[str, set[tuple[int, int]]] = {
             "highest": {(2024, 40), (2025, 5)},
             "medium":  {(2024, 44), (2025, 14)},
@@ -110,6 +132,24 @@ class AssignmentResultsPlotter:
             return float(td.total_seconds())
         except Exception:
             return None
+    
+    def _get_policy_colors(self, policies: list[str]) -> list[str]:
+        colors = []
+        for p in policies:
+            if p not in self.policy_order:
+                print(f"[WARN] Policy '{p}' not in predefined policy order. Assigning gray color.")
+                colors.append("lightgray")
+                continue
+            if p in self.baseline_colors:
+                colors.append(self.baseline_colors[p])
+            elif p in self.our_methods_colors:
+                colors.append(self.our_methods_colors[p])
+            else:
+                print(f"[WARN] Policy '{p}' not categorized as baseline or our method. Assigning gray color.")
+                colors.append("lightgray")
+
+        return colors
+        
     
     def filter_to_weeks(self, df: pd.DataFrame, weeks: set[tuple[int, int]]) -> pd.DataFrame:
         week_set = set(weeks)
@@ -306,7 +346,14 @@ class AssignmentResultsPlotter:
                 continue
 
             plt.figure(figsize=(max(10, len(labels) * 0.9), 5))
-            plt.boxplot(data, tick_labels=labels, showfliers=True)
+            colors = self._get_policy_colors(policies=labels)
+            bp = plt.boxplot(data, tick_labels=labels, showfliers=True, patch_artist=True)
+            for box, c in zip(bp["boxes"], colors):
+                box.set_facecolor(c)
+                box.set_alpha(0.65)
+                box.set_edgecolor("black")
+            for med in bp["medians"]:
+                med.set_color("black")
             plt.xticks(rotation=35, ha="right")
             plt.ylabel("Planning time per request (seconds) [per day-floor]")
             plt.title(f"Planning time per request by policy — {label} demand weeks")
@@ -564,7 +611,15 @@ class AssignmentResultsPlotter:
                     continue
 
                 plt.figure(figsize=(max(10, len(labels) * 0.9), 5))
-                plt.boxplot(data, tick_labels=labels, showfliers=True)
+                colors = self._get_policy_colors(policies=labels)
+                bp = plt.boxplot(data, tick_labels=labels, showfliers=True, patch_artist=True)
+                for box, c in zip(bp["boxes"], colors):
+                    box.set_facecolor(c)
+                    box.set_alpha(0.65)
+                    box.set_edgecolor("black")
+                for med in bp["medians"]:
+                    med.set_color("black")
+                plt.xticks(rotation=35, ha="right")
                 plt.xticks(rotation=35, ha="right")
                 plt.ylabel(f"Daily-per-floor {self.daily_stat} wait time (seconds), serviced only")
                 plt.title(f"Wait time by policy — request_type={req_type} — {label} demand weeks")
@@ -594,7 +649,7 @@ def main():
         logs_root_dir=args.logs_root_dir,
         file_glob=args.file_glob
     )
-    
+
     plotter.print_counts_per_policy_per_request_type()
     plotter.plot_wait_time_by_week_bucket(plotter.week_buckets)
     plotter.plot_box_per_policy_by_week_bucket()
