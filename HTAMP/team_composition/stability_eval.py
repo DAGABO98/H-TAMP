@@ -365,8 +365,8 @@ def run_experiment(args):
     experiment.determine_team_composition(random_seed=random_seed)
 
 def main():
-    parser = argparse.ArgumentParser(prog='evaluate_assignment.py',
-                                     description='Evaluate assignment algorithms in a hospital floor environment.')
+    parser = argparse.ArgumentParser(prog='stability_eval.py',
+                                     description='Determine team composition for assignment algorithms in a hospital floor environment.')
     # date_operational_range parameters
     parser.add_argument("--year", type=int, dest='year', default=2024, help='Select year of interest.')
     parser.add_argument("--month", type=int, dest='month', default=6, help='Select month of interest.')
