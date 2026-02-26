@@ -94,15 +94,18 @@ def policy_run_tag(p: PolicySpec) -> str:
     """
     Stable tag for filenames.
     Examples:
-      fleet_manager_m0
-      tp_d_m1_a0p1
-      sequential_greedy_m4_ropt
+      fleet_manager
+      tp_d_alpha0.1
+      sequential_greedy_ropt
     """
-    tag = f"{p.policy_name}_m{p.mode}"
+    tag = f"{p.policy_name}"
     if p.alpha is not None:
-        tag += f"_a{str(p.alpha).replace('.', 'p')}"
+        tag += f"_alpha{str(p.alpha)}"
     if p.allow_deallocation:
         tag += "_ropt"
+    else:
+        if p.mode == 4:
+            tag += "_nopt"
     return tag
 
 
