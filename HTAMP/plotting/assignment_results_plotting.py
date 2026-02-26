@@ -40,6 +40,11 @@ class AssignmentResultsPlotter:
                              "d_tpts_alpha0.2",
                              "sequential_greedy_nopt",
                              "sequential_greedy_ropt"]
+        self.week_buckets: dict[str, set[tuple[int, int]]] = {
+            "highest": {(2024, 40), (2025, 5)},
+            "medium":  {(2024, 44), (2025, 14)},
+            "lowest":  {(2024, 27), (2024, 36)},
+        }
         self.root_dir = Path(root_dir)
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -56,8 +61,14 @@ class AssignmentResultsPlotter:
             self.dailyfloor_wait_stats_by_policy_type,
             self.dailyfloor_stats_df,
         ) = self._generate_results_summary_from_root_dir()
+        iso = self.dailyfloor_stats_df["_day"].dt.isocalendar()
+        self.dailyfloor_stats_df["iso_year"] = iso["year"].astype(int)
+        self.dailyfloor_stats_df["iso_week"] = iso["week"].astype(int)
 
         self.logs_df = self._parse_all_logs()
+        iso = self.logs_df["day"].dt.isocalendar()
+        self.logs_df["iso_year"] = iso["year"].astype(int)
+        self.logs_df["iso_week"] = iso["week"].astype(int)      
 
     @staticmethod
     def _safe_filename(x: str) -> str:
@@ -96,6 +107,11 @@ class AssignmentResultsPlotter:
             return float(td.total_seconds())
         except Exception:
             return None
+    
+    def filter_to_weeks(self, df: pd.DataFrame, weeks: set[tuple[int, int]]) -> pd.DataFrame:
+        week_set = set(weeks)
+        mask = list(zip(df["iso_year"], df["iso_week"]))
+        return df[pd.Series(mask, index=df.index).isin(week_set)].copy()
 
     def _ordered_policies(self, policies: list[str]) -> list[str]:
         rank = {p: i for i, p in enumerate(self.policy_order)}
@@ -108,6 +124,10 @@ class AssignmentResultsPlotter:
         rows = []
         for policy_dir in sorted([p for p in self.logs_root_dir.iterdir() if p.is_dir()]):
             policy = policy_dir.name
+
+            if policy not in self.policy_order:
+                print(f"[WARN] Found logs for policy '{policy}' which is not in the predefined policy order list.")
+                continue
 
             log_files = sorted(policy_dir.glob(self.file_glob))
             if not log_files:
@@ -229,39 +249,41 @@ class AssignmentResultsPlotter:
                 f"{mean:10.4f} ± {std:10.4f}"
             )
     
-    def plot_box_per_policy(self, filename: str | None = None) -> None:
-        """
-        One combined plot:
-          x-axis = policy
-          each policy's box = distribution of planning_time_per_request across (day,floor)
-        """
-        filename = filename or "planning_time_per_request_boxplot.png"
-        out_png = self.out_dir / filename
+    def plot_box_per_policy_by_week_bucket(self) -> None:
+        for label, weeks in self.week_buckets.items():
+            out_subdir = self.out_dir / f"{label}"
+            out_subdir.mkdir(parents=True, exist_ok=True)
 
-        policies = self._ordered_policies(self.logs_df["policy"].unique().tolist())
-        data = []
-        labels = []
-        for p in policies:
-            vals = self.logs_df.loc[self.logs_df["policy"] == p, "planning_time_per_request_sec"].to_numpy()
-            vals = vals[np.isfinite(vals)]
-            if vals.size == 0:
+            sub = self.filter_to_weeks(self.logs_df, weeks)
+            if sub.empty:
+                print(f"[WARN] No rows for bucket '{label}'. Skipping.")
                 continue
-            labels.append(p)
-            data.append(vals)
 
-        if not data:
-            print("[WARN] No data to plot.")
-            return
+            # same plotting logic, but using sub instead of self.df
+            policies = self._ordered_policies(sub["policy"].unique().tolist())
+            data, labels = [], []
+            for p in policies:
+                vals = sub.loc[sub["policy"] == p, "planning_time_per_request_sec"].to_numpy()
+                vals = vals[np.isfinite(vals)]
+                if vals.size == 0:
+                    continue
+                labels.append(p)
+                data.append(vals)
 
-        plt.figure(figsize=(max(10, len(labels) * 0.9), 5))
-        plt.boxplot(data, tick_labels=labels, showfliers=True)
-        plt.xticks(rotation=35, ha="right")
-        plt.ylabel("Planning time per request (seconds) [per day-floor]")
-        plt.title("Planning time per request by policy (daily-per-floor distribution)")
-        plt.tight_layout()
-        plt.savefig(out_png, dpi=200)
-        plt.close()
-        print(f"[INFO] Wrote plot: {out_png}")
+            if not data:
+                print(f"[WARN] Nothing to plot for bucket '{label}'.")
+                continue
+
+            plt.figure(figsize=(max(10, len(labels) * 0.9), 5))
+            plt.boxplot(data, tick_labels=labels, showfliers=True)
+            plt.xticks(rotation=35, ha="right")
+            plt.ylabel("Planning time per request (seconds) [per day-floor]")
+            plt.title(f"Planning time per request by policy — {label} demand weeks")
+            plt.tight_layout()
+            out_png = out_subdir / f"planning_time_per_request.png"
+            plt.savefig(out_png, dpi=200)
+            plt.close()
+            print(f"[INFO] Wrote plot: {out_png} in {out_subdir}")
 
     def _daily_agg(self, values: pd.Series) -> float:
         x = pd.to_numeric(values, errors="coerce").to_numpy()
@@ -280,6 +302,10 @@ class AssignmentResultsPlotter:
         dailyfloor_stats_frames = []
         for policy_dir in sorted([p for p in self.root_dir.iterdir() if p.is_dir()]):
             policy_name = policy_dir.name
+            if policy_name not in self.policy_order:
+                print(f"[WARN] Found logs for policy '{policy_name}' which is not in the predefined policy order list.")
+                continue
+
             csv_files = sorted(policy_dir.glob("*.csv"))
             if not csv_files:
                 continue
@@ -421,55 +447,49 @@ class AssignmentResultsPlotter:
             print("-" * 72)
             print(f"{'ALL POLICIES':30s}  {R:10d}  {S:10d}  {T:10d}")
 
-    def generate_dailyfloor_wait_time_box_plot_by_type(self):
-        """
-        For each request_type:
-          - x-axis: policy
-          - each policy's box: distribution of DAILY-PER-FLOOR wait stats across (day,floor)
-        """
-        out_dir = self.out_dir / "by_request_type"
-        out_dir.mkdir(parents=True, exist_ok=True)
+    def plot_wait_time_by_week_bucket(self, week_buckets: dict[str, set[tuple[int,int]]]) -> None:
+        df = self.dailyfloor_stats_df.copy()
+        iso = df["_day"].dt.isocalendar()
+        df["iso_year"] = iso["year"].astype(int)
+        df["iso_week"] = iso["week"].astype(int)
 
-        keys = []
-        for (policy, req_type), vals in self.dailyfloor_wait_stats_by_policy_type.items():
-            keys.append({"policy": policy, "request_type": req_type, "vals": vals})
-        kdf = pd.DataFrame(keys)
+        for label, weeks in week_buckets.items():
+            out_subdir = self.out_dir / f"{label}"
+            out_subdir.mkdir(parents=True, exist_ok=True)
 
-        if kdf.empty:
-            print("[WARN] No daily-per-floor serviced stats found. Skipping plots.")
-            return
-
-        for req_type, g in kdf.groupby("request_type"):
-            policies_in_plot = self._ordered_policies(g["policy"].tolist())
-            g = g.set_index("policy").reindex(policies_in_plot).reset_index()
-            policies = g["policy"].tolist()
-            data = g["vals"].tolist()
-
-            # Filter empty arrays (matplotlib boxplot complains)
-            policies2, data2 = [], []
-            for p, d in zip(policies, data):
-                if isinstance(d, np.ndarray) and d.size > 0:
-                    policies2.append(p)
-                    data2.append(d)
-
-            if not data2:
+            sub = self.filter_to_weeks(df.rename(columns={"_day":"day"}), weeks)  # reuse helper
+            if sub.empty:
+                print(f"[WARN] No rows for bucket '{label}'. Skipping.")
                 continue
 
-            plt.figure(figsize=(max(10, len(policies2) * 0.9), 5))
-            plt.boxplot(data2, tick_labels=policies2, showfliers=True)
-            plt.xticks(rotation=35, ha="right")
-            plt.ylabel(
-                f"Daily-per-floor {self.daily_stat} wait time (seconds), serviced only\n"
-                "wait = max(0, planned_time - scheduled_time)"
-            )
-            plt.title(f"Daily-per-floor {self.daily_stat} serviced wait time per policy — request_type={req_type}")
-            plt.tight_layout()
+            # for each request_type: boxplot policies over dailyfloor_wait_stat
+            for req_type, g in sub.groupby(self.type_col):
+                # enforce policy order
+                policies = self._ordered_policies(g["policy"].unique().tolist())
 
-            safe = self._safe_filename(req_type)
-            out_png = out_dir / f"policy_dailyfloor_{self.daily_stat}_wait_time_box__{safe}.png"
-            plt.savefig(out_png, dpi=200)
-            plt.close()
-            print(f"[INFO] Wrote plot: {out_png}")
+                data, labels = [], []
+                for p in policies:
+                    vals = g.loc[g["policy"] == p, "dailyfloor_wait_stat"].to_numpy()
+                    vals = vals[np.isfinite(vals)]
+                    if vals.size == 0:
+                        continue
+                    labels.append(p)
+                    data.append(vals)
+
+                if not data:
+                    continue
+
+                plt.figure(figsize=(max(10, len(labels) * 0.9), 5))
+                plt.boxplot(data, tick_labels=labels, showfliers=True)
+                plt.xticks(rotation=35, ha="right")
+                plt.ylabel(f"Daily-per-floor {self.daily_stat} wait time (seconds), serviced only")
+                plt.title(f"Wait time by policy — request_type={req_type} — {label} demand weeks")
+                plt.tight_layout()
+
+                safe = self._safe_filename(req_type)
+                plt.savefig(out_subdir / f"wait_times_{self.daily_stat}_{safe}.png", dpi=200)
+                plt.close()
+                print(f"[INFO] Wrote plot: wait_times_{self.daily_stat}_{safe}.png in {out_subdir}")
 
 
 def main():
@@ -480,8 +500,8 @@ def main():
         daily_stat="p95",
     )
     plotter.print_counts_per_policy_per_request_type()
-    plotter.generate_dailyfloor_wait_time_box_plot_by_type()
-    plotter.plot_box_per_policy(filename="planning_time_per_request_boxplot.png")
+    plotter.plot_wait_time_by_week_bucket(plotter.week_buckets)
+    plotter.plot_box_per_policy_by_week_bucket()
     plotter.print_policy_totals()
     plotter.print_policy_mean_pm_std()
 
