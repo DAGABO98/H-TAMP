@@ -99,7 +99,6 @@ class AssignmentResultsPlotter:
 
     def _ordered_policies(self, policies: list[str]) -> list[str]:
         rank = {p: i for i, p in enumerate(self.policy_order)}
-        # unknown policies get rank after known ones, then sorted alphabetically among themselves
         return sorted(policies, key=lambda p: (rank.get(p, 10**9), p))
     
     def _parse_all_logs(self) -> pd.DataFrame:
@@ -107,7 +106,6 @@ class AssignmentResultsPlotter:
             raise FileNotFoundError(f"logs_root_dir not found: {self.logs_root_dir}")
 
         rows = []
-        # Expect: logs_root_dir/<policy_folder>/*.out
         for policy_dir in sorted([p for p in self.logs_root_dir.iterdir() if p.is_dir()]):
             policy = policy_dir.name
 
@@ -124,13 +122,9 @@ class AssignmentResultsPlotter:
 
                 day, floor = self._parse_day_floor_from_filename(f)
 
-                # From your example:
-                #   Total Planning Time: 0:01:45.747067
-                #   Total Number of Requests: 34
                 planning_str = self._extract_value(r"Total Planning Time:\s*([^\n\r]+)", text)
                 req_str = self._extract_value(r"Total Number of Requests:\s*(\d+)", text)
 
-                # Some logs might use a slightly different label; try a fallback
                 if req_str is None:
                     req_str = self._extract_value(r"Number of Requests:\s*(\d+)", text)
 
@@ -142,7 +136,6 @@ class AssignmentResultsPlotter:
                     continue
 
                 if total_requests <= 0:
-                    # avoid divide-by-zero; skip files with zero requests
                     continue
 
                 rows.append(
@@ -164,7 +157,6 @@ class AssignmentResultsPlotter:
                 f"with glob '{self.file_glob}'."
             )
 
-        # Helpful: keep only rows where day/floor parsed (you asked per-day-per-floor)
         df = df.dropna(subset=["day", "floor"]).copy()
         if df.empty:
             raise ValueError(
@@ -172,7 +164,6 @@ class AssignmentResultsPlotter:
                 "Adjust the filename regex in _parse_day_floor_from_filename()."
             )
 
-        # stable ordering
         df["policy"] = df["policy"].astype(str)
         df = df.sort_values(["policy", "day", "floor"]).reset_index(drop=True)
         return df
@@ -202,6 +193,40 @@ class AssignmentResultsPlotter:
                 f"{int(r['total_requests']):10d}  "
                 f"{float(r['planning_time_sec']):12.2f}  "
                 f"{float(r['planning_time_per_request_sec_from_totals']):12.4f}"
+            )
+    
+    def print_policy_mean_pm_std(self) -> None:
+        """
+        Mean ± 1 std of planning_time_per_request_sec across (day,floor) rows for each policy.
+        Units: seconds per request.
+        """
+        g = (
+            self.logs_df.groupby("policy")["planning_time_per_request_sec"]
+            .agg(["count", "mean", "std"])
+            .reset_index()
+        )
+
+        policies = self._ordered_policies(g["policy"].tolist())
+        g = g.set_index("policy").reindex(policies).reset_index()
+
+        print("\n" + "=" * 80)
+        print("Planning time per request (across day-floor units): mean ± 1 std")
+        print("=" * 80)
+        print(f"{'Policy':30s}  {'N(day-floor)':>12s}  {'Mean (s/req)':>14s}  {'Std (s/req)':>14s}  {'Mean ± Std':>24s}")
+        print("-" * 80)
+
+        for _, r in g.iterrows():
+            policy = str(r["policy"])
+            n = int(r["count"])
+            mean = float(r["mean"]) if np.isfinite(r["mean"]) else float("nan")
+            std = float(r["std"]) if np.isfinite(r["std"]) else 0.0  # std is NaN if n==1
+
+            print(
+                f"{policy[:30]:30s}  "
+                f"{n:12d}  "
+                f"{mean:14.4f}  "
+                f"{std:14.4f}  "
+                f"{mean:10.4f} ± {std:10.4f}"
             )
     
     def plot_box_per_policy(self, filename: str | None = None) -> None:
@@ -250,13 +275,9 @@ class AssignmentResultsPlotter:
 
     def _generate_results_summary_from_root_dir(self):
         rows = []
-
-        # maps (policy, request_type) -> np.array of daily-per-floor summary stats
         dailyfloor_wait_stats_by_policy_type: dict[tuple[str, str], np.ndarray] = {}
 
-        # also keep a long dataframe of all daily-floor stats for debugging/export
         dailyfloor_stats_frames = []
-
         for policy_dir in sorted([p for p in self.root_dir.iterdir() if p.is_dir()]):
             policy_name = policy_dir.name
             csv_files = sorted(policy_dir.glob("*.csv"))
@@ -285,7 +306,6 @@ class AssignmentResultsPlotter:
             if missing:
                 raise ValueError(f"Policy '{policy_name}' is missing columns: {missing}")
 
-            # Normalize request types
             df[self.type_col] = df[self.type_col].astype(str).fillna("UNKNOWN")
 
             # --------- Counts per (policy, request_type) ----------
@@ -313,7 +333,6 @@ class AssignmentResultsPlotter:
             scheduled = pd.to_numeric(serviced_df["scheduled_time"], errors="coerce")
             serviced_df["_wait"] = (planned - scheduled).clip(lower=0)
 
-            # one value per (request_type, day, floor)
             dailyfloor = (
                 serviced_df.dropna(subset=["_day", "_floor"])
                 .groupby([self.type_col, "_day", "_floor"], as_index=False)["_wait"]
@@ -325,13 +344,11 @@ class AssignmentResultsPlotter:
 
             dailyfloor_stats_frames.append(dailyfloor)
 
-            # store arrays per (policy, request_type)
             for req_type, g2 in dailyfloor.groupby(self.type_col):
                 vals = pd.to_numeric(g2["dailyfloor_wait_stat"], errors="coerce").to_numpy()
                 vals = vals[np.isfinite(vals)]
                 dailyfloor_wait_stats_by_policy_type[(policy_name, str(req_type))] = vals
 
-            # ---- ALSO compute "ALL request types" daily-per-floor stat ----
             dailyfloor_all = (
                 serviced_df.dropna(subset=["_day", "_floor"])
                 .groupby(["_day", "_floor"], as_index=False)["_wait"]
@@ -344,7 +361,6 @@ class AssignmentResultsPlotter:
 
             dailyfloor_stats_frames.append(dailyfloor_all)
 
-            # store arrays for (policy, "ALL")
             vals_all = pd.to_numeric(dailyfloor_all["dailyfloor_wait_stat"], errors="coerce").to_numpy()
             vals_all = vals_all[np.isfinite(vals_all)]
             dailyfloor_wait_stats_by_policy_type[(policy_name, "ALL")] = vals_all
@@ -465,8 +481,9 @@ def main():
     )
     plotter.print_counts_per_policy_per_request_type()
     plotter.generate_dailyfloor_wait_time_box_plot_by_type()
-    plotter.print_policy_totals()
     plotter.plot_box_per_policy(filename="planning_time_per_request_boxplot.png")
+    plotter.print_policy_totals()
+    plotter.print_policy_mean_pm_std()
 
 if __name__ == "__main__":
     pStart = datetime.now()
