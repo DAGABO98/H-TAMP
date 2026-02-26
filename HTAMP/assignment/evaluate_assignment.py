@@ -470,17 +470,18 @@ def run_experiment(args):
                                                      save_frame_data=False,
                                                      debug=args.debug)
     
-    os.makedirs("results/policies", exist_ok=True)
-    if args.policy_name in ["tp_d", "d_tpts"]:
-        os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
-        results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-    elif args.policy_name == "sequential_greedy":
-        deallocation_str = "ropt" if args.allow_deallocation else "nopt"
-        os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}", exist_ok=True)
-        results_df.to_csv(f"results/policies/{args.policy_name}_{deallocation_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-    else:
-        os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
-        results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+    if args.save_results_csv:
+        os.makedirs("results/policies", exist_ok=True)
+        if args.policy_name in ["tp_d", "d_tpts"]:
+            os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
+            results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+        elif args.policy_name == "sequential_greedy":
+            deallocation_str = "ropt" if args.allow_deallocation else "nopt"
+            os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}", exist_ok=True)
+            results_df.to_csv(f"results/policies/{args.policy_name}_{deallocation_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+        else:
+            os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
+            results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
@@ -528,7 +529,7 @@ def main():
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
     parser.add_argument("--debug", action='store_true', help="Whether to save debug plots during execution.")
-
+    parser.add_argument("--save_results_csv", action='store_true', help="Whether to save the results summary as a CSV file.")
 
     # simulation parameters
     parser.add_argument("--mode", type=int, dest='mode', default=0, help='Select mode of operation.')
