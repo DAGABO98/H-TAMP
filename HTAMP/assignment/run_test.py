@@ -19,6 +19,7 @@ BASE = [
     "python", "-m", "HTAMP.assignment.evaluate_assignment",
     "--use_saved_data",
     "--use_saved_request_data",
+    "--save_results_csv",
     "--hour_start", "8",
     "--hour_end", "9",
 ]
