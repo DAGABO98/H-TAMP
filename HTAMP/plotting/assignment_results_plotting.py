@@ -1,3 +1,4 @@
+import argparse
 import os
 import re
 import traceback
@@ -576,12 +577,24 @@ class AssignmentResultsPlotter:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Plot assignment results from per-policy CSVs and logs.")
+    parser.add_argument("--root_dir", type=str, default="results/policies", help="Root directory containing per-policy folders with CSVs.")
+    parser.add_argument("--out_dir", type=str, default="results/policies/plots", help="Output directory for plots.")
+    parser.add_argument("--logs_root_dir", type=str, default="results/policies/logs", help="Root directory containing per-policy log folders.")
+    parser.add_argument("--file_glob", type=str, default="*.out", help="Glob pattern to find log files within each policy's log folder.")
+    parser.add_argument("--type_col", type=str, default="request_type", help="Column name in CSVs that indicates request type.")
+    parser.add_argument("--daily_stat", type=str, default="p95", choices=["mean", "p95"], help="Whether to compute daily mean or p95 wait times for boxplots.")
+    args = parser.parse_args()
+
     plotter = AssignmentResultsPlotter(
-        root_dir="results/policies",
-        out_dir="results/policies/plots",
-        type_col="request_type",
-        daily_stat="p95",
+        root_dir=args.root_dir,
+        out_dir=args.out_dir,
+        type_col=args.type_col,
+        daily_stat=args.daily_stat,
+        logs_root_dir=args.logs_root_dir,
+        file_glob=args.file_glob
     )
+    
     plotter.print_counts_per_policy_per_request_type()
     plotter.plot_wait_time_by_week_bucket(plotter.week_buckets)
     plotter.plot_box_per_policy_by_week_bucket()
