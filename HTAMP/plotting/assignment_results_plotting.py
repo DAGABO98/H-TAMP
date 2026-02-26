@@ -35,8 +35,8 @@ class AssignmentResultsPlotter:
 
         self.type_col = type_col
         self.daily_stat = daily_stat.lower()
-        if self.daily_stat not in ("mean", "p95", "median"):
-            raise ValueError("daily_stat must be 'mean', 'p95', or 'median'")
+        if self.daily_stat not in ("mean", "p95"):
+            raise ValueError("daily_stat must be 'mean' or 'p95'")
 
         (
             self.summary_by_type,
@@ -71,10 +71,8 @@ class AssignmentResultsPlotter:
             return np.nan
         if self.daily_stat == "mean":
             return float(np.mean(x))
-        elif self.daily_stat == "p95":
-            return float(np.percentile(x, 95))
         else:
-            return float(np.percentile(x, 50))
+            return float(np.percentile(x, 95))
 
     def _generate_results_summary_from_root_dir(self):
         rows = []
@@ -158,6 +156,24 @@ class AssignmentResultsPlotter:
                 vals = pd.to_numeric(g2["dailyfloor_wait_stat"], errors="coerce").to_numpy()
                 vals = vals[np.isfinite(vals)]
                 dailyfloor_wait_stats_by_policy_type[(policy_name, str(req_type))] = vals
+
+            # ---- ALSO compute "ALL request types" daily-per-floor stat ----
+            dailyfloor_all = (
+                serviced_df.dropna(subset=["_day", "_floor"])
+                .groupby(["_day", "_floor"], as_index=False)["_wait"]
+                .apply(self._daily_agg)
+                .rename(columns={"_wait": "dailyfloor_wait_stat"})
+            )
+            dailyfloor_all[self.type_col] = "ALL"
+            dailyfloor_all["policy"] = policy_name
+            dailyfloor_all["daily_stat"] = self.daily_stat
+
+            dailyfloor_stats_frames.append(dailyfloor_all)
+
+            # store arrays for (policy, "ALL")
+            vals_all = pd.to_numeric(dailyfloor_all["dailyfloor_wait_stat"], errors="coerce").to_numpy()
+            vals_all = vals_all[np.isfinite(vals_all)]
+            dailyfloor_wait_stats_by_policy_type[(policy_name, "ALL")] = vals_all
 
         summary_by_type = pd.DataFrame(rows)
         if summary_by_type.empty:
@@ -270,11 +286,11 @@ def main():
         root_dir="results/policies",
         out_dir="results/policies/plots",
         type_col="request_type",
-        daily_stat="median",
+        daily_stat="p95",
     )
     plotter.print_counts_per_policy_per_request_type()
     plotter.generate_dailyfloor_wait_time_box_plot_by_type()
-
+    plotter.generate_dailyfloor_wait_time_box_plot_all_requests()
 
 if __name__ == "__main__":
     pStart = datetime.now()
