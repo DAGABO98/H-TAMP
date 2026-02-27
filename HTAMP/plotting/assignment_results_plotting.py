@@ -32,7 +32,8 @@ class AssignmentResultsPlotter:
         logs_root_dir: str | Path = "results/policies/logs",
         file_glob: str = "*.out"
     ):
-        self.policy_order = ["fleet_manager",
+        self.policy_order = ["human_team",
+                             "fleet_manager",
                              "tp_d_alpha0.0",
                              "d_tpts_alpha0.0",
                              "tp_d_alpha0.1",
