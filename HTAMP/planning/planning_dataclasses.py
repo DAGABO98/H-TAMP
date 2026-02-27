@@ -254,6 +254,7 @@ class TaskRequest:
                  time_for_rejection_minutes: float,
                  ordered_time: float,
                  scheduled_time: float,
+                 administered_time: Optional[float],
                  assigned_robot_id: Optional[int] = None,
                  started: bool = False,
                  completed_goals: int = 0,
@@ -268,6 +269,7 @@ class TaskRequest:
         self.wait_times_at_goals_seconds = wait_times_at_goals_seconds
         self.ordered_time = ordered_time
         self.scheduled_time = scheduled_time
+        self.administered_time = administered_time
         self.time_for_service = scheduled_time + (60.0 * time_for_rejection_minutes)
         self.started = started
         self.completed_goals = completed_goals

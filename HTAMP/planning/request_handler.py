@@ -261,12 +261,14 @@ class DailyRequestHandler(GlobalRequestHandler):
                 wait_times_at_goals_seconds = [wait_time_seconds, wait_time_seconds]
                 ordered_time = (pd.Timestamp(row["Medication Order DTTM"]) - initial_time).total_seconds()
                 scheduled_time = (pd.Timestamp(row["Medication Scheduled DTTM"]) - initial_time).total_seconds()
+                administered_time = (pd.Timestamp(row["Administered DTTM"]) - initial_time).total_seconds()
             else:
                 room_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_id"])]
                 goal_nodes = [room_node_label]
                 wait_times_at_goals_seconds = [wait_time_seconds]
                 ordered_time = (pd.Timestamp(row["Ordered DTTM"]) - initial_time).total_seconds()
                 scheduled_time = (pd.Timestamp(row["Scheduled DTTM"]) - initial_time).total_seconds()
+                administered_time = (pd.Timestamp(row["Administered DTTM"]) - initial_time).total_seconds()
             
             task_request = TaskRequest(
                 request_id=request_type+"."+str(req_index),
@@ -275,7 +277,8 @@ class DailyRequestHandler(GlobalRequestHandler):
                 wait_times_at_goals_seconds=wait_times_at_goals_seconds,
                 time_for_rejection_minutes=time_for_rejection_minutes,
                 ordered_time=ordered_time,
-                scheduled_time=scheduled_time
+                scheduled_time=scheduled_time,
+                administered_time=administered_time
                 )
 
             task_requets_list.append(task_request)

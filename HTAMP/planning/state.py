@@ -500,7 +500,8 @@ def main():
                                       wait_times_at_goals_seconds=[10.0, 10.0],
                                       time_for_rejection_minutes=30.0,
                                       ordered_time=ordered_time,
-                                      scheduled_time=scheduled_time)
+                                      scheduled_time=scheduled_time,
+                                      administered_time=None)
         
         state.add_request(current_request)
         
