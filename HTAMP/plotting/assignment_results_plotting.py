@@ -438,7 +438,7 @@ class AssignmentResultsPlotter:
             scheduled = pd.to_numeric(serviced_df["scheduled_time"], errors="coerce")
             serviced_df["_wait"] = (planned - scheduled).clip(lower=0)
 
-            if policy_name == "sequential_greedy_nopt":
+            if policy_name == "sequential_greedy_nopt" and "human_team" in self.policy_order:
                 administered = pd.to_numeric(serviced_df["administered_time"], errors="coerce")
                 serviced_df["_administered"] = (administered - scheduled).clip(lower=0)
 
@@ -458,7 +458,7 @@ class AssignmentResultsPlotter:
                 vals = vals[np.isfinite(vals)]
                 dailyfloor_wait_stats_by_policy_type[(policy_name, str(req_type))] = vals
             
-            if policy_name == "sequential_greedy_nopt":
+            if policy_name == "sequential_greedy_nopt" and "human_team" in self.policy_order:
                 dailyfloor_administered = (
                     serviced_df.dropna(subset=["_day", "_floor"])
                     .groupby([self.type_col, "_day", "_floor"], as_index=False)["_administered"]
@@ -491,7 +491,7 @@ class AssignmentResultsPlotter:
             vals_all = vals_all[np.isfinite(vals_all)]
             dailyfloor_wait_stats_by_policy_type[(policy_name, "ALL")] = vals_all
 
-            if policy_name == "sequential_greedy_nopt":
+            if policy_name == "sequential_greedy_nopt" and "human_team" in self.policy_order:
                 dailyfloor_administered_all = (
                     serviced_df.dropna(subset=["_day", "_floor"])
                     .groupby(["_day", "_floor"], as_index=False)["_administered"]
