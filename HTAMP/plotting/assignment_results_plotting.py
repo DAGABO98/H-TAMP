@@ -32,8 +32,7 @@ class AssignmentResultsPlotter:
         logs_root_dir: str | Path = "results/policies/logs",
         file_glob: str = "*.out"
     ):
-        self.policy_order = ["human_team",
-                             "fleet_manager",
+        self.policy_order = ["fleet_manager",
                              "tp_d_alpha0.0",
                              "d_tpts_alpha0.0",
                              "tp_d_alpha0.1",
@@ -463,7 +462,7 @@ class AssignmentResultsPlotter:
                     serviced_df.dropna(subset=["_day", "_floor"])
                     .groupby([self.type_col, "_day", "_floor"], as_index=False)["_administered"]
                     .apply(self._daily_agg)
-                    .rename(columns={"_administered": "dailyfloor_administered_stat"})
+                    .rename(columns={"_administered": "dailyfloor_wait_stat"})
                 )
                 dailyfloor_administered["policy"] = "human_team"
                 dailyfloor_administered["daily_stat"] = self.daily_stat
@@ -471,7 +470,7 @@ class AssignmentResultsPlotter:
                 dailyfloor_stats_frames.append(dailyfloor_administered)
 
                 for req_type, g2 in dailyfloor_administered.groupby(self.type_col):
-                    vals = pd.to_numeric(g2["dailyfloor_administered_stat"], errors="coerce").to_numpy()
+                    vals = pd.to_numeric(g2["dailyfloor_wait_stat"], errors="coerce").to_numpy()
                     vals = vals[np.isfinite(vals)]
                     dailyfloor_wait_stats_by_policy_type[("human_team", str(req_type))] = vals
 
@@ -496,7 +495,7 @@ class AssignmentResultsPlotter:
                     serviced_df.dropna(subset=["_day", "_floor"])
                     .groupby(["_day", "_floor"], as_index=False)["_administered"]
                     .apply(self._daily_agg)
-                    .rename(columns={"_administered": "dailyfloor_administered_stat"})
+                    .rename(columns={"_administered": "dailyfloor_wait_stat"})
                 )
                 dailyfloor_administered_all[self.type_col] = "ALL"
                 dailyfloor_administered_all["policy"] = "human_team"
@@ -504,7 +503,7 @@ class AssignmentResultsPlotter:
 
                 dailyfloor_stats_frames.append(dailyfloor_administered_all)
 
-                vals_administered_all = pd.to_numeric(dailyfloor_administered_all["dailyfloor_administered_stat"], errors="coerce").to_numpy()
+                vals_administered_all = pd.to_numeric(dailyfloor_administered_all["dailyfloor_wait_stat"], errors="coerce").to_numpy()
                 vals_administered_all = vals_administered_all[np.isfinite(vals_administered_all)]
                 dailyfloor_wait_stats_by_policy_type[("human_team", "ALL")] = vals_administered_all
 
