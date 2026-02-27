@@ -323,6 +323,7 @@ class TaskRequest:
             "wait_times_at_goals_seconds": self.wait_times_at_goals_seconds,
             "ordered_time": self.ordered_time,
             "scheduled_time": self.scheduled_time,
+            "administered_time": self.administered_time,
             "time_for_service": self.time_for_service,
             "started": self.started,
             "completed_goals": self.completed_goals,
