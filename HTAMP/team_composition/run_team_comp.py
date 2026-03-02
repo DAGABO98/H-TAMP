@@ -27,8 +27,8 @@ BASE = [
     "python", "-m", "HTAMP.team_composition.stability_eval",
     "--use_saved_data",
     "--use_saved_request_data",
-    "--hour_start", "8",
-    "--hour_end", "9",
+    "--hour_start", "0",
+    "--hour_end", "24",
 ]
 
 def run_one(day: dt.date, floor: int) -> tuple[dt.date, int, int]:
