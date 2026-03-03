@@ -411,6 +411,222 @@ class DailyRequestHandler(GlobalRequestHandler):
             )
 
         return extracted_requests_lists
+
+class PlanningRequestHandler(GlobalRequestHandler):
+    
+    def __init__(self, 
+                 start_date: str, 
+                 end_date: str,
+                 floor_number: int,
+                 date_stamp: pd.Timestamp,
+                 annotated_data_files: AnnotatedDataFiles, 
+                 request_dir: str, 
+                 use_saved_data: bool = False):
+        super().__init__(annotated_data_files=annotated_data_files, 
+                         request_dir=request_dir, 
+                         start_date=start_date, 
+                         end_date=end_date, 
+                         use_saved_data=use_saved_data)
+        self.daily_requests_dfs = self._process_daily_requests(date_stamp=date_stamp, floor_number=floor_number)
+    
+    def _process_daily_requests(self, date_stamp: pd.Timestamp, floor_number: int) -> DailyRequestsDataFrames:
+        print(f"Processing daily requests for date: {date_stamp.date()} and floor: {floor_number}")
+        daily_bp_requests = DataHelpers.get_daily_requests_for_floor(self.bp_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_hr_requests = DataHelpers.get_daily_requests_for_floor(self.hr_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_rr_requests = DataHelpers.get_daily_requests_for_floor(self.rr_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_temp_requests = DataHelpers.get_daily_requests_for_floor(self.temp_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_os_requests = DataHelpers.get_daily_requests_for_floor(self.os_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_med_requests = DataHelpers.get_daily_requests_for_floor(self.med_df, date_stamp=date_stamp, floor_number=floor_number)
+        daily_requests_dfs = DailyRequestsDataFrames(
+            blood_pressure_requests_df=daily_bp_requests,
+            heart_rate_requests_df=daily_hr_requests,
+            respiratory_rate_requests_df=daily_rr_requests,
+            temperature_requests_df=daily_temp_requests,
+            oxygen_saturation_requests_df=daily_os_requests,
+            medications_requests_df=daily_med_requests
+        )
+
+        return daily_requests_dfs
+    
+    def _extract_requests_df_for_time_signal(self, 
+                                         df: pd.DataFrame, 
+                                         time_signal: TimeSignal, 
+                                         scheduled_time_col: str, 
+                                         ordered_time_col: str,
+                                         lookahead_minutes: int) -> pd.DataFrame:
+        next_hour_time_stamp = time_signal.time_stamp + pd.Timedelta(minutes=lookahead_minutes)
+        mask = (df[scheduled_time_col] >= time_signal.time_stamp) & \
+               (df[scheduled_time_col] < next_hour_time_stamp) & \
+               (df[ordered_time_col] <= time_signal.time_stamp)
+        extracted_requests = df[mask].copy()
+        return extracted_requests
+    
+    def _convert_df_into_requests_list(self, 
+                                       df: pd.DataFrame, 
+                                       initial_time: pd.Timestamp,
+                                       request_type: str, 
+                                       wait_time_seconds: float, 
+                                       time_for_rejection_minutes: float,
+                                       traversal_graph_generator: TraversalGraphGenerator) -> list[TaskRequest]:
+        task_requests_list = []
+        for req_index, row in df.iterrows():
+            if request_type == "medication":
+                supplies_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_supplies"])]
+                room_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_id"])]
+                goal_nodes = [supplies_node_label, room_node_label]
+                wait_times_at_goals_seconds = [wait_time_seconds, wait_time_seconds]
+                ordered_time = (pd.Timestamp(row["Medication Order DTTM"]) - initial_time).total_seconds()
+                scheduled_time = (pd.Timestamp(row["Medication Scheduled DTTM"]) - initial_time).total_seconds()
+                administered_time = (pd.Timestamp(row["Administered DTTM"]) - initial_time).total_seconds()
+            else:
+                room_node_label = traversal_graph_generator.doorway_to_node_dict[str(row["scheduled_space_id"])]
+                goal_nodes = [room_node_label]
+                wait_times_at_goals_seconds = [wait_time_seconds]
+                ordered_time = (pd.Timestamp(row["Ordered DTTM"]) - initial_time).total_seconds()
+                scheduled_time = (pd.Timestamp(row["Scheduled DTTM"]) - initial_time).total_seconds()
+                administered_time = (pd.Timestamp(row["Administered DTTM"]) - initial_time).total_seconds()
+            
+            task_request = TaskRequest(
+                request_id=request_type+"."+str(req_index),
+                request_type=request_type,
+                goal_nodes=goal_nodes,
+                wait_times_at_goals_seconds=wait_times_at_goals_seconds,
+                time_for_rejection_minutes=time_for_rejection_minutes,
+                ordered_time=ordered_time,
+                scheduled_time=scheduled_time,
+                administered_time=administered_time
+                )
+
+            task_requests_list.append(task_request)
+        return task_requests_list
+            
+    
+    def _get_requests_for_time_signal(self, 
+                                     df: pd.DataFrame, 
+                                     initial_time: pd.Timestamp,
+                                     time_signal: TimeSignal, 
+                                     scheduled_time_col: str, 
+                                     ordered_time_col: str,
+                                     lookahead_minutes: int,
+                                     request_type: str,
+                                     wait_time_seconds: float,
+                                     time_for_rejection_minutes: float,
+                                     traversal_graph_generator: TraversalGraphGenerator) -> list[TaskRequest]:
+        extracted_requests_df = self._extract_requests_df_for_time_signal(
+                                                                    df=df,
+                                                                    time_signal=time_signal,
+                                                                    scheduled_time_col=scheduled_time_col,
+                                                                    ordered_time_col=ordered_time_col,
+                                                                    lookahead_minutes=lookahead_minutes
+                                                                    )
+        requests_list = self._convert_df_into_requests_list(
+            df=extracted_requests_df,
+            initial_time=initial_time,
+            request_type=request_type,
+            wait_time_seconds=wait_time_seconds,
+            time_for_rejection_minutes=time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
+            )
+
+        return requests_list
+
+        
+    
+    def get_all_requests_for_time_signal(self, 
+                                         time_signal: TimeSignal,
+                                         initial_time: pd.Timestamp,
+                                         look_ahead_minutes: int,
+                                         all_task_properties: AllTaskProperties,
+                                         traversal_graph_generator: TraversalGraphGenerator
+                                         ) -> RequestsLists:
+        
+        extracted_bp_requests = self._get_requests_for_time_signal(
+            df=self.daily_requests_dfs.blood_pressure_requests_df,
+            initial_time=initial_time,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.blood_pressure.task_type,
+            wait_time_seconds=all_task_properties.blood_pressure.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.blood_pressure.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator)
+        
+        extracted_hr_requests = self._get_requests_for_time_signal(
+            df=self.daily_requests_dfs.heart_rate_requests_df,
+            initial_time=initial_time,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.heart_rate.task_type,
+            wait_time_seconds=all_task_properties.heart_rate.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.heart_rate.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
+            )
+        
+        extracted_rr_requests = self._get_requests_for_time_signal(
+            df=self.daily_requests_dfs.respiratory_rate_requests_df,
+            initial_time=initial_time,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.respiratory_rate.task_type,
+            wait_time_seconds=all_task_properties.respiratory_rate.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.respiratory_rate.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
+            )
+        
+        extracted_temp_requests = self._get_requests_for_time_signal(
+            df=self.daily_requests_dfs.temperature_requests_df,
+            initial_time=initial_time,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.temperature.task_type,
+            wait_time_seconds=all_task_properties.temperature.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.temperature.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
+            )
+        
+        extracted_os_requests = self._get_requests_for_time_signal(
+            df=self.daily_requests_dfs.oxygen_saturation_requests_df,
+            initial_time=initial_time,
+            time_signal=time_signal,
+            scheduled_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.oxygen_saturation.task_type,
+            wait_time_seconds=all_task_properties.oxygen_saturation.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.oxygen_saturation.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
+            )
+        
+        extracted_med_requests = self._get_requests_for_time_signal(
+            df=self.daily_requests_dfs.medications_requests_df,
+            initial_time=initial_time,
+            time_signal=time_signal,
+            scheduled_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            lookahead_minutes=look_ahead_minutes,
+            request_type=all_task_properties.medications.task_type,
+            wait_time_seconds=all_task_properties.medications.wait_time_seconds,
+            time_for_rejection_minutes=all_task_properties.medications.time_for_rejection_minutes,
+            traversal_graph_generator=traversal_graph_generator
+            )
+        
+        extracted_requests_lists = RequestsLists(
+            blood_pressure_requests=extracted_bp_requests,
+            heart_rate_requests=extracted_hr_requests,
+            respiratory_rate_requests=extracted_rr_requests,
+            temperature_requests=extracted_temp_requests,
+            oxygen_saturation_requests=extracted_os_requests,
+            medications_requests=extracted_med_requests
+            )
+
+        return extracted_requests_lists
         
 
 
