@@ -20,8 +20,8 @@ BASE = [
     "--use_saved_data",
     "--use_saved_request_data",
     "--save_results_csv",
-    "--hour_start", "8",
-    "--hour_end", "9",
+    "--hour_start", "0",
+    "--hour_end", "24",
 ]
 
 LOG_ROOT = "results/policies/logs"
@@ -60,15 +60,12 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("fleet_manager", mode=0),
 
     PolicySpec("tp_d", mode=1, alpha=0.0),
-    PolicySpec("tp_d", mode=1, alpha=0.1),
     PolicySpec("tp_d", mode=1, alpha=0.2),
 
     PolicySpec("d_tpts", mode=2, alpha=0.0),
-    PolicySpec("d_tpts", mode=2, alpha=0.1),
     PolicySpec("d_tpts", mode=2, alpha=0.2),
 
     PolicySpec("sequential_greedy", mode=4),
-    PolicySpec("sequential_greedy", mode=4, allow_deallocation=True),
 ]
 
 
