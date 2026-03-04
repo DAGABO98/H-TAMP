@@ -459,6 +459,8 @@ class PlanningRequestHandler(GlobalRequestHandler):
                (df[scheduled_time_col] < next_hour_time_stamp) & \
                (df[ordered_time_col] <= time_signal.time_stamp)
         extracted_requests = df[mask].copy()
+        diff_mask = (df[scheduled_time_col] - df[ordered_time_col]) >= pd.Timedelta(minutes=20)
+        extracted_requests = extracted_requests[diff_mask]
         return extracted_requests
     
     def _convert_df_into_requests_list(self, 
