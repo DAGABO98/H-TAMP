@@ -53,6 +53,7 @@ class PolicySpec:
     mode: int
     alpha: Optional[float] = None
     allow_deallocation: bool = False
+    allow_reweighting: bool = False
     extra_args: tuple[str, ...] = ()  # any extra CLI args you want to add
 
 
@@ -66,6 +67,11 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("d_tpts", mode=2, alpha=0.2),
 
     PolicySpec("sequential_greedy", mode=4),
+    PolicySpec("vanilla_rollout", mode=5),
+    PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=True),
+    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=True, allow_reweighting=False),
+    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=True),
+    PolicySpec("adaptive_rollout", mode=9, allow_deallocation=False, allow_reweighting=False),
 ]
 
 
@@ -101,8 +107,13 @@ def policy_run_tag(p: PolicySpec) -> str:
     if p.allow_deallocation:
         tag += "_ropt"
     else:
-        if p.mode == 4:
+        if p.mode in [6, 7, 8, 9]:  # Only add nopt tag for adaptive rollout variants
             tag += "_nopt"
+    if p.allow_reweighting:
+        tag += "_rwt"
+    else:
+        if p.mode in [6, 7, 8, 9]:  # Only add norwt tag for adaptive rollout variants
+            tag += "_norwt"
     return tag
 
 
@@ -117,8 +128,6 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
     ]
     if p.alpha is not None:
         cmd += ["--alpha", str(p.alpha)]
-    if p.allow_deallocation:
-        cmd += ["--allow_deallocation"]
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd

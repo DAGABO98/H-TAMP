@@ -24,7 +24,9 @@ class AdaptiveRollout:
                  request_dir: str,
                  use_saved_request_data: bool,
                  initial_time: pd.Timestamp,
-                 all_task_properties:AllTaskProperties):
+                 all_task_properties:AllTaskProperties,
+                 allow_deallocation: bool,
+                 allow_reweighting: bool):
         self.requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -40,7 +42,9 @@ class AdaptiveRollout:
                                               annotated_data_files=annotated_data_files,
                                               request_dir=request_dir,
                                               use_saved_data=use_saved_request_data)
-    
+        self.allow_deallocation = allow_deallocation
+        self.allow_reweighting = allow_reweighting
+        
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
@@ -159,17 +163,18 @@ class AdaptiveRollout:
                                                                     traversal_graph_generator=traversal_graph_generator)
         
         if smallest_pickup_deadline:
-            scheduled_requests = self._extract_scheduled_requests(hour=hour,
-                                                                minute=minute,
-                                                                look_ahead_minutes=look_ahead_minutes,
-                                                                traversal_graph_generator=traversal_graph_generator)
-
             if self.allow_deallocation:
                 self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
                                                                        state=state,
                                                                        motion_planner=motion_planner,
                                                                        traversal_graph_generator=traversal_graph_generator,
                                                                        debug=debug)
+                
+            # TODO: Only add requests to state after copying state for rollout
+            scheduled_requests = self._extract_scheduled_requests(hour=hour,
+                                                                minute=minute,
+                                                                look_ahead_minutes=look_ahead_minutes,
+                                                                traversal_graph_generator=traversal_graph_generator)
             
             self._extract_node_reservations_from_state(state=state)
 
