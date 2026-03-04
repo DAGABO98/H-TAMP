@@ -28,11 +28,15 @@ from HTAMP.assignment.baselines.fleet_manager import FleetManager
 class AssignmentEvaluator:
     def __init__(self, 
                  args, 
+                 start_date: str,
+                 end_date: str,
                  robot_profiles: dict[int, RobotProfile], 
                  annotated_data_files: AnnotatedDataFiles, 
                  all_task_properties: AllTaskProperties, 
                  random_seed=None):
         self.args = args
+        self.start_date = start_date
+        self.end_date = end_date
         self.team_size = args.num_monitoring_robots + args.num_delivery_robots
         self.random_seed = random_seed
         self.date_stamp = DateStamp(year=args.year, month=args.month, day=args.day)
@@ -106,13 +110,11 @@ class AssignmentEvaluator:
         self.selected_start_nodes: list[TraversalNode] = random.sample(potential_start_nodes, self.team_size)
     
     def _get_request_handler(self,
-                             start_date: str,
-                             end_date: str,
                              annotated_data_files: AnnotatedDataFiles,
                              request_dir: Optional[str] = None,
                              use_saved_request_data: bool = False) -> DailyRequestHandler:
-        request_handler = DailyRequestHandler(start_date=start_date,
-                                              end_date=end_date,
+        request_handler = DailyRequestHandler(start_date=self.start_date,
+                                              end_date=self.end_date,
                                               date_stamp=self.date_stamp.time_stamp,
                                               floor_number=self.floor_number,
                                               annotated_data_files=annotated_data_files,
@@ -145,6 +147,16 @@ class AssignmentEvaluator:
         elif mode in [4]:
             policy = policy_dict[mode](allow_deallocation=self.args.allow_deallocation)
             print(f"Initialized Sequential Greedy policy with allow_deallocation: {self.args.allow_deallocation}")
+        elif mode in [5, 6]:
+            policy = policy_dict[mode](start_date=self.start_date, 
+                                       end_date=self.end_date,
+                                       floor_number=self.floor_number,
+                                       annotated_data_files=self.annotated_data_files,
+                                       request_dir=self.args.request_dir,
+                                       use_saved_request_data=self.args.use_saved_request_data,
+                                       initial_time=self.simulator_config.initial_time,
+                                       all_task_properties=self.all_task_properties)
+            print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
         print("Policy initialized.")
@@ -231,24 +243,49 @@ class AssignmentEvaluator:
 
         return requests_lists
     
+    def _assign_requests_to_robots(self, 
+                                   hour: int,
+                                   minute: int,
+                                   look_ahead_minutes: int,
+                                   requests_lists: Optional[RequestsLists] = None, 
+                                   debug: bool = False):
+        if self.args.mode in [5, 6]:
+            self.policy.assign_requests_to_robots(state=self.state,
+                                              requests_lists=requests_lists,
+                                              motion_planner=self.motion_planner,
+                                              traversal_graph_generator=self.tg_generator,
+                                              hour=hour,
+                                              minute=minute,
+                                              look_ahead_minutes=look_ahead_minutes,
+                                              debug=debug)
+        else:
+            self.policy.assign_requests_to_robots(state=self.state,
+                                              requests_lists=requests_lists,
+                                              motion_planner=self.motion_planner,
+                                              traversal_graph_generator=self.tg_generator,
+                                              debug=debug)
+    
     def _assign_requests_and_step_simulator(self,
+                                            hour: Optional[int] = None,
+                                            minute: Optional[int] = None,
+                                            look_ahead_minutes: Optional[int] = None,
                                             requests_lists: Optional[RequestsLists] = None,
                                             frame_data: Optional[FrameData] = None,
                                             save_frame_data: bool = False,
                                             debug: bool = False):
         for second in range(60):
             if second == 0:
-                self.policy.assign_requests_to_robots(state=self.state,
-                                              requests_lists=requests_lists,
-                                              motion_planner=self.motion_planner,
-                                              traversal_graph_generator=self.tg_generator,
-                                              debug=debug)
+                self._assign_requests_to_robots(requests_lists=requests_lists, 
+                                                hour=hour,
+                                                minute=minute,
+                                                look_ahead_minutes=look_ahead_minutes,
+                                                debug=debug)
             else:
-                self.policy.assign_requests_to_robots(state=self.state,
-                                              requests_lists=None,
-                                              motion_planner=self.motion_planner,
-                                              traversal_graph_generator=self.tg_generator,
-                                              debug=debug)
+                self._assign_requests_to_robots(requests_lists=None, 
+                                                hour=hour,
+                                                minute=minute,
+                                                look_ahead_minutes=look_ahead_minutes,
+                                                debug=debug)
             for frames in range(int(self.args.fps)):
                 self.state.step(self.tg_generator.traversal_graph)
                 if save_frame_data and frame_data is not None:
@@ -261,8 +298,6 @@ class AssignmentEvaluator:
                                         frame_data: Optional[FrameData] = None,
                                         save_frame_data: bool = False,
                                         look_ahead_minutes: int = 60,
-                                        plot_before_assignment: bool = False,
-                                        plot_after_assignment: bool = False,
                                         debug: bool = False):
         
         requests_lists = self._extract_requests_for_hour_minute(hour=hour,
@@ -270,7 +305,10 @@ class AssignmentEvaluator:
                                                               request_handler=request_handler,
                                                               look_ahead_minutes=look_ahead_minutes)
         
-        self._assign_requests_and_step_simulator(requests_lists=requests_lists,
+        self._assign_requests_and_step_simulator(hour=hour,
+                                                 minute=minute,
+                                                 look_ahead_minutes=look_ahead_minutes,
+                                                 requests_lists=requests_lists,
                                                  frame_data=frame_data,
                                                  save_frame_data=save_frame_data,
                                                  debug=debug)
@@ -306,18 +344,14 @@ class AssignmentEvaluator:
 
         return results_df
     
-    def evaluate_assignment(self, 
-                            start_date: str,
-                            end_date: str,
+    def evaluate_assignment(self,
                             hour_range: Optional[tuple[int, int]],
                             request_dir: Optional[str] = None,
                             use_saved_request_data: bool = False,
                             save_frame_data: bool = False,
                             look_ahead_minutes: int = 30,
                             debug = False) -> tuple[FrameData, pd.DataFrame]:
-        request_handler = self._get_request_handler(start_date=start_date,
-                                                    end_date=end_date,
-                                                    annotated_data_files=self.annotated_data_files,
+        request_handler = self._get_request_handler(annotated_data_files=self.annotated_data_files,
                                                     request_dir=request_dir,
                                                     use_saved_request_data=use_saved_request_data)
         if save_frame_data:
@@ -343,7 +377,9 @@ class AssignmentEvaluator:
                                                      debug=debug)
                 
         for minute in range(60):
-            self._assign_requests_and_step_simulator(requests_lists=None,
+            self._assign_requests_and_step_simulator(hour=end_hour,
+                                                     minute=minute,
+                                                     requests_lists=None,
                                                      frame_data=frame_data,
                                                      save_frame_data=save_frame_data,
                                                      debug=debug)
@@ -362,8 +398,6 @@ class Experiment():
                  start_date: str,
                  end_date: str,
                  random_seed: Optional[int] = None):
-        self.start_date = start_date
-        self.end_date = end_date
         robot_profiles = self._generate_robot_profiles(num_monitoring_robots=args.num_monitoring_robots,
                                                        num_delivery_robots=args.num_delivery_robots)
         print(f"Generated Robot Profiles: {robot_profiles}")
@@ -379,6 +413,8 @@ class Experiment():
             annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
         )
         self.evaluator = AssignmentEvaluator(args=args, 
+                                             start_date=start_date,
+                                             end_date=end_date,
                                              robot_profiles=robot_profiles,
                                              annotated_data_files=annotated_data_files,
                                              all_task_properties=all_task_properties,
@@ -454,7 +490,7 @@ def run_experiment(args):
 
     random_seed = 42
 
-    experiment = Experiment(args,
+    experiment = Experiment(args=args,
                             start_date=start_date,
                             end_date=end_date,
                             random_seed=random_seed)
@@ -462,13 +498,11 @@ def run_experiment(args):
     os.makedirs("results/motion_planning/debug", exist_ok=True)
     os.makedirs("results/motion_planning/steps", exist_ok=True)
 
-    frame_data, results_df = experiment.evaluator.evaluate_assignment(start_date=start_date,
-                                                     end_date=end_date,
-                                                     hour_range=(args.hour_start,args.hour_end),
-                                                     request_dir=args.request_dir,
-                                                     use_saved_request_data=args.use_saved_request_data,
-                                                     save_frame_data=False,
-                                                     debug=args.debug)
+    frame_data, results_df = experiment.evaluator.evaluate_assignment(hour_range=(args.hour_start,args.hour_end),
+                                                                      request_dir=args.request_dir,
+                                                                      use_saved_request_data=args.use_saved_request_data,
+                                                                      save_frame_data=False,
+                                                                      debug=args.debug)
     
     if args.save_results_csv:
         os.makedirs("results/policies", exist_ok=True)
