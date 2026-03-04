@@ -134,7 +134,10 @@ class AssignmentEvaluator:
             3: IdleTaskPrediction,
             4: SequentialGreedy,
             5: VanillaRollout,
-            6: AdaptiveRollout
+            6: AdaptiveRollout,
+            7: AdaptiveRollout,
+            8: AdaptiveRollout,
+            9: AdaptiveRollout
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
@@ -144,10 +147,7 @@ class AssignmentEvaluator:
         if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
             policy = policy_dict[mode](alpha=alpha)
             print(f"Initialized policy with alpha: {alpha}")
-        elif mode in [4]:
-            policy = policy_dict[mode](allow_deallocation=self.args.allow_deallocation)
-            print(f"Initialized Sequential Greedy policy with allow_deallocation: {self.args.allow_deallocation}")
-        elif mode in [5, 6]:
+        elif mode == 5:
             policy = policy_dict[mode](start_date=self.start_date, 
                                        end_date=self.end_date,
                                        floor_number=self.floor_number,
@@ -157,9 +157,33 @@ class AssignmentEvaluator:
                                        initial_time=self.simulator_config.initial_time,
                                        all_task_properties=self.all_task_properties)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
+        elif mode in [6, 7, 8, 9]:
+            if mode == 6:
+                allow_deallocation = True
+                allow_reweighting = True
+            elif mode == 7:
+                allow_deallocation = True
+                allow_reweighting = False
+            elif mode == 8:
+                allow_deallocation = False
+                allow_reweighting = True
+            else:  # mode == 9
+                allow_deallocation = False
+                allow_reweighting = False
+            policy = policy_dict[mode](start_date=self.start_date, 
+                                       end_date=self.end_date,
+                                       floor_number=self.floor_number,
+                                       annotated_data_files=self.annotated_data_files,
+                                       request_dir=self.args.request_dir,
+                                       use_saved_request_data=self.args.use_saved_request_data,
+                                       initial_time=self.simulator_config.initial_time,
+                                       all_task_properties=self.all_task_properties,
+                                       allow_deallocation=allow_deallocation,
+                                       allow_reweighting=allow_reweighting)
+            print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
-        print("Policy initialized.")
+            print(f"Initialized {str(policy_dict[mode].__name__)} policy without additional parameters.")
         return policy
     
     def _add_requests_to_state(self, requests_lists: RequestsLists):
@@ -509,10 +533,21 @@ def run_experiment(args):
         if args.policy_name in ["tp_d", "d_tpts"]:
             os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
             results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-        elif args.policy_name == "sequential_greedy":
-            deallocation_str = "ropt" if args.allow_deallocation else "nopt"
-            os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}", exist_ok=True)
-            results_df.to_csv(f"results/policies/{args.policy_name}_{deallocation_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+        elif args.policy_name in ["adaptive_rollout"]:
+            if args.mode == 6:
+                deallocation_str = "ropt"
+                reweighting_str = "rwt"
+            elif args.mode == 7:
+                deallocation_str = "ropt"
+                reweighting_str = "norwt"
+            elif args.mode == 8:
+                deallocation_str = "nopt"
+                reweighting_str = "rwt"
+            else:  # mode == 9
+                deallocation_str = "nopt"
+                reweighting_str = "norwt"
+            os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}", exist_ok=True)
+            results_df.to_csv(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
         else:
             os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
             results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
@@ -574,9 +609,6 @@ def main():
 
     # Baseline parameters
     parser.add_argument("--alpha", type=float, dest='alpha', default=0.1, help='Alpha parameter for token passing policies.')
-
-    # Policies parameters
-    parser.add_argument("--allow_deallocation", action='store_true', help="Whether to allow deallocation of previously assigned requests in the Sequential Greedy policy.")
 
     args = parser.parse_args()
     run_experiment(args)
