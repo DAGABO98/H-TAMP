@@ -99,26 +99,34 @@ class AdaptiveRollout:
                                     minute: int,
                                     look_ahead_minutes: int,
                                     traversal_graph_generator: TraversalGraphGenerator) -> RequestsLists:
-        original_time_signal = TimeSignal(year=self.date_stamp.year,
-                                 month=self.date_stamp.month,
-                                 day=self.date_stamp.day,
-                                 hour=hour,
-                                 minute=minute)
-        
-        shifted_time_stamp = original_time_signal.time_stamp + pd.Timedelta(minutes=look_ahead_minutes)
-        shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
-                                        month=shifted_time_stamp.month,
-                                        day=shifted_time_stamp.day,
-                                        hour=shifted_time_stamp.hour,
-                                        minute=shifted_time_stamp.minute)
-        
-        scheduled_requests_lists: RequestsLists = self.planning_request_handler.get_all_requests_for_time_signal(time_signal=shifted_time_signal,
-                                                                                         initial_time=self.initial_time,
-                                                                                         all_task_properties=self.all_task_properties,
-                                                                                         look_ahead_minutes=look_ahead_minutes,
-                                                                                         traversal_graph_generator=traversal_graph_generator)
+        if hour <= 23:
+            original_time_signal = TimeSignal(year=self.date_stamp.year,
+                                    month=self.date_stamp.month,
+                                    day=self.date_stamp.day,
+                                    hour=hour,
+                                    minute=minute)
+            
+            shifted_time_stamp = original_time_signal.time_stamp + pd.Timedelta(minutes=look_ahead_minutes)
+            if shifted_time_stamp.day != self.date_stamp.day:
+                return None
+            else:
+                if shifted_time_stamp.hour == 23 and 60 - shifted_time_stamp.minute < look_ahead_minutes:
+                    return None
+                else:
+                    shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
+                                                 month=shifted_time_stamp.month,
+                                                 day=shifted_time_stamp.day,
+                                                 hour=shifted_time_stamp.hour,
+                                                 minute=shifted_time_stamp.minute)
+                    scheduled_requests_lists: RequestsLists = self.planning_request_handler.get_all_requests_for_time_signal(time_signal=shifted_time_signal,
+                                                                                                    initial_time=self.initial_time,
+                                                                                                    all_task_properties=self.all_task_properties,
+                                                                                                    look_ahead_minutes=look_ahead_minutes,
+                                                                                                    traversal_graph_generator=traversal_graph_generator)
 
-        return scheduled_requests_lists
+                return scheduled_requests_lists
+        else:
+            return None
     
     def _add_requests_to_state(self, 
                                requests_lists: RequestsLists, 
