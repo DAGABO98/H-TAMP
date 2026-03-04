@@ -11,7 +11,7 @@ from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest, Node
 from HTAMP.planning.state import PlanningState
 
 class SequentialGreedy:
-    def __init__(self, allow_deallocation: bool = True):
+    def __init__(self, allow_deallocation: bool = False):
         self.requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
