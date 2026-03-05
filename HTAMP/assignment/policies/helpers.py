@@ -43,8 +43,8 @@ class PolicyHelpers:
             
         return pickup_deadline
     
-    def _reserve_nodes_for_request(self,
-                                  robot_id: int,
+    @staticmethod
+    def _reserve_nodes_for_request(robot_id: int,
                                   request_id: str,
                                   node_reservation_table: NodeReservationTable,
                                   state: PlanningState):
