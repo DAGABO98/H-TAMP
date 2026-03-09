@@ -4,6 +4,7 @@ from typing import Optional
 import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.base_policy import SequentialGreedyBasePolicy
+from HTAMP.assignment.policies.helpers import PolicyHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -98,6 +99,113 @@ class AdaptiveRollout:
         smallest_pickup_deadline = min(pickup_deadlines) if pickup_deadlines else None
         return smallest_pickup_deadline
     
+    def _deallocate_requests_from_robot(self,
+                                       robot_id: int,
+                                       state: PlanningState,
+                                       motion_planner: MotionPlanner,
+                                       traversal_graph_generator: TraversalGraphGenerator,
+                                       debug: bool) -> dict[int, list[str]]:
+        
+        if not self.assigned_requests[robot_id]:
+            return None
+        
+        largest_assigned_request_index = None
+        for i, request_id in enumerate(self.assigned_requests[robot_id]):
+            request_struct = state.requests[request_id]
+            if request_struct.started:
+                largest_assigned_request_index = i
+                if debug:
+                    print(f"Skipping deallocation of request {request_id} from robot {robot_id} because the request has already started.")
+                continue
+            pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
+                                                                      request=request_struct,
+                                                                      motion_planner=motion_planner,
+                                                                      traversal_graph_generator=traversal_graph_generator)
+            if debug:
+                print(f"Deallocating request {request_id} from robot {robot_id}.")
+            self.requests_queue.add_task(priority=pickup_deadline, 
+                                        task_id=request_id)
+            request_struct.reset_assignment()
+            state.remove_request_from_robot(request_id=request_id, 
+                                            robot_id=robot_id)
+        
+        return largest_assigned_request_index
+    
+    def _determine_if_new_request_triggers_reassignment(self,
+                                        smallest_pickup_deadline: float,
+                                        state: PlanningState,
+                                        motion_planner: MotionPlanner,
+                                        traversal_graph_generator: TraversalGraphGenerator) -> bool:
+        for robot_id in self.assigned_requests.keys():
+            if not self.assigned_requests[robot_id]:
+                continue
+
+            for i, request_id in enumerate(self.assigned_requests[robot_id]):
+                request_struct = state.requests[request_id]
+                if request_struct.started:
+                    continue
+                pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
+                                                                          request=request_struct,
+                                                                          motion_planner=motion_planner,
+                                                                          traversal_graph_generator=traversal_graph_generator)
+                if pickup_deadline > smallest_pickup_deadline:
+                    return True
+        return False
+    
+    def _determine_if_reweighting_triggers_reassignment(self,
+                                        state: PlanningState) -> bool:
+        # TODO: to be implemented once the prediction errors is calculated
+        return False
+
+    def _deallocate_requests(self,
+                             smallest_pickup_deadline: float,
+                             state: PlanningState,
+                             motion_planner: MotionPlanner,
+                             traversal_graph_generator: TraversalGraphGenerator,
+                             debug: bool):
+        new_req_trigger_reassignment = self._determine_if_new_request_triggers_reassignment(smallest_pickup_deadline=smallest_pickup_deadline,
+                                                                                   state=state,
+                                                                                   motion_planner=motion_planner,
+                                                                                   traversal_graph_generator=traversal_graph_generator)
+        
+        if self.allow_reweighting:
+            weighting_trigger_reassignment = self._determine_if_reweighting_triggers_reassignment(state=state,
+                                                                                                  debug=debug)
+            trigger_reassignment = new_req_trigger_reassignment or weighting_trigger_reassignment
+        else:
+            trigger_reassignment = new_req_trigger_reassignment
+
+        if trigger_reassignment:
+            for robot_id in self.assigned_requests.keys():
+                largest_assigned_request_index = self._deallocate_requests_from_robot(robot_id=robot_id,
+                                                                                     state=state,
+                                                                                     motion_planner=motion_planner,
+                                                                                     traversal_graph_generator=traversal_graph_generator,
+                                                                                     debug=debug)
+                if largest_assigned_request_index is not None:
+                    if largest_assigned_request_index < len(self.assigned_requests[robot_id]) - 1:
+                        self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:largest_assigned_request_index+1]
+                        PolicyHelpers._generate_motion_plan_to_depot(robot_id=robot_id,
+                                                         currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                         state=state,
+                                                         motion_planner=motion_planner,
+                                                         traversal_graph_generator=traversal_graph_generator,
+                                                         debug=debug)
+                    else:
+                        continue
+
+                else:
+                    if self.assigned_requests[robot_id]:
+                        self.assigned_requests[robot_id] = []
+                        PolicyHelpers._generate_motion_plan_to_depot(robot_id=robot_id,
+                                                            currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                            state=state,
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator,
+                                                            debug=debug)
+                    else:
+                        continue
+    
     def _extract_scheduled_requests(self,
                                     hour: int,
                                     minute: int,
@@ -164,11 +272,11 @@ class AdaptiveRollout:
         
         if smallest_pickup_deadline:
             if self.allow_deallocation:
-                self._deallocate_requests_with_larger_pickup_deadlines(smallest_pickup_deadline=smallest_pickup_deadline,
-                                                                       state=state,
-                                                                       motion_planner=motion_planner,
-                                                                       traversal_graph_generator=traversal_graph_generator,
-                                                                       debug=debug)
+                self._deallocate_requests(smallest_pickup_deadline=smallest_pickup_deadline,
+                                          state=state,
+                                          motion_planner=motion_planner,
+                                          traversal_graph_generator=traversal_graph_generator,
+                                          debug=debug)
                 
             # TODO: Only add requests to state after copying state for rollout
             scheduled_requests = self._extract_scheduled_requests(hour=hour,
