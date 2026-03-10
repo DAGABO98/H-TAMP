@@ -8,7 +8,6 @@ from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
-from HTAMP.planning import state
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskRequest, TimeSignal
 from HTAMP.planning.state import PlanningState
@@ -36,7 +35,7 @@ class AdaptiveRollout:
         self.initial_time = initial_time
         self.all_task_properties = all_task_properties
         self.fps = fps
-        self.base_policy = SequentialGreedy()
+        self.base_policy = SequentialGreedy(base_policy_use=True)
         self.planning_request_handler = PlanningRequestHandler(start_date=start_date,
                                               end_date=end_date,
                                               date_stamp=date_stamp,
@@ -147,6 +146,7 @@ class AdaptiveRollout:
             trigger_reassignment = new_req_trigger_reassignment
 
         if trigger_reassignment:
+            print("New request triggers reassignment. Deallocating requests from robots...")
             for robot_id in self.assigned_requests.keys():
                 largest_assigned_request_index = self._deallocate_requests_from_robot(robot_id=robot_id,
                                                                                      state=state,
@@ -333,6 +333,8 @@ class AdaptiveRollout:
             planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
 
             if planned_path:
+                if debug:
+                    print(f"Found a valid path for potential assignment of request {request_id} to robot {robot_id}. Simulating future assignments...")
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -382,6 +384,8 @@ class AdaptiveRollout:
 
         while self.requests_queue.heap:
             request_id = self.requests_queue.pop_task()
+            if debug:
+                print(f"Attempting to assign request {request_id} at simulator time {state.simulator_time}")
             PolicyHelpers._remove_request_from_requests_lists(request_id=request_id, 
                                                               requests_lists=current_requests_lists)
             
@@ -397,6 +401,10 @@ class AdaptiveRollout:
 
             robot_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
             if planned_path:
+                if debug:
+                    print(f"1) assigned requests for robot {robot_id}: {self.assigned_requests[robot_id]}")
+                    print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
+                    print(f"1) Planned path for assignment of request {request_id} to robot {robot_id}: {planned_path}")
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -407,24 +415,11 @@ class AdaptiveRollout:
                                                 state=state,
                                                 motion_planner=motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
+                print(f"Assigned request {request_id} to robot {robot_id}")
             else:
                 print(f"Failed to find a valid path for any of the potential assignments of request {request_id}. Request is rejected.")
                 request = state.requests[request_id]
                 request.mark_rejected()
-    
-    def _get_available_robots_after_assignment(self,
-                                               predicted_state: PlanningState) -> list[int]:
-        available_robots = []
-        for robot_id in self.assigned_requests.keys():
-            if self.assigned_requests[robot_id]:
-                last_request_id = self.assigned_requests[robot_id][-1]
-                last_request_struct = predicted_state.requests.get(last_request_id)
-                last_request_planned_time = last_request_struct.planned_time
-                if last_request_planned_time <= predicted_state.simulator_time + 120.0:
-                    available_robots.append(robot_id)
-            else:
-                available_robots.append(robot_id)
-        return available_robots
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
