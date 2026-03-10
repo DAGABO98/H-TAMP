@@ -1,10 +1,12 @@
+from typing import Optional
+
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import NodeReservationTable, TaskRequest, TimeReservation
+from HTAMP.planning.planning_dataclasses import NodeReservationTable, RequestsLists, TaskRequest, TimeReservation
 from HTAMP.planning.state import PlanningState
 
 
@@ -35,6 +37,16 @@ class PolicyHelpers:
                             task_id=request.request_id)
         
         return ordered_time
+    
+    @staticmethod
+    def _remove_request_from_requests_lists(request_id: str, requests_lists: Optional[RequestsLists]):
+        if requests_lists is not None:
+            for data_field in requests_lists.__dataclass_fields__.keys():
+                requests_list = getattr(requests_lists, data_field)
+                for request in requests_list:
+                    if request.request_id == request_id:
+                        requests_list.remove(request)
+                        break
 
     @staticmethod
     def _calculate_pickup_deadline(delivery_robot_profile: RobotProfile,
@@ -315,7 +327,7 @@ class PolicyHelpers:
     def _schedule_request(robot_id: int,
                           request_id: str,
                           currently_assigned_request_ids: list[int],
-                          node_reservation_table: NodeReservationTable,
+                          node_reservation_table: Optional[NodeReservationTable],
                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                           planned_goal_indices: list[int],
                           planned_time_to_reach_last_goal: float,
@@ -342,8 +354,9 @@ class PolicyHelpers:
         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
         motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_id],
                                             robot_profile=state.simulator_config.robot_profiles[robot_id])
-    
-        PolicyHelpers._reserve_nodes_for_request(robot_id=robot_id,
-                                       request_id=request_id,
-                                       node_reservation_table=node_reservation_table,
-                                       state=state)
+        
+        if node_reservation_table is not None:
+            PolicyHelpers._reserve_nodes_for_request(robot_id=robot_id,
+                                        request_id=request_id,
+                                        node_reservation_table=node_reservation_table,
+                                        state=state)
