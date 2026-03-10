@@ -360,3 +360,26 @@ class PolicyHelpers:
                                         request_id=request_id,
                                         node_reservation_table=node_reservation_table,
                                         state=state)
+    
+    @staticmethod
+    def _extract_cost_for_assigned_requests(state: PlanningState) -> list[float]:
+        unmodified_costs = []
+        truncated_costs = []
+        for request_id in state.requests.keys():
+            request_struct = state.requests[request_id]
+            if request_struct.planned_time == -1.0:
+                if request_struct.rejected:
+                    cost = state.simulator_config.horizon
+                    truncated_cost = state.simulator_config.horizon
+                else:
+                    cost = 0
+                    truncated_cost = 0
+            else:
+                cost = request_struct.planned_time - request_struct.scheduled_time
+                truncated_cost = max(cost, 0)
+
+            unmodified_costs.append(cost)
+            truncated_costs.append(truncated_cost)
+        unmodified_cost = sum(unmodified_costs)
+        truncated_cost = sum(truncated_costs)
+        return unmodified_cost, truncated_cost
