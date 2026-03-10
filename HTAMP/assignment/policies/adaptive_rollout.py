@@ -290,6 +290,47 @@ class AdaptiveRollout:
                              requests_lists.medications_requests]:
             requests.extend(request_list)
         state.add_new_requests(requests=requests)
+    
+    def _get_available_robots_after_assignment(self,
+                                               predicted_state: PlanningState) -> list[int]:
+        available_robots = []
+        for robot_id in self.assigned_requests.keys():
+            if self.assigned_requests[robot_id]:
+                last_request_id = self.assigned_requests[robot_id][-1]
+                last_request_struct = predicted_state.requests.get(last_request_id)
+                last_request_planned_time = last_request_struct.planned_time
+                if last_request_planned_time <= predicted_state.simulator_time + 120.0:
+                    available_robots.append(robot_id)
+            else:
+                available_robots.append(robot_id)
+        return available_robots
+
+    def _move_robots_towards_predicted_requests(self,
+                                                predicted_requests_lists: RequestsLists,
+                                                predicted_state: PlanningState,
+                                                motion_planner: MotionPlanner,
+                                                traversal_graph_generator: TraversalGraphGenerator,
+                                                debug: bool):
+        available_robots = self._get_available_robots_after_assignment(predicted_state=predicted_state)
+
+        if available_robots:
+            smallest_ordered_time = self._add_all_predicted_requests_to_queues(predicted_requests_lists=predicted_requests_lists)
+
+            if smallest_ordered_time is not None:
+                while self.predicted_requests_queue.heap and self.predicted_requests_queue.heap[0][0] <= predicted_state.simulator_time + 120.0:
+                    _, request_id = self.predicted_requests_queue.pop_task()
+                    request_struct = predicted_state.requests.get(request_id)
+                    if request_struct is None:
+                        continue
+                    PolicyHelpers._generate_motion_plan_to_request(robot_id=None,
+                                                                    request_id=request_id,
+                                                                    state=predicted_state,
+                                                                    motion_planner=motion_planner,
+                                                                    traversal_graph_generator=traversal_graph_generator,
+                                                                    debug=debug)
+            else:
+                return
+        
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
@@ -304,9 +345,13 @@ class AdaptiveRollout:
         self._extract_assigned_requests_from_state(state=state)
 
         # Add new requests to the appropriate queues
-        smallest_pickup_deadline = self._add_all_requests_to_queues(requests_lists=requests_lists,
+        smallest_pickup_deadline = self._add_all_real_requests_to_queues(requests_lists=requests_lists,
                                                                     motion_planner=motion_planner,
                                                                     traversal_graph_generator=traversal_graph_generator)
+        
+        current_predicted_requests = self._extract_current_predicted_requests(hour=hour, minute=minute)
+        predicted_state = copy.deepcopy(state)
+        self._add_requests_to_state(requests_lists=current_predicted_requests, state=predicted_state)
         
         if smallest_pickup_deadline:
             if self.allow_deallocation:
@@ -326,3 +371,8 @@ class AdaptiveRollout:
                                             look_ahead_minutes=look_ahead_minutes,
                                             debug=debug)
         
+        self._move_robots_towards_predicted_requests(predicted_requests_lists=current_predicted_requests,
+                                                     state=predicted_state,
+                                                     motion_planner=motion_planner,
+                                                     traversal_graph_generator=traversal_graph_generator,
+                                                     debug=debug)
