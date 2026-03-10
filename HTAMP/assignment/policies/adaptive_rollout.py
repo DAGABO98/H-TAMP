@@ -4,11 +4,13 @@ from typing import Optional
 import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.helpers import PolicyHelpers
+from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
+from HTAMP.planning import state
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists, TaskRequest, TimeReservation, TimeSignal
 from HTAMP.planning.state import PlanningState
@@ -25,6 +27,7 @@ class AdaptiveRollout:
                  use_saved_request_data: bool,
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
+                 fps: int,
                  allow_deallocation: bool,
                  allow_reweighting: bool):
         self.requests_queue = TaskQueue()
@@ -34,6 +37,8 @@ class AdaptiveRollout:
         self.date_stamp = date_stamp
         self.initial_time = initial_time
         self.all_task_properties = all_task_properties
+        self.fps = fps
+        self.base_policy = SequentialGreedy()
         self.planning_request_handler = PlanningRequestHandler(start_date=start_date,
                                               end_date=end_date,
                                               date_stamp=date_stamp,
@@ -66,21 +71,6 @@ class AdaptiveRollout:
         
         smallest_pickup_deadline = min(pickup_deadlines) if pickup_deadlines else None
         return smallest_pickup_deadline
-    
-    def _add_all_predicted_requests_to_queues(self,
-                                            predicted_requests_lists: Optional[RequestsLists]):
-        if predicted_requests_lists is None:
-            return None
-        ordered_times = []
-        for data_field in predicted_requests_lists.__dataclass_fields__.keys():
-            requests_list = getattr(predicted_requests_lists, data_field)
-            for request in requests_list:
-                ordered_time = PolicyHelpers._add_request_to_queue_using_ordered_time(request=request,
-                                           task_queue=self.predicted_requests_queue)
-                ordered_times.append(ordered_time)
-        smallest_ordered_time = min(ordered_times) if ordered_times else None
-
-        return smallest_ordered_time
     
     def _deallocate_requests_from_robot(self,
                                        robot_id: int,
@@ -223,60 +213,20 @@ class AdaptiveRollout:
         else:
             return None
     
-    def _extract_current_predicted_requests(self,
-                                            hour: int,
-                                            minute: int) -> RequestsLists:
+    def _extract_predicted_requests(self,
+                                    state: PlanningState,
+                                    hour: int,
+                                    minute: int) -> dict[float, RequestsLists]:
+        current_time = state.simulator_time
         current_predicted_requests = RequestsLists(blood_pressure_requests=[],
                                                   heart_rate_requests=[],
                                                   respiratory_rate_requests=[],
                                                   temperature_requests=[],
                                                   oxygen_saturation_requests=[],
                                                   medications_requests=[]) # TODO: to be implemented once the prediction model is implemented
+        pred_dict = {current_time: current_predicted_requests}
         
-        return current_predicted_requests
-    
-    def _extract_future_predicted_requests(self,
-                                    hour: int,
-                                    minute: int) -> RequestsLists:
-        
-        future_predicted_requests = RequestsLists(blood_pressure_requests=[],
-                                                  heart_rate_requests=[],
-                                                  respiratory_rate_requests=[],
-                                                  temperature_requests=[],
-                                                  oxygen_saturation_requests=[],
-                                                  medications_requests=[]) # TODO: to be implemented once the prediction model is implemented
-        
-        return future_predicted_requests
-        
-    
-    def _get_future_cost_of_assigned_requests(self,
-                                              state: PlanningState,
-                                              motion_planner: MotionPlanner,
-                                              traversal_graph_generator: TraversalGraphGenerator,
-                                              hour: int,
-                                              minute: int,
-                                              look_ahead_minutes: int) -> dict[int, float]:
-        
-        future_scheduled_requests = self._extract_scheduled_requests(hour=hour,
-                                                            minute=minute,
-                                                            look_ahead_minutes=look_ahead_minutes,
-                                                            traversal_graph_generator=traversal_graph_generator)
-        future_predicted_requests = self._extract_future_predicted_requests(hour=hour,
-                                                                            minute=minute)
-        
-    
-    def _assign_requests_to_robots(self,
-                                  state: PlanningState,
-                                  requests_lists: RequestsLists,
-                                  motion_planner: MotionPlanner,
-                                  traversal_graph_generator: TraversalGraphGenerator,
-                                  hour: int,
-                                  minute: int,
-                                  look_ahead_minutes: int,
-                                  debug: bool):
-        current_requests_list = copy.deepcopy(requests_lists)
-        for robot_id in self.assigned_requests.keys():
-            pass
+        return pred_dict
     
     def _add_requests_to_state(self, 
                                requests_lists: RequestsLists, 
@@ -291,6 +241,173 @@ class AdaptiveRollout:
             requests.extend(request_list)
         state.add_new_requests(requests=requests)
     
+    def _simulate_scheduled_and_predicted_assignments(self,
+                                                      current_state: PlanningState,
+                                                      requests_lists: Optional[RequestsLists],
+                                                      predicted_requests_dict: dict[float, RequestsLists],
+                                                      motion_planner: MotionPlanner,
+                                                      traversal_graph_generator: TraversalGraphGenerator,
+                                                      look_ahead_minutes: int):
+        self.base_policy.assign_requests_to_robots(state=current_state,
+                                                requests_lists=requests_lists,
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator,
+                                                debug=False)
+        
+        for i in range(look_ahead_minutes):
+            for second in range(60):
+                current_time = current_state.simulator_time
+                predicted_requests_lists = predicted_requests_dict.get(current_time, None)
+                if predicted_requests_lists:
+                    self._add_requests_to_state(requests_lists=predicted_requests_lists, state=current_state)
+                    self.base_policy.assign_requests_to_robots(state=current_state,
+                                                            requests_lists=predicted_requests_lists,
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator,
+                                                            debug=False)
+                for frame in range(self.fps):
+                    current_state.step(traversal_graph=traversal_graph_generator.traversal_graph)
+    
+    def _simulate_future_assignments(self,
+                                     current_state: PlanningState,
+                                     requests_lists: Optional[RequestsLists],
+                                     motion_planner: MotionPlanner,
+                                     traversal_graph_generator: TraversalGraphGenerator,
+                                     hour: int,
+                                     minute: int,
+                                     look_ahead_minutes: int):
+        
+        predicted_requests_dict = self._extract_predicted_requests(hour=hour, minute=minute)
+        
+        self._simulate_scheduled_and_predicted_assignments(current_state=current_state,
+                                                          requests_lists=requests_lists,
+                                                          predicted_requests_dict=predicted_requests_dict,
+                                                          motion_planner=motion_planner,
+                                                          traversal_graph_generator=traversal_graph_generator,
+                                                          look_ahead_minutes=look_ahead_minutes)
+        
+        future_scheduled_requests_lists = self._extract_scheduled_requests(hour=hour,
+                                                                           minute=minute,
+                                                                           look_ahead_minutes=look_ahead_minutes,
+                                                                           traversal_graph_generator=traversal_graph_generator)
+        
+        self._simulate_scheduled_and_predicted_assignments(current_state=current_state,
+                                                          requests_lists=future_scheduled_requests_lists,
+                                                          predicted_requests_dict=predicted_requests_dict,
+                                                          motion_planner=motion_planner,
+                                                          traversal_graph_generator=traversal_graph_generator,
+                                                          look_ahead_minutes=look_ahead_minutes)
+    
+    def _assign_single_request_to_robot_team(self,
+                                            request_id: str,
+                                            requests_lists: RequestsLists,
+                                            state: PlanningState,
+                                            motion_planner: MotionPlanner,
+                                            traversal_graph_generator: TraversalGraphGenerator,
+                                            hour: int,
+                                            minute: int,
+                                            look_ahead_minutes: int,
+                                            debug: bool):
+        min_path_cost = float('inf')
+        min_path_raw_cost = float('inf')
+        min_planned_path = None
+        min_planned_goal_indices = None
+        min_planned_time_to_reach_last_goal = float('inf')
+        min_robot_id = None
+
+        orig_unmodified_cost, orig_truncated_cost = PolicyHelpers._extract_cost_for_assigned_requests(state=state)
+
+        for robot_id in self.assigned_requests.keys():
+            current_state = copy.deepcopy(state)
+            path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
+                                                                        request_id=request_id,
+                                                                        currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                                        state=current_state,
+                                                                        motion_planner=motion_planner,
+                                                                        traversal_graph_generator=traversal_graph_generator,
+                                                                        debug=debug)
+            planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+
+            if planned_path:
+                PolicyHelpers._schedule_request(robot_id=robot_id,
+                                                request_id=request_id,
+                                                currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                node_reservation_table=None,
+                                                planned_path=planned_path,
+                                                planned_goal_indices=planned_goal_indices,
+                                                planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
+                                                state=current_state,
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
+                
+                self._simulate_future_assignments(current_state=current_state,
+                                                 requests_lists=requests_lists,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator,
+                                                 hour=hour,
+                                                 minute=minute,
+                                                 look_ahead_minutes=look_ahead_minutes)
+                
+                new_unmodified_cost, new_truncated_cost = PolicyHelpers._extract_cost_for_assigned_requests(state=current_state)
+                path_cost = new_truncated_cost - orig_truncated_cost
+                path_raw_cost = new_unmodified_cost - orig_unmodified_cost
+
+                if path_cost < min_path_cost or (path_cost == min_path_cost and path_raw_cost < min_path_raw_cost):
+                    min_path_cost = path_cost
+                    min_path_raw_cost = path_raw_cost
+                    min_planned_path = planned_path
+                    min_planned_goal_indices = planned_goal_indices
+                    min_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
+                    min_robot_id = robot_id
+
+        return min_robot_id, min_planned_path, min_planned_goal_indices, min_planned_time_to_reach_last_goal
+
+    def _assign_requests_to_robots(self,
+                                   requests_lists: Optional[RequestsLists],
+                                  state: PlanningState,
+                                  motion_planner: MotionPlanner,
+                                  traversal_graph_generator: TraversalGraphGenerator,
+                                  hour: int,
+                                  minute: int,
+                                  look_ahead_minutes: int,
+                                  debug: bool):
+        if requests_lists is None:
+            return
+        else:
+            current_requests_lists = copy.deepcopy(requests_lists)
+
+        while self.requests_queue.heap:
+            request_id = self.requests_queue.pop_task()
+            PolicyHelpers._remove_request_from_requests_lists(request_id=request_id, 
+                                                              requests_lists=current_requests_lists)
+            
+            path_results = self._assign_single_request_to_robot_team(request_id=request_id,
+                                                                     requests_lists=current_requests_lists,
+                                                                     state=state,
+                                                                     motion_planner=motion_planner,
+                                                                     traversal_graph_generator=traversal_graph_generator,
+                                                                     hour=hour,
+                                                                     minute=minute,
+                                                                     look_ahead_minutes=look_ahead_minutes,
+                                                                     debug=debug)
+
+            robot_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+            if planned_path:
+                PolicyHelpers._schedule_request(robot_id=robot_id,
+                                                request_id=request_id,
+                                                currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                node_reservation_table=None,
+                                                planned_path=planned_path,
+                                                planned_goal_indices=planned_goal_indices,
+                                                planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
+                                                state=state,
+                                                motion_planner=motion_planner,
+                                                traversal_graph_generator=traversal_graph_generator)
+            else:
+                print(f"Failed to find a valid path for any of the potential assignments of request {request_id}. Request is rejected.")
+                request = state.requests[request_id]
+                request.mark_rejected()
+    
     def _get_available_robots_after_assignment(self,
                                                predicted_state: PlanningState) -> list[int]:
         available_robots = []
@@ -304,33 +421,6 @@ class AdaptiveRollout:
             else:
                 available_robots.append(robot_id)
         return available_robots
-
-    def _move_robots_towards_predicted_requests(self,
-                                                predicted_requests_lists: RequestsLists,
-                                                predicted_state: PlanningState,
-                                                motion_planner: MotionPlanner,
-                                                traversal_graph_generator: TraversalGraphGenerator,
-                                                debug: bool):
-        available_robots = self._get_available_robots_after_assignment(predicted_state=predicted_state)
-
-        if available_robots:
-            smallest_ordered_time = self._add_all_predicted_requests_to_queues(predicted_requests_lists=predicted_requests_lists)
-
-            if smallest_ordered_time is not None:
-                while self.predicted_requests_queue.heap and self.predicted_requests_queue.heap[0][0] <= predicted_state.simulator_time + 120.0:
-                    _, request_id = self.predicted_requests_queue.pop_task()
-                    request_struct = predicted_state.requests.get(request_id)
-                    if request_struct is None:
-                        continue
-                    PolicyHelpers._generate_motion_plan_to_request(robot_id=None,
-                                                                    request_id=request_id,
-                                                                    state=predicted_state,
-                                                                    motion_planner=motion_planner,
-                                                                    traversal_graph_generator=traversal_graph_generator,
-                                                                    debug=debug)
-            else:
-                return
-        
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
@@ -349,10 +439,6 @@ class AdaptiveRollout:
                                                                     motion_planner=motion_planner,
                                                                     traversal_graph_generator=traversal_graph_generator)
         
-        current_predicted_requests = self._extract_current_predicted_requests(hour=hour, minute=minute)
-        predicted_state = copy.deepcopy(state)
-        self._add_requests_to_state(requests_lists=current_predicted_requests, state=predicted_state)
-        
         if smallest_pickup_deadline:
             if self.allow_deallocation:
                 self._deallocate_requests(smallest_pickup_deadline=smallest_pickup_deadline,
@@ -363,16 +449,10 @@ class AdaptiveRollout:
 
             # Assignment logic for robots
             self._assign_requests_to_robots(state=state,
-                                            current_requests_lists=requests_lists,
+                                            requests_lists=requests_lists,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
                                             hour=hour,
                                             minute=minute,
                                             look_ahead_minutes=look_ahead_minutes,
                                             debug=debug)
-        
-        self._move_robots_towards_predicted_requests(predicted_requests_lists=current_predicted_requests,
-                                                     state=predicted_state,
-                                                     motion_planner=motion_planner,
-                                                     traversal_graph_generator=traversal_graph_generator,
-                                                     debug=debug)
