@@ -316,8 +316,14 @@ class AdaptiveRollout:
         min_robot_id = None
 
         orig_unmodified_cost, orig_truncated_cost = PolicyHelpers._extract_cost_for_assigned_requests(state=state)
+        request_struct = state.requests[request_id]
+        if request_struct.request_type == "medication":
+            robot_type = "delivery"
+        else:
+            robot_type = "monitoring"
+        robot_ids = state.get_robots_of_type(robot_type=robot_type)
 
-        for robot_id in self.assigned_requests.keys():
+        for robot_id in robot_ids:
             current_state = copy.deepcopy(state)
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
