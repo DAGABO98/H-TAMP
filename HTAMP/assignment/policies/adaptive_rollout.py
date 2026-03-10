@@ -3,7 +3,6 @@ from typing import Optional
 
 import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
-from HTAMP.assignment.policies.base_policy import SequentialGreedyBasePolicy
 from HTAMP.assignment.policies.helpers import PolicyHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.loc_dataclasses import TimeInterval
@@ -29,10 +28,9 @@ class AdaptiveRollout:
                  allow_deallocation: bool,
                  allow_reweighting: bool):
         self.requests_queue = TaskQueue()
+        self.predicted_requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
-        self.node_reservation_table = NodeReservationTable(reservations={},
-                                                          robot_node_dict={})
         self.date_stamp = date_stamp
         self.initial_time = initial_time
         self.all_task_properties = all_task_properties
@@ -50,37 +48,7 @@ class AdaptiveRollout:
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
     
-    def _calculate_pickup_deadline(self, 
-                                   request: TaskRequest,
-                                   motion_planner: MotionPlanner,
-                                   traversal_graph_generator: TraversalGraphGenerator) -> float:
-        if request.request_type != "medication":
-            pickup_deadline = request.time_for_service - request.wait_times_at_goals_seconds[0]
-        else:
-            start_node = traversal_graph_generator.traversal_graph.nodes_dict[request.goal_nodes[0]]
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[request.goal_nodes[1]]
-            travel_time_to_pickup = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                                     goal_traversal_node=goal_node,
-                                                                     robot_profile=self.dummy_delivery_robot_profile)
-            pickup_deadline = request.time_for_service - travel_time_to_pickup - request.wait_times_at_goals_seconds[0] - request.wait_times_at_goals_seconds[1]
-            
-        return pickup_deadline
-    
-    def _add_request_to_queue(self, 
-                             request: TaskRequest, 
-                             task_queue: TaskQueue,
-                             motion_planner: MotionPlanner,
-                             traversal_graph_generator: TraversalGraphGenerator):
-        pickup_deadline = self._calculate_pickup_deadline(request=request,
-                                                          motion_planner=motion_planner,
-                                                          traversal_graph_generator=traversal_graph_generator)
-
-        task_queue.add_task(priority=pickup_deadline, 
-                            task_id=request.request_id)
-        
-        return pickup_deadline
-    
-    def _add_all_requests_to_queues(self, 
+    def _add_all_real_requests_to_queues(self, 
                                     requests_lists: Optional[RequestsLists], 
                                     motion_planner: MotionPlanner, 
                                     traversal_graph_generator: TraversalGraphGenerator):
@@ -90,7 +58,7 @@ class AdaptiveRollout:
         for data_field in requests_lists.__dataclass_fields__.keys():
             requests_list = getattr(requests_lists, data_field)
             for request in requests_list:
-                pickup_deadline = self._add_request_to_queue(request=request,
+                pickup_deadline = PolicyHelpers._add_request_to_queue_using_pickup_deadline(request=request,
                                            task_queue=self.requests_queue,
                                            motion_planner=motion_planner,
                                            traversal_graph_generator=traversal_graph_generator)
@@ -98,6 +66,21 @@ class AdaptiveRollout:
         
         smallest_pickup_deadline = min(pickup_deadlines) if pickup_deadlines else None
         return smallest_pickup_deadline
+    
+    def _add_all_predicted_requests_to_queues(self,
+                                            predicted_requests_lists: Optional[RequestsLists]):
+        if predicted_requests_lists is None:
+            return None
+        ordered_times = []
+        for data_field in predicted_requests_lists.__dataclass_fields__.keys():
+            requests_list = getattr(predicted_requests_lists, data_field)
+            for request in requests_list:
+                ordered_time = PolicyHelpers._add_request_to_queue_using_ordered_time(request=request,
+                                           task_queue=self.predicted_requests_queue)
+                ordered_times.append(ordered_time)
+        smallest_ordered_time = min(ordered_times) if ordered_times else None
+
+        return smallest_ordered_time
     
     def _deallocate_requests_from_robot(self,
                                        robot_id: int,
@@ -240,6 +223,61 @@ class AdaptiveRollout:
         else:
             return None
     
+    def _extract_current_predicted_requests(self,
+                                            hour: int,
+                                            minute: int) -> RequestsLists:
+        current_predicted_requests = RequestsLists(blood_pressure_requests=[],
+                                                  heart_rate_requests=[],
+                                                  respiratory_rate_requests=[],
+                                                  temperature_requests=[],
+                                                  oxygen_saturation_requests=[],
+                                                  medications_requests=[]) # TODO: to be implemented once the prediction model is implemented
+        
+        return current_predicted_requests
+    
+    def _extract_future_predicted_requests(self,
+                                    hour: int,
+                                    minute: int) -> RequestsLists:
+        
+        future_predicted_requests = RequestsLists(blood_pressure_requests=[],
+                                                  heart_rate_requests=[],
+                                                  respiratory_rate_requests=[],
+                                                  temperature_requests=[],
+                                                  oxygen_saturation_requests=[],
+                                                  medications_requests=[]) # TODO: to be implemented once the prediction model is implemented
+        
+        return future_predicted_requests
+        
+    
+    def _get_future_cost_of_assigned_requests(self,
+                                              state: PlanningState,
+                                              motion_planner: MotionPlanner,
+                                              traversal_graph_generator: TraversalGraphGenerator,
+                                              hour: int,
+                                              minute: int,
+                                              look_ahead_minutes: int) -> dict[int, float]:
+        
+        future_scheduled_requests = self._extract_scheduled_requests(hour=hour,
+                                                            minute=minute,
+                                                            look_ahead_minutes=look_ahead_minutes,
+                                                            traversal_graph_generator=traversal_graph_generator)
+        future_predicted_requests = self._extract_future_predicted_requests(hour=hour,
+                                                                            minute=minute)
+        
+    
+    def _assign_requests_to_robots(self,
+                                  state: PlanningState,
+                                  requests_lists: RequestsLists,
+                                  motion_planner: MotionPlanner,
+                                  traversal_graph_generator: TraversalGraphGenerator,
+                                  hour: int,
+                                  minute: int,
+                                  look_ahead_minutes: int,
+                                  debug: bool):
+        current_requests_list = copy.deepcopy(requests_lists)
+        for robot_id in self.assigned_requests.keys():
+            pass
+    
     def _add_requests_to_state(self, 
                                requests_lists: RequestsLists, 
                                state: PlanningState):
@@ -277,17 +315,14 @@ class AdaptiveRollout:
                                           motion_planner=motion_planner,
                                           traversal_graph_generator=traversal_graph_generator,
                                           debug=debug)
-                
-            # TODO: Only add requests to state after copying state for rollout
-            scheduled_requests = self._extract_scheduled_requests(hour=hour,
-                                                                minute=minute,
-                                                                look_ahead_minutes=look_ahead_minutes,
-                                                                traversal_graph_generator=traversal_graph_generator)
-            
-            self._extract_node_reservations_from_state(state=state)
 
             # Assignment logic for robots
             self._assign_requests_to_robots(state=state,
+                                            current_requests_lists=requests_lists,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
+                                            hour=hour,
+                                            minute=minute,
+                                            look_ahead_minutes=look_ahead_minutes,
                                             debug=debug)
+        
