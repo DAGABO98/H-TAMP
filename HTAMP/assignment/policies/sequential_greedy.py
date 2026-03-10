@@ -1,5 +1,4 @@
 import copy
-import math
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.helpers import PolicyHelpers
@@ -8,17 +7,18 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest, NodeReservationTable, TimeReservation
+from HTAMP.planning.planning_dataclasses import RequestsLists, NodeReservationTable, TimeReservation
 from HTAMP.planning.state import PlanningState
 
 class SequentialGreedy:
-    def __init__(self, allow_deallocation: bool = False):
+    def __init__(self, allow_deallocation: bool = False, base_policy_use: bool = False):
         self.requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
         self.allow_deallocation = allow_deallocation
+        self.base_policy_use = base_policy_use
 
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -250,7 +250,8 @@ class SequentialGreedy:
                                                                                       motion_planner=motion_planner,
                                                                                       traversal_graph_generator=traversal_graph_generator)
             if len(potential_assignments) == 0:
-                print(f"No potential assignments found for request {next_request_id}. Request is rejected.")
+                if not self.base_policy_use:
+                    print(f"No potential assignments found for request {next_request_id}. Request is rejected.")
                 request = state.requests[next_request_id]
                 request.mark_rejected()
                 continue
@@ -281,10 +282,12 @@ class SequentialGreedy:
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator)
                     
-                    print(f"Assigned request {next_request_id} to robot {robot_id}")
+                    if not self.base_policy_use:
+                        print(f"Assigned request {next_request_id} to robot {robot_id}")
                     
                 else:
-                    print(f"Failed to find a valid path for the only potential assignment of request {next_request_id} to robot {robot_id}. Request is rejected.")
+                    if not self.base_policy_use:
+                        print(f"Failed to find a valid path for the only potential assignment of request {next_request_id} to robot {robot_id}. Request is rejected.")
                     request_struct = state.requests[next_request_id]
                     request_struct.mark_rejected()
                 continue
@@ -314,9 +317,11 @@ class SequentialGreedy:
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator)
                     
-                    print(f"Assigned request {next_request_id} to robot {min_robot_id}")
+                    if not self.base_policy_use:
+                        print(f"Assigned request {next_request_id} to robot {min_robot_id}")
                 else:
-                    print(f"Failed to find a valid path for any of the potential assignments of request {next_request_id}. Request is rejected.")
+                    if not self.base_policy_use:
+                        print(f"Failed to find a valid path for any of the potential assignments of request {next_request_id}. Request is rejected.")
                     request = state.requests[next_request_id]
                     request.mark_rejected()
 
