@@ -34,7 +34,7 @@ class SequentialGreedy:
         for data_field in requests_lists.__dataclass_fields__.keys():
             requests_list = getattr(requests_lists, data_field)
             for request in requests_list:
-                pickup_deadline = PolicyHelpers._add_request_to_queue(request=request,
+                pickup_deadline = PolicyHelpers._add_request_to_queue_using_pickup_deadline(request=request,
                                            task_queue=self.requests_queue,
                                            delivery_robot_profile=self.dummy_delivery_robot_profile,
                                            motion_planner=motion_planner,

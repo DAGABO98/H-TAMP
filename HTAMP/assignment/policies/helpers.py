@@ -11,7 +11,7 @@ from HTAMP.planning.state import PlanningState
 class PolicyHelpers:
 
     @staticmethod
-    def _add_request_to_queue(request: TaskRequest, 
+    def _add_request_to_queue_using_pickup_deadline(request: TaskRequest, 
                              task_queue: TaskQueue,
                              delivery_robot_profile: RobotProfile,
                              motion_planner: MotionPlanner,
@@ -25,6 +25,16 @@ class PolicyHelpers:
                             task_id=request.request_id)
         
         return pickup_deadline
+    
+    @staticmethod
+    def _add_request_to_queue_using_ordered_time(request: TaskRequest, 
+                             task_queue: TaskQueue):
+        ordered_time = request.ordered_time
+
+        task_queue.add_task(priority=ordered_time, 
+                            task_id=request.request_id)
+        
+        return ordered_time
 
     @staticmethod
     def _calculate_pickup_deadline(delivery_robot_profile: RobotProfile,
