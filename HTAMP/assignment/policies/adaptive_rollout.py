@@ -207,8 +207,23 @@ class AdaptiveRollout:
             robot_type = "monitoring"
         robot_ids = state.get_robots_of_type(robot_type=robot_type)
 
+        future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(date_stamp=self.date_stamp,
+                                                                                    hour=hour,
+                                                                                    minute=minute,
+                                                                                    look_ahead_minutes=look_ahead_minutes,
+                                                                                    planning_request_handler=self.planning_request_handler,
+                                                                                    initial_time=self.initial_time,
+                                                                                    all_task_properties=self.all_task_properties,
+                                                                                    traversal_graph_generator=traversal_graph_generator)
+        
+        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=current_state, 
+                                                                   hour=hour,
+                                                                   minute=minute)
+
         for robot_id in robot_ids:
             current_state = copy.deepcopy(state)
+            RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
+                                             state=current_state)
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
                                                                         currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -235,15 +250,11 @@ class AdaptiveRollout:
                 RolloutHelpers._simulate_future_assignments(base_policy=self.base_policy,
                                                            current_state=current_state,
                                                            requests_lists=requests_lists,
+                                                           future_scheduled_requests_lists=future_scheduled_requests_lists,
+                                                           predicted_requests_dict=predicted_requests_dict,
                                                            motion_planner=motion_planner,
                                                            traversal_graph_generator=traversal_graph_generator,
-                                                           date_stamp=self.date_stamp,
-                                                           hour=hour,
-                                                           minute=minute,
                                                            look_ahead_minutes=look_ahead_minutes,
-                                                           planning_request_handler=self.planning_request_handler,
-                                                           initial_time=self.initial_time,
-                                                           all_task_properties=self.all_task_properties,
                                                            fps=self.fps)
                 
                 new_unmodified_cost, new_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=current_state)

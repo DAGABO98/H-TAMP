@@ -147,20 +147,12 @@ class RolloutHelpers:
     def _simulate_future_assignments(base_policy: SequentialGreedy,
                                      current_state: PlanningState,
                                      requests_lists: Optional[RequestsLists],
+                                     future_scheduled_requests_lists: Optional[RequestsLists],
+                                     predicted_requests_dict: dict[float, RequestsLists],
                                      motion_planner: MotionPlanner,
                                      traversal_graph_generator: TraversalGraphGenerator,
-                                     date_stamp: pd.Timestamp,
-                                     hour: int,
-                                     minute: int,
                                      look_ahead_minutes: int,
-                                     planning_request_handler: PlanningRequestHandler,
-                                     initial_time: pd.Timestamp,
-                                     all_task_properties: AllTaskProperties,
                                      fps: int):
-        
-        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=current_state, 
-                                                                   hour=hour,
-                                                                   minute=minute)
         
         RolloutHelpers._simulate_scheduled_and_predicted_assignments(base_policy=base_policy,
                                                                     current_state=current_state,
@@ -170,18 +162,6 @@ class RolloutHelpers:
                                                                     traversal_graph_generator=traversal_graph_generator,
                                                                     look_ahead_minutes=look_ahead_minutes,
                                                                     fps=fps)
-        
-        future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(date_stamp=date_stamp,
-                                                                                    hour=hour,
-                                                                                    minute=minute,
-                                                                                    look_ahead_minutes=look_ahead_minutes,
-                                                                                    planning_request_handler=planning_request_handler,
-                                                                                    initial_time=initial_time,
-                                                                                    all_task_properties=all_task_properties,
-                                                                                    traversal_graph_generator=traversal_graph_generator)
-        
-        RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
-                                             state=current_state)
         
         RolloutHelpers._simulate_scheduled_and_predicted_assignments(base_policy=base_policy,
                                                                     current_state=current_state,
