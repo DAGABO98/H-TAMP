@@ -448,20 +448,23 @@ class PlanningRequestHandler(GlobalRequestHandler):
 
         return daily_requests_dfs
     
-    def _extract_requests_df_for_time_signal(self, 
-                                         df: pd.DataFrame, 
-                                         time_signal: TimeSignal, 
-                                         scheduled_time_col: str, 
+    def _extract_requests_df_for_time_signal(self,
+                                         df: pd.DataFrame,
+                                         time_signal: TimeSignal,
+                                         scheduled_time_col: str,
                                          ordered_time_col: str,
                                          lookahead_minutes: int) -> pd.DataFrame:
-        next_hour_time_stamp = time_signal.time_stamp + pd.Timedelta(minutes=lookahead_minutes)
-        mask = (df[scheduled_time_col] >= time_signal.time_stamp) & \
-               (df[scheduled_time_col] < next_hour_time_stamp) & \
-               (df[ordered_time_col] <= time_signal.time_stamp)
-        extracted_requests = df[mask].copy()
-        diff_mask = (df[scheduled_time_col] - df[ordered_time_col]) >= pd.Timedelta(minutes=20)
-        extracted_requests = extracted_requests[diff_mask]
-        return extracted_requests
+        next_ts = time_signal.time_stamp + pd.Timedelta(minutes=lookahead_minutes)
+
+        mask_time = (
+            (df[scheduled_time_col] >= time_signal.time_stamp) &
+            (df[scheduled_time_col] < next_ts) &
+            (df[ordered_time_col] <= time_signal.time_stamp)
+        )
+
+        mask_diff = (df[scheduled_time_col] - df[ordered_time_col]) >= pd.Timedelta(minutes=20)
+
+        return df.loc[mask_time & mask_diff].copy()
     
     def _convert_df_into_requests_list(self, 
                                        df: pd.DataFrame, 
