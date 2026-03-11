@@ -20,8 +20,8 @@ BASE = [
     "--use_saved_data",
     "--use_saved_request_data",
     "--save_results_csv",
-    "--hour_start", "0",
-    "--hour_end", "24",
+    "--hour_start", "8",
+    "--hour_end", "9",
 ]
 
 LOG_ROOT = "results/policies/logs"
@@ -54,6 +54,7 @@ class PolicySpec:
     alpha: Optional[float] = None
     allow_deallocation: bool = False
     allow_reweighting: bool = False
+    allow_premptive_moves: bool = False
     extra_args: tuple[str, ...] = ()  # any extra CLI args you want to add
 
 
@@ -67,11 +68,12 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("d_tpts", mode=2, alpha=0.2),
 
     PolicySpec("sequential_greedy", mode=4),
-    PolicySpec("vanilla_rollout", mode=5),
-    PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=True),
-    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=True, allow_reweighting=False),
-    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=True),
-    PolicySpec("adaptive_rollout", mode=9, allow_deallocation=False, allow_reweighting=False),
+    PolicySpec("vanilla_rollout", mode=5, allow_premptive_moves=True),
+    PolicySpec("vanilla_rollout", mode=6, allow_premptive_moves=False),
+    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=True, allow_reweighting=True),
+    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=True, allow_reweighting=False),
+    PolicySpec("adaptive_rollout", mode=9, allow_deallocation=False, allow_reweighting=True),
+    PolicySpec("adaptive_rollout", mode=10, allow_deallocation=False, allow_reweighting=False),
 ]
 
 
@@ -104,16 +106,24 @@ def policy_run_tag(p: PolicySpec) -> str:
     tag = f"{p.policy_name}"
     if p.alpha is not None:
         tag += f"_alpha{str(p.alpha)}"
+
     if p.allow_deallocation:
         tag += "_ropt"
     else:
-        if p.mode in [6, 7, 8, 9]:  # Only add nopt tag for adaptive rollout variants
+        if p.mode in [7, 8, 9, 10]:  # Only add nopt tag for adaptive rollout variants
             tag += "_nopt"
+
     if p.allow_reweighting:
         tag += "_rwt"
     else:
-        if p.mode in [6, 7, 8, 9]:  # Only add norwt tag for adaptive rollout variants
+        if p.mode in [7, 8, 9, 10]:  # Only add norwt tag for adaptive rollout variants
             tag += "_norwt"
+    
+    if p.allow_premptive_moves:
+        tag += "_prempt"
+    else:
+        if p.mode in [5, 6]:  # Only add noprempt tag for vanilla rollout variants
+            tag += "_noprempt"
     return tag
 
 

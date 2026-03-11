@@ -134,10 +134,11 @@ class AssignmentEvaluator:
             3: IdleTaskPrediction,
             4: SequentialGreedy,
             5: VanillaRollout,
-            6: AdaptiveRollout,
+            6: VanillaRollout,
             7: AdaptiveRollout,
             8: AdaptiveRollout,
-            9: AdaptiveRollout
+            9: AdaptiveRollout,
+            10: AdaptiveRollout
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
@@ -147,37 +148,46 @@ class AssignmentEvaluator:
         if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
             policy = policy_dict[mode](alpha=alpha)
             print(f"Initialized policy with alpha: {alpha}")
-        elif mode == 5:
+        elif mode in [5, 6]:
+            if mode == 5:
+                allow_premptive_moves = True
+            else:
+                allow_premptive_moves = False
             policy = policy_dict[mode](start_date=self.start_date, 
                                        end_date=self.end_date,
-                                       floor_number=self.floor_number,
-                                       annotated_data_files=self.annotated_data_files,
-                                       request_dir=self.args.request_dir,
-                                       use_saved_request_data=self.args.use_saved_request_data,
-                                       initial_time=self.simulator_config.initial_time,
-                                       all_task_properties=self.all_task_properties)
-            print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
-        elif mode in [6, 7, 8, 9]:
-            if mode == 6:
-                allow_deallocation = True
-                allow_reweighting = True
-            elif mode == 7:
-                allow_deallocation = True
-                allow_reweighting = False
-            elif mode == 8:
-                allow_deallocation = False
-                allow_reweighting = True
-            else:  # mode == 9
-                allow_deallocation = False
-                allow_reweighting = False
-            policy = policy_dict[mode](start_date=self.start_date, 
-                                       end_date=self.end_date,
+                                       date_stamp=self.date_stamp.time_stamp,
                                        floor_number=self.floor_number,
                                        annotated_data_files=self.annotated_data_files,
                                        request_dir=self.args.request_dir,
                                        use_saved_request_data=self.args.use_saved_request_data,
                                        initial_time=self.simulator_config.initial_time,
                                        all_task_properties=self.all_task_properties,
+                                       fps=self.simulator_config.fps,
+                                       allow_premptive_moves=allow_premptive_moves)
+            print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
+        elif mode in [7, 8, 9, 10]:
+            if mode == 7:
+                allow_deallocation = True
+                allow_reweighting = True
+            elif mode == 8:
+                allow_deallocation = True
+                allow_reweighting = False
+            elif mode == 9:
+                allow_deallocation = False
+                allow_reweighting = True
+            else:  # mode == 10
+                allow_deallocation = False
+                allow_reweighting = False
+            policy = policy_dict[mode](start_date=self.start_date, 
+                                       end_date=self.end_date,
+                                       date_stamp=self.date_stamp.time_stamp,
+                                       floor_number=self.floor_number,
+                                       annotated_data_files=self.annotated_data_files,
+                                       request_dir=self.args.request_dir,
+                                       use_saved_request_data=self.args.use_saved_request_data,
+                                       initial_time=self.simulator_config.initial_time,
+                                       all_task_properties=self.all_task_properties,
+                                       fps=self.simulator_config.fps,
                                        allow_deallocation=allow_deallocation,
                                        allow_reweighting=allow_reweighting)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
@@ -273,7 +283,7 @@ class AssignmentEvaluator:
                                    look_ahead_minutes: int,
                                    requests_lists: Optional[RequestsLists] = None, 
                                    debug: bool = False):
-        if self.args.mode in [5, 6]:
+        if self.args.mode in [5, 6, 7, 8, 9, 10]:
             self.policy.assign_requests_to_robots(state=self.state,
                                               requests_lists=requests_lists,
                                               motion_planner=self.motion_planner,
