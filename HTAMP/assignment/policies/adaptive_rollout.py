@@ -222,13 +222,14 @@ class AdaptiveRollout:
 
         for robot_id in robot_ids:
             current_state = copy.deepcopy(state)
+            current_motion_planner = motion_planner.fork_with_reservations()
             RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
                                              state=current_state)
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
                                                                         currently_assigned_request_ids=self.assigned_requests[robot_id],
                                                                         state=current_state,
-                                                                        motion_planner=motion_planner,
+                                                                        motion_planner=current_motion_planner,
                                                                         traversal_graph_generator=traversal_graph_generator,
                                                                         debug=debug)
             planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
@@ -244,7 +245,7 @@ class AdaptiveRollout:
                                                 planned_goal_indices=planned_goal_indices,
                                                 planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
                                                 state=current_state,
-                                                motion_planner=motion_planner,
+                                                motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
                 
                 RolloutHelpers._simulate_future_assignments(base_policy=self.base_policy,
@@ -252,7 +253,7 @@ class AdaptiveRollout:
                                                            requests_lists=requests_lists,
                                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                            predicted_requests_dict=predicted_requests_dict,
-                                                           motion_planner=motion_planner,
+                                                           motion_planner=current_motion_planner,
                                                            traversal_graph_generator=traversal_graph_generator,
                                                            look_ahead_minutes=look_ahead_minutes,
                                                            fps=self.fps)

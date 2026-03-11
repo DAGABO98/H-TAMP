@@ -347,6 +347,12 @@ class MotionPlanner:
         self.planner = SIPPwRT(grid=grid, 
                                reservation_table=self.reservation_table,
                                weight_factor=weight_factor)
+    
+    def fork_with_reservations(self) -> "MotionPlanner":
+        mp = MotionPlanner(grid=self.grid, weight_factor=self.planner.weight_factor)
+        mp.reservation_table = self.reservation_table.copy()
+        mp.planner.reservation_table = mp.reservation_table
+        return mp
 
     def obtain_path_for_agent(self,
                               start_traversal_node: TraversalNode,

@@ -102,6 +102,13 @@ class CellReservationTable:
         if current_time < horizon:
             safe_intervals.append(TimeReservation(TimeInterval(current_time, horizon), robot_id=robot_id))
         return safe_intervals
+    
+    def copy(self) -> "CellReservationTable":
+        # Copy dicts and list containers so mutations don't leak across copies.
+        return CellReservationTable(
+            reservations={cell: list(res_list) for cell, res_list in self.reservations.items()},
+            robot_cell_dict={rid: list(cells) for rid, cells in self.robot_cell_dict.items()},
+        )
 
 @dataclass
 class NodeReservationTable:
