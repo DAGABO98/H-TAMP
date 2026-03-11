@@ -285,7 +285,7 @@ class PlanningState:
             + self.simulator_config.robot_profiles[robot_id].speed * time_step
         return traversed_distance
     
-    def _check_if_final_objective_is_reached(self, robot_id: int) -> None:
+    def _check_if_final_objective_is_reached(self, robot_id: int, planning_flag: bool) -> None:
         path = self.robot_paths[robot_id]
         current_index = self.robots_current_node_index[robot_id]
         if current_index < len(path):
@@ -298,16 +298,22 @@ class PlanningState:
                     goal_node_label = current_request.goal_nodes[current_request.completed_goals]
                     if current_node.label == goal_node_label:
                         current_request.completed_goals += 1
-                        print(f"Robot {robot_id} reached goal {goal_node_label} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} for task {current_request_id}")
+                        if not planning_flag:
+                            print(f"Robot {robot_id} reached goal {goal_node_label} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} for task {current_request_id}")
                         if current_request.completed_goals >= len(current_request.goal_nodes):
                             assert math.isclose(time_interval.end, self.simulator_time + self.current_wait_times[robot_id]), \
                                 f"Time mismatch at goal for robot {robot_id}: expected {time_interval.end}, got {self.simulator_time + self.current_wait_times[robot_id]}"
                             completed_request_id = self.assigned_requests[robot_id].pop(0)
                             completed_request = self.requests[completed_request_id]
                             completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id])
-                            print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
+                            if not planning_flag:
+                                print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
 
-    def _update_robot_location(self, robot_id: int, traversal_graph: TraversalGraph, time_step: float) -> None:
+    def _update_robot_location(self, 
+                               robot_id: int, 
+                               traversal_graph: TraversalGraph, 
+                               time_step: float,
+                               planning_flag: bool) -> None:
         if self.robots_next_nodes[robot_id] is None:
             self.robots_positions[robot_id] = self.robots_current_nodes[robot_id].position
             self.robots_next_time[robot_id] = copy.deepcopy(self.simulator_time) + self.simulator_config.time_step
@@ -321,7 +327,7 @@ class PlanningState:
             return
         elif self.current_wait_times[robot_id] > 0.0:
             time_remaining = time_step - self.current_wait_times[robot_id]
-            self._check_if_final_objective_is_reached(robot_id)
+            self._check_if_final_objective_is_reached(robot_id, planning_flag)
             self.current_wait_times[robot_id] = 0.0
             traversed_distance = self._calculate_traversed_distance(robot_id, time_remaining)
         else:
@@ -342,7 +348,10 @@ class PlanningState:
             remaining_distance = traversed_distance - edge_length
             self._move_to_next_node(robot_id, traversal_graph)
             remaining_time = remaining_distance / self.simulator_config.robot_profiles[robot_id].speed
-            self._update_robot_location(robot_id, traversal_graph, remaining_time)
+            self._update_robot_location(robot_id=robot_id, 
+                                        traversal_graph=traversal_graph, 
+                                        time_step=remaining_time, 
+                                        planning_flag=planning_flag)
     
     def get_available_robots(self, robot_type: str) -> list[int]:
         available_robots = []
@@ -361,9 +370,14 @@ class PlanningState:
                 robots_of_type.append(profile.robot_id)
         return robots_of_type
 
-    def step(self, traversal_graph: TraversalGraph) -> None:
+    def step(self, 
+             traversal_graph: TraversalGraph,
+             planning_flag: bool = False) -> None:
         for robot_id in self.robots_positions:
-            self._update_robot_location(robot_id, traversal_graph, self.simulator_config.time_step)
+            self._update_robot_location(robot_id=robot_id, 
+                                        traversal_graph=traversal_graph, 
+                                        time_step=self.simulator_config.time_step, 
+                                        planning_flag=planning_flag)
         self.simulator_time += self.simulator_config.time_step
     
     def get_completed_requests(self) -> dict[str, list[TaskRequest]]:
