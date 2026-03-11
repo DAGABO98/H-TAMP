@@ -140,7 +140,8 @@ class RolloutHelpers:
                                                             traversal_graph_generator=traversal_graph_generator,
                                                             debug=False)
                 for frame in range(fps):
-                    current_state.step(traversal_graph=traversal_graph_generator.traversal_graph)
+                    current_state.step(traversal_graph=traversal_graph_generator.traversal_graph,
+                                       planning_flag=True)
     
     @staticmethod
     def _simulate_future_assignments(base_policy: SequentialGreedy,
@@ -178,6 +179,9 @@ class RolloutHelpers:
                                                                                     initial_time=initial_time,
                                                                                     all_task_properties=all_task_properties,
                                                                                     traversal_graph_generator=traversal_graph_generator)
+        
+        RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
+                                             state=current_state)
         
         RolloutHelpers._simulate_scheduled_and_predicted_assignments(base_policy=base_policy,
                                                                     current_state=current_state,
