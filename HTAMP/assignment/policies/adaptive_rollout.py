@@ -216,12 +216,12 @@ class AdaptiveRollout:
                                                                                     all_task_properties=self.all_task_properties,
                                                                                     traversal_graph_generator=traversal_graph_generator)
         
-        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=current_state, 
+        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=state, 
                                                                    hour=hour,
                                                                    minute=minute)
 
         for robot_id in robot_ids:
-            current_state = copy.deepcopy(state)
+            current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
             RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
                                              state=current_state)

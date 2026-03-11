@@ -37,12 +37,12 @@ class PlanningState:
     def __init__(self, simulator_config: SimulatorConfig):
         self.simulator_config = simulator_config
         self.simulator_time = 0.0
-        self.robot_depots = copy.deepcopy(simulator_config.initial_nodes)
-        self.robots_positions = copy.deepcopy(simulator_config.initial_robot_positions)
+        self.robot_depots = dict(simulator_config.initial_nodes)
+        self.robots_positions = dict(simulator_config.initial_robot_positions)
         self.robots_current_time: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
         self.robots_next_time: dict[int, float | None] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
         self.robots_current_node_index: dict[int, int] = {robot_id: 0 for robot_id in simulator_config.initial_robot_positions.keys()}
-        self.robots_current_nodes: dict[int, TraversalNode] = copy.deepcopy(simulator_config.initial_nodes)
+        self.robots_current_nodes: dict[int, TraversalNode] = dict(simulator_config.initial_nodes)
         self.robots_next_nodes: dict[int, TraversalNode | None] = {robot_id: None for robot_id in simulator_config.initial_robot_positions.keys()}
         self.edge_samples: dict[int, np.ndarray] = {robot_id: np.array([]) for robot_id in simulator_config.initial_robot_positions.keys()}
         self.edge_lengths: dict[int, float] = {robot_id: 0.0 for robot_id in simulator_config.initial_robot_positions.keys()}
@@ -380,6 +380,49 @@ class PlanningState:
                                         time_step=self.simulator_config.time_step, 
                                         planning_flag=planning_flag)
         self.simulator_time += self.simulator_config.time_step
+    
+    def fork(self) -> "PlanningState":
+        # Create instance without rerunning __init__ deepcopies
+        new = self.__class__.__new__(self.__class__)
+
+        # Share config (treat as immutable)
+        new.simulator_config = self.simulator_config
+
+        # Scalars
+        new.simulator_time = float(self.simulator_time)
+
+        # Dicts of immutable / small items
+        new.robots_current_time = dict(self.robots_current_time)
+        new.robots_next_time = dict(self.robots_next_time)
+        new.robots_current_node_index = dict(self.robots_current_node_index)
+        new.previous_traversed_distances = dict(self.previous_traversed_distances)
+        new.point_indices_on_edge = dict(self.point_indices_on_edge)
+        new.edge_lengths = dict(self.edge_lengths)
+        new.current_wait_times = dict(self.current_wait_times)
+
+        # Nodes/positions (likely dataclasses): shallow-copy containers
+        # If Coordinate / TraversalNode are mutable in-place, switch to deepcopy here.
+        new.robot_depots = dict(self.robot_depots)
+        new.robots_current_nodes = dict(self.robots_current_nodes)
+        new.robots_next_nodes = dict(self.robots_next_nodes)
+        new.robots_positions = dict(self.robots_positions)
+
+        # Paths: copy list structure; nodes/timeinterval objects can be shared if immutable
+        new.robot_paths = {rid: list(path) for rid, path in self.robot_paths.items()}
+
+        # Arrays: copy buffers so branches don't interfere
+        new.edge_samples = {rid: (arr.copy() if isinstance(arr, np.ndarray) else np.array([]))
+                            for rid, arr in self.edge_samples.items()}
+        new.cumulative_path_lengths = {rid: (arr.copy() if isinstance(arr, np.ndarray) else np.array([]))
+                                       for rid, arr in self.cumulative_path_lengths.items()}
+
+        # Requests: this one matters because TaskRequest is mutated (started/completed/etc.)
+        new.requests = {k: copy.deepcopy(v) for k, v in self.requests.items()}
+
+        # Assigned requests: copy list structure
+        new.assigned_requests = {rid: list(reqs) for rid, reqs in self.assigned_requests.items()}
+
+        return new
     
     def get_completed_requests(self) -> dict[str, list[TaskRequest]]:
         completed_requests = {}
