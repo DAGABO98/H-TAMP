@@ -49,7 +49,7 @@ class AdaptiveRollout:
         
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
-        self.assigned_requests = copy.deepcopy(state.assigned_requests)
+        self.assigned_requests = dict(state.assigned_requests)
     
     def _add_all_real_requests_to_queues(self, 
                                     requests_lists: Optional[RequestsLists], 
@@ -223,11 +223,12 @@ class AdaptiveRollout:
         for robot_id in robot_ids:
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
+            currently_assigned_request_ids = self.assigned_requests[robot_id].copy()
             RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
                                              state=current_state)
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
-                                                                        currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                                        currently_assigned_request_ids=currently_assigned_request_ids,
                                                                         state=current_state,
                                                                         motion_planner=current_motion_planner,
                                                                         traversal_graph_generator=traversal_graph_generator,
@@ -239,7 +240,7 @@ class AdaptiveRollout:
                     print(f"Found a valid path for potential assignment of request {request_id} to robot {robot_id}. Simulating future assignments...")
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
-                                                currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                currently_assigned_request_ids=currently_assigned_request_ids,
                                                 node_reservation_table=None,
                                                 planned_path=planned_path,
                                                 planned_goal_indices=planned_goal_indices,
@@ -284,7 +285,7 @@ class AdaptiveRollout:
         if requests_lists is None:
             return
         else:
-            current_requests_lists = copy.deepcopy(requests_lists)
+            current_requests_lists = requests_lists.copy(deep=True)
 
         while self.requests_queue.heap:
             request_id = self.requests_queue.pop_task()
