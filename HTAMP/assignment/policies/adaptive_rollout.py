@@ -340,7 +340,7 @@ class AdaptiveRollout:
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=currently_assigned_request_ids,
-                                                node_reservation_table=self.node_reservation_table,
+                                                node_reservation_table=None,
                                                 planned_path=planned_path,
                                                 planned_goal_indices=planned_goal_indices,
                                                 planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
@@ -505,6 +505,8 @@ class AdaptiveRollout:
                                           motion_planner=motion_planner,
                                           traversal_graph_generator=traversal_graph_generator,
                                           debug=debug)
+            
+            self._extract_node_reservations_from_state(state=state)
 
             # Assignment logic for robots
             self._assign_requests_to_robots(state=state,
