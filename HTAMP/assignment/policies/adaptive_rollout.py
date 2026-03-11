@@ -49,7 +49,7 @@ class AdaptiveRollout:
         
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
-        self.assigned_requests = dict(state.assigned_requests)
+        self.assigned_requests = copy.deepcopy(state.assigned_requests)
     
     def _add_all_real_requests_to_queues(self, 
                                     requests_lists: Optional[RequestsLists], 
