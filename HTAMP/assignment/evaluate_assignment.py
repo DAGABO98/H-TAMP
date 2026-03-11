@@ -181,6 +181,7 @@ class AssignmentEvaluator:
             policy = policy_dict[mode](start_date=self.start_date, 
                                        end_date=self.end_date,
                                        date_stamp=self.date_stamp.time_stamp,
+                                       end_hour=self.args.hour_end,
                                        floor_number=self.floor_number,
                                        annotated_data_files=self.annotated_data_files,
                                        request_dir=self.args.request_dir,
@@ -544,16 +545,16 @@ def run_experiment(args):
             os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
             results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
         elif args.policy_name in ["adaptive_rollout"]:
-            if args.mode == 6:
+            if args.mode == 7:
                 deallocation_str = "ropt"
                 reweighting_str = "rwt"
-            elif args.mode == 7:
+            elif args.mode == 8:
                 deallocation_str = "ropt"
                 reweighting_str = "norwt"
-            elif args.mode == 8:
+            elif args.mode == 9:
                 deallocation_str = "nopt"
                 reweighting_str = "rwt"
-            else:  # mode == 9
+            else:  # mode == 10
                 deallocation_str = "nopt"
                 reweighting_str = "norwt"
             os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}", exist_ok=True)

@@ -19,6 +19,7 @@ class AdaptiveRollout:
                  start_date: str,
                  end_date: str,
                  date_stamp: pd.Timestamp,
+                 end_hour: int,
                  floor_number: int,
                  annotated_data_files: AnnotatedDataFiles,
                  request_dir: str,
@@ -33,6 +34,7 @@ class AdaptiveRollout:
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.date_stamp = date_stamp
+        self.end_hour = end_hour
         self.initial_time = initial_time
         self.all_task_properties = all_task_properties
         self.fps = fps
@@ -211,6 +213,7 @@ class AdaptiveRollout:
                                                                                     hour=hour,
                                                                                     minute=minute,
                                                                                     look_ahead_minutes=look_ahead_minutes,
+                                                                                    end_hour=self.end_hour,
                                                                                     planning_request_handler=self.planning_request_handler,
                                                                                     initial_time=self.initial_time,
                                                                                     all_task_properties=self.all_task_properties,

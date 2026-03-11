@@ -79,11 +79,12 @@ class RolloutHelpers:
                                     hour: int,
                                     minute: int,
                                     look_ahead_minutes: int,
+                                    end_hour: int,
                                     planning_request_handler: PlanningRequestHandler,
                                     initial_time: pd.Timestamp,
                                     all_task_properties:AllTaskProperties,
                                     traversal_graph_generator: TraversalGraphGenerator) -> RequestsLists:
-        if hour <= 23:
+        if hour <= end_hour:
             original_time_signal = TimeSignal(year=date_stamp.year,
                                     month=date_stamp.month,
                                     day=date_stamp.day,
@@ -94,7 +95,7 @@ class RolloutHelpers:
             if shifted_time_stamp.day != date_stamp.day:
                 return None
             else:
-                if shifted_time_stamp.hour == 23 and 60 - shifted_time_stamp.minute < look_ahead_minutes:
+                if shifted_time_stamp.hour == end_hour and 60 - shifted_time_stamp.minute < look_ahead_minutes:
                     return None
                 else:
                     shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
