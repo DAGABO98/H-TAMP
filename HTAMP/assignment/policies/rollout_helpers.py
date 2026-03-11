@@ -95,7 +95,8 @@ class RolloutHelpers:
             if shifted_time_stamp.day != date_stamp.day:
                 return None
             else:
-                if shifted_time_stamp.hour == end_hour and 60 - shifted_time_stamp.minute < look_ahead_minutes:
+                truncated_lookahead_minutes = 10
+                if shifted_time_stamp.hour == end_hour and 60 - shifted_time_stamp.minute < truncated_lookahead_minutes:
                     return None
                 else:
                     shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
@@ -106,7 +107,7 @@ class RolloutHelpers:
                     scheduled_requests_lists: RequestsLists = planning_request_handler.get_all_requests_for_time_signal(time_signal=shifted_time_signal,
                                                                                                     initial_time=initial_time,
                                                                                                     all_task_properties=all_task_properties,
-                                                                                                    look_ahead_minutes=look_ahead_minutes,
+                                                                                                    look_ahead_minutes=truncated_lookahead_minutes,
                                                                                                     traversal_graph_generator=traversal_graph_generator)
 
                 return scheduled_requests_lists
@@ -170,5 +171,5 @@ class RolloutHelpers:
                                                                     predicted_requests_dict=predicted_requests_dict,
                                                                     motion_planner=motion_planner,
                                                                     traversal_graph_generator=traversal_graph_generator,
-                                                                    look_ahead_minutes=look_ahead_minutes,
+                                                                    look_ahead_minutes=10,
                                                                     fps=fps)
