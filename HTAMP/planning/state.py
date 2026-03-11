@@ -305,7 +305,8 @@ class PlanningState:
                                 f"Time mismatch at goal for robot {robot_id}: expected {time_interval.end}, got {self.simulator_time + self.current_wait_times[robot_id]}"
                             completed_request_id = self.assigned_requests[robot_id].pop(0)
                             completed_request = self.requests[completed_request_id]
-                            completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id])
+                            completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id],
+                                                             planning_flag=planning_flag)
                             if not planning_flag:
                                 print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
 
