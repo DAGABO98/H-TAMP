@@ -1,7 +1,7 @@
 import copy
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
-from HTAMP.assignment.policies.helpers import PolicyHelpers
+from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode

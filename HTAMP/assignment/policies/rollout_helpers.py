@@ -13,7 +13,8 @@ from HTAMP.planning.state import PlanningState
 class RolloutHelpers:
 
     @staticmethod
-    def _remove_request_from_requests_lists(request_id: str, requests_lists: Optional[RequestsLists]):
+    def _remove_request_from_requests_lists(request_id: str, 
+                                            requests_lists: Optional[RequestsLists]):
         if requests_lists is not None:
             for data_field in requests_lists.__dataclass_fields__.keys():
                 requests_list = getattr(requests_lists, data_field)

@@ -3,7 +3,7 @@ from typing import Optional
 
 import pandas as pd
 from HTAMP.assignment.assignment_helpers import TaskQueue
-from HTAMP.assignment.policies.helpers import PolicyHelpers
+from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
