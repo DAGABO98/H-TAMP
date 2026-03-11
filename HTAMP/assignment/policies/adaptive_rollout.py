@@ -322,7 +322,7 @@ class AdaptiveRollout:
         for robot_id in potential_robot_ids:
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
-            currently_assigned_request_ids = self.assigned_requests[robot_id].copy()
+            currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
             RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
                                              state=current_state)
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
