@@ -6,7 +6,7 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import NodeReservationTable, RequestsLists, TaskRequest, TimeReservation
+from HTAMP.planning.planning_dataclasses import NodeReservationTable, TaskRequest, TimeReservation
 from HTAMP.planning.state import PlanningState
 
 
@@ -37,16 +37,6 @@ class PolicyHelpers:
                             task_id=request.request_id)
         
         return ordered_time
-    
-    @staticmethod
-    def _remove_request_from_requests_lists(request_id: str, requests_lists: Optional[RequestsLists]):
-        if requests_lists is not None:
-            for data_field in requests_lists.__dataclass_fields__.keys():
-                requests_list = getattr(requests_lists, data_field)
-                for request in requests_list:
-                    if request.request_id == request_id:
-                        requests_list.remove(request)
-                        break
 
     @staticmethod
     def _calculate_pickup_deadline(delivery_robot_profile: RobotProfile,
@@ -360,26 +350,3 @@ class PolicyHelpers:
                                         request_id=request_id,
                                         node_reservation_table=node_reservation_table,
                                         state=state)
-    
-    @staticmethod
-    def _extract_cost_for_assigned_requests(state: PlanningState) -> list[float]:
-        unmodified_costs = []
-        truncated_costs = []
-        for request_id in state.requests.keys():
-            request_struct = state.requests[request_id]
-            if request_struct.planned_time == -1.0:
-                if request_struct.rejected:
-                    cost = state.simulator_config.horizon
-                    truncated_cost = state.simulator_config.horizon
-                else:
-                    cost = 0
-                    truncated_cost = 0
-            else:
-                cost = request_struct.planned_time - request_struct.scheduled_time
-                truncated_cost = max(cost, 0)
-
-            unmodified_costs.append(cost)
-            truncated_costs.append(truncated_cost)
-        unmodified_cost = sum(unmodified_costs)
-        truncated_cost = sum(truncated_costs)
-        return unmodified_cost, truncated_cost
