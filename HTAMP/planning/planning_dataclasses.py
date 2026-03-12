@@ -360,28 +360,6 @@ class RequestsLists:
     oxygen_saturation_requests: list[TaskRequest]
     medications_requests: list[TaskRequest]
 
-    def copy(self, deep: bool = True) -> "RequestsLists":
-        if not deep:
-            # new lists, same TaskRequest objects
-            return RequestsLists(
-                blood_pressure_requests=list(self.blood_pressure_requests),
-                heart_rate_requests=list(self.heart_rate_requests),
-                respiratory_rate_requests=list(self.respiratory_rate_requests),
-                temperature_requests=list(self.temperature_requests),
-                oxygen_saturation_requests=list(self.oxygen_saturation_requests),
-                medications_requests=list(self.medications_requests),
-            )
-
-        # deep copy TaskRequest objects too (independent snapshot)
-        return RequestsLists(
-            blood_pressure_requests=[copy.deepcopy(r) for r in self.blood_pressure_requests],
-            heart_rate_requests=[copy.deepcopy(r) for r in self.heart_rate_requests],
-            respiratory_rate_requests=[copy.deepcopy(r) for r in self.respiratory_rate_requests],
-            temperature_requests=[copy.deepcopy(r) for r in self.temperature_requests],
-            oxygen_saturation_requests=[copy.deepcopy(r) for r in self.oxygen_saturation_requests],
-            medications_requests=[copy.deepcopy(r) for r in self.medications_requests],
-        )
-
 class FrameData:
     def __init__(self):
         self.robot_positions_seq: list[dict[int, Coordinate]] = []
