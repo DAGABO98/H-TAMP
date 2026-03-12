@@ -111,7 +111,8 @@ class PolicyHelpers:
                                           planned_path: list[tuple[TraversalNode, TimeInterval]],
                                           currently_assigned_request_ids: list[int],
                                           state: PlanningState,
-                                          traversal_graph_generator: TraversalGraphGenerator):
+                                          traversal_graph_generator: TraversalGraphGenerator,
+                                          debug: bool = False):
         if state.robots_next_nodes[robot_id] is not None:
             if state.assigned_requests[robot_id]:
                 if state.current_wait_times[robot_id] > 0.0:
@@ -135,10 +136,15 @@ class PolicyHelpers:
                 current_node_index = 0
                 next_node_index = 0
                 final_path = planned_path
+        
+        if debug:
+            print(f"Updating path and request indices for robot {robot_id} after path change. Current node index: {current_node_index}, next node index: {next_node_index}, final path: {final_path}")
 
         for new_request_id in currently_assigned_request_ids:
             request_struct = state.requests[new_request_id]
             for i in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
+                if debug:
+                    print(f"Updating planned goal index for request {new_request_id} and goal index {i}. Current planned goal index: {request_struct.planned_goal_indices[i]}, current node index: {current_node_index}, next node index: {next_node_index}")
                 request_struct.planned_goal_indices[i] = request_struct.planned_goal_indices[i] - current_node_index
                 checking_index = request_struct.planned_goal_indices[i] + (current_node_index - next_node_index)
                 current_step = final_path[checking_index]
@@ -189,7 +195,8 @@ class PolicyHelpers:
                                                   planned_path=planned_path,
                                                   currently_assigned_request_ids=currently_assigned_request_ids,
                                                   state=state,
-                                                  traversal_graph_generator=traversal_graph_generator)
+                                                  traversal_graph_generator=traversal_graph_generator,
+                                                  debug=debug)
         else:
             start_node, current_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
                                                                                         state=state)
@@ -323,13 +330,16 @@ class PolicyHelpers:
                           planned_time_to_reach_last_goal: float,
                           state: PlanningState,
                           motion_planner: MotionPlanner,
-                          traversal_graph_generator: TraversalGraphGenerator):
+                          traversal_graph_generator: TraversalGraphGenerator,
+                          debug: bool = False):
         if state.assigned_requests[robot_id]:
             last_assigned_request_id = state.assigned_requests[robot_id][-1]
             last_goal_index = state.requests[last_assigned_request_id].planned_goal_indices[-1]
             combined_path = motion_planner.combine_paths([state.robot_paths[robot_id][:last_goal_index+1], planned_path])
         else:
             combined_path = planned_path
+        if debug:
+            print(f"Combined path for robot {robot_id} after scheduling request {request_id}: {combined_path}")
         request_struct = state.requests[request_id]
         request_struct.schedule_task(assigned_robot_id=robot_id,
                                     planned_goal_indices=planned_goal_indices,
@@ -339,7 +349,8 @@ class PolicyHelpers:
                                               planned_path=combined_path,
                                               currently_assigned_request_ids=currently_assigned_request_ids,
                                               state=state,
-                                              traversal_graph_generator=traversal_graph_generator)
+                                              traversal_graph_generator=traversal_graph_generator,
+                                              debug=debug)
         state.assigned_requests[robot_id].append(request_id)
         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
         motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_id],
