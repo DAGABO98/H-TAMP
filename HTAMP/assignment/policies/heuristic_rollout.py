@@ -309,6 +309,11 @@ class HeuristicRollout:
                                                                    hour=hour,
                                                                    minute=minute)
         
+        current_predicted_requests_dict, future_predicted_requests_dict = RolloutHelpers._split_predicted_requests_dict(predicted_requests_dict=predicted_requests_dict,
+                                                                                                                        look_ahead_minutes=look_ahead_minutes)
+        
+
+        
         min_robot_id = None
         min_planned_path = None
         min_planned_goal_indices = None
@@ -351,9 +356,9 @@ class HeuristicRollout:
                                                                                         heuristic_cost_estimator=self.heuristic_cost_estimator,
                                                                                         current_state=current_state,
                                                                                         requests_lists=requests_lists,
-                                                                                        current_predicted_requests_dict=predicted_requests_dict,
+                                                                                        current_predicted_requests_dict=current_predicted_requests_dict,
                                                                                         future_scheduled_requests_lists=future_scheduled_requests_lists,
-                                                                                        future_predicted_requests_dict=predicted_requests_dict,
+                                                                                        future_predicted_requests_dict=future_predicted_requests_dict,
                                                                                         motion_planner=current_motion_planner,
                                                                                         traversal_graph_generator=traversal_graph_generator)
 

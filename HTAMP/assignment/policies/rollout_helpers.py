@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import pandas as pd
 
@@ -74,6 +74,19 @@ class RolloutHelpers:
         pred_dict = {current_time: current_predicted_requests}
         
         return {}
+    
+    @staticmethod
+    def _split_predicted_requests_dict(predicted_requests_dict: dict[float, RequestsLists],
+                                       look_ahead_minutes: int) -> Tuple[dict[float, RequestsLists], dict[float, RequestsLists]]:
+        # TODO: Fix this method to do proper division of predicted requests
+        current_predicted_requests_dict = {}
+        future_predicted_requests_dict = {}
+        for time_signal, predicted_requests_lists in predicted_requests_dict.items():
+            if time_signal <= look_ahead_minutes:
+                current_predicted_requests_dict[time_signal] = predicted_requests_lists
+            else:
+                future_predicted_requests_dict[time_signal] = predicted_requests_lists
+        return current_predicted_requests_dict, future_predicted_requests_dict
     
     @staticmethod
     def _extract_scheduled_requests(date_stamp: pd.Timestamp,
