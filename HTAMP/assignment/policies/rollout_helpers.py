@@ -2,6 +2,7 @@ from typing import Optional
 
 import pandas as pd
 
+from HTAMP.assignment.policies.heuristic_base_policy import HeuristicFutureCostEstimation
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
@@ -95,8 +96,7 @@ class RolloutHelpers:
             if shifted_time_stamp.day != date_stamp.day:
                 return None
             else:
-                truncated_lookahead_minutes = 10
-                if shifted_time_stamp.hour == end_hour and 60 - shifted_time_stamp.minute < truncated_lookahead_minutes:
+                if shifted_time_stamp.hour == end_hour and 60 - shifted_time_stamp.minute < look_ahead_minutes:
                     return None
                 else:
                     shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
@@ -107,7 +107,7 @@ class RolloutHelpers:
                     scheduled_requests_lists: RequestsLists = planning_request_handler.get_all_requests_for_time_signal(time_signal=shifted_time_signal,
                                                                                                     initial_time=initial_time,
                                                                                                     all_task_properties=all_task_properties,
-                                                                                                    look_ahead_minutes=truncated_lookahead_minutes,
+                                                                                                    look_ahead_minutes=look_ahead_minutes,
                                                                                                     traversal_graph_generator=traversal_graph_generator)
 
                 return scheduled_requests_lists
@@ -173,3 +173,70 @@ class RolloutHelpers:
                                                                     traversal_graph_generator=traversal_graph_generator,
                                                                     look_ahead_minutes=10,
                                                                     fps=fps)
+    
+    @staticmethod
+    def _convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict: dict[float, RequestsLists]) -> RequestsLists:
+        combined_requests_lists = RequestsLists(blood_pressure_requests=[],
+                                              heart_rate_requests=[],
+                                              respiratory_rate_requests=[],
+                                              temperature_requests=[],
+                                              oxygen_saturation_requests=[],
+                                              medications_requests=[])
+        for predicted_requests_lists in predicted_requests_dict.values():
+            for data_field in combined_requests_lists.__dataclass_fields__.keys():
+                combined_list = getattr(combined_requests_lists, data_field)
+                predicted_list = getattr(predicted_requests_lists, data_field)
+                combined_list.extend(predicted_list)
+        return combined_requests_lists
+
+    @staticmethod
+    def _estimate_future_costs_for_scheduled_and_predicted_assignments(heuristic_cost_estimator: HeuristicFutureCostEstimation,
+                                                                       current_state: PlanningState,
+                                                                       requests_lists: Optional[RequestsLists],
+                                                                       current_predicted_requests_dict: dict[float, RequestsLists],
+                                                                       future_scheduled_requests_lists: Optional[RequestsLists],
+                                                                       future_predicted_requests_dict: dict[float, RequestsLists],
+                                                                       motion_planner: MotionPlanner,
+                                                                       traversal_graph_generator: TraversalGraphGenerator):
+        
+        # Cost Estimation for current requests
+        simulated_state = heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
+                                                                             simulated_state=None,
+                                                                             requests_lists=requests_lists,
+                                                                             motion_planner=motion_planner,
+                                                                             traversal_graph_generator=traversal_graph_generator,
+                                                                             add_requests_in_request_lists=False,
+                                                                             debug=False)
+        
+        current_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=current_predicted_requests_dict)
+        heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
+                                                           simulated_state=simulated_state,
+                                                           requests_lists=current_combined_requests_lists,
+                                                           motion_planner=motion_planner,
+                                                           traversal_graph_generator=traversal_graph_generator,
+                                                           add_requests_in_request_lists=True,
+                                                           debug=False)
+        
+        # Cost estimation for future requests
+        heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
+                                                           simulated_state=simulated_state,
+                                                           requests_lists=future_scheduled_requests_lists,
+                                                           motion_planner=motion_planner,
+                                                           traversal_graph_generator=traversal_graph_generator,
+                                                           add_requests_in_request_lists=True,
+                                                           debug=False)
+    
+        future_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=future_predicted_requests_dict)
+        heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
+                                                           simulated_state=simulated_state,
+                                                           requests_lists=future_combined_requests_lists,
+                                                           motion_planner=motion_planner,
+                                                           traversal_graph_generator=traversal_graph_generator,
+                                                           add_requests_in_request_lists=True,
+                                                           debug=False)
+        
+        unmodified_cost, truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=simulated_state,
+                                                                                             rejection_penalty=current_state.simulator_config.rejection_penalty)
+        
+        return unmodified_cost, truncated_cost
+        
