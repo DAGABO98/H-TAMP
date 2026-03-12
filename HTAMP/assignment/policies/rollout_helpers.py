@@ -7,7 +7,7 @@ from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import PlanningRequestHandler
-from HTAMP.planning.state import PlanningState
+from HTAMP.planning.state import PlanningState, SimulatedState
 
 
 class RolloutHelpers:
@@ -24,15 +24,15 @@ class RolloutHelpers:
                         break
 
     @staticmethod
-    def _extract_cost_for_assigned_requests(state: PlanningState) -> list[float]:
+    def _extract_cost_for_assigned_requests(state: PlanningState | SimulatedState, rejection_penalty: float) -> list[float]:
         unmodified_costs = []
         truncated_costs = []
         for request_id in state.requests.keys():
             request_struct = state.requests[request_id]
             if request_struct.planned_time == -1.0:
                 if request_struct.rejected:
-                    cost = state.simulator_config.horizon
-                    truncated_cost = state.simulator_config.horizon
+                    cost = rejection_penalty
+                    truncated_cost = rejection_penalty
                 else:
                     cost = 0
                     truncated_cost = 0

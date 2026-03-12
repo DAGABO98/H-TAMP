@@ -300,6 +300,7 @@ class TaskRequest:
     def mark_rejected(self, rejection_penalty: float = 1000.0) -> None:
         self.rejected = True
         self.total_cost = rejection_penalty
+        self.planned_time = -1.0
     
     def mark_started(self) -> None:
         self.started = True

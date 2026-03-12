@@ -303,7 +303,8 @@ class AdaptiveRollout:
         min_planned_time_to_reach_last_goal = float('inf')
         min_robot_id = None
 
-        orig_unmodified_cost, orig_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=state)
+        orig_unmodified_cost, orig_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=state,
+                                                                                                       rejection_penalty=state.simulator_config.rejection_penalty)
 
         future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(date_stamp=self.date_stamp,
                                                                                     hour=hour,
@@ -359,7 +360,8 @@ class AdaptiveRollout:
                                                            look_ahead_minutes=look_ahead_minutes,
                                                            fps=self.fps)
                 
-                new_unmodified_cost, new_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=current_state)
+                new_unmodified_cost, new_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=current_state,
+                                                                                                             rejection_penalty=state.simulator_config.rejection_penalty)
                 path_cost = new_truncated_cost - orig_truncated_cost
                 path_raw_cost = new_unmodified_cost - orig_unmodified_cost
 
