@@ -307,7 +307,7 @@ class TaskRequest:
     def schedule_task(self, planned_time: float, planned_goal_indices: list[int], assigned_robot_id: Optional[int] = None) -> None:
         self.completed_goals = 0
         self.planned_time = planned_time    
-        self.planned_goal_indices = planned_goal_indices
+        self.planned_goal_indices = copy.deepcopy(planned_goal_indices)
         if assigned_robot_id is not None:
             self.assigned_robot_id = assigned_robot_id
     

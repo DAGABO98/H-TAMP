@@ -335,10 +335,6 @@ class AdaptiveRollout:
             planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
 
             if planned_path:
-                new_planned_path = copy.deepcopy(planned_path)
-                new_planned_goal_indices = copy.deepcopy(planned_goal_indices)
-                new_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
-
                 if debug:
                     print(f"Found a valid path for potential assignment of request {request_id} to robot {robot_id}. Simulating future assignments...")
                     print(f"Planned goal indices for assignment of request {request_id} to robot {robot_id}: {planned_goal_indices}")
@@ -346,9 +342,9 @@ class AdaptiveRollout:
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=currently_assigned_request_ids,
                                                 node_reservation_table=None,
-                                                planned_path=new_planned_path,
-                                                planned_goal_indices=new_planned_goal_indices,
-                                                planned_time_to_reach_last_goal=new_planned_time_to_reach_last_goal,
+                                                planned_path=planned_path,
+                                                planned_goal_indices=planned_goal_indices,
+                                                planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
                                                 state=current_state,
                                                 motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
