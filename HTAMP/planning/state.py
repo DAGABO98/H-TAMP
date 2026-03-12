@@ -13,7 +13,7 @@ from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import SimulatorConfig, TaskRequest
+from HTAMP.planning.planning_dataclasses import RequestsLists, SimulatorConfig, TaskRequest
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class PlanningHelpers:
@@ -450,6 +450,38 @@ class PlanningState:
                 total_cost += max(request.total_cost, 0.0)
             total_costs[request_type] = total_cost
         return total_costs
+    
+class SimulatedState:
+    def __init__(self, 
+                 simulator_config: SimulatorConfig, 
+                 planning_state: PlanningState):
+        self.robots_depots = self.robot_depots = copy.deepcopy(simulator_config.initial_nodes)
+        self.robots_current_nodes = copy.deepcopy(planning_state.robots_current_nodes)
+        self.assigned_requests = copy.deepcopy(planning_state.assigned_requests)
+        self.requests = {}
+        self._extract_requests_from_planning_state(planning_state)
+    
+    def _extract_requests_from_planning_state(self, planning_state: PlanningState) -> None:
+        for robot_id in planning_state.assigned_requests:
+            assigned_request_ids = planning_state.assigned_requests[robot_id]
+            for request_id in assigned_request_ids:
+                request = planning_state.requests[request_id]
+                if request_id not in self.requests:
+                    self.requests[request_id] = copy.deepcopy(request)
+    
+    def add_requests_to_state(self, requests_lists: RequestsLists):
+        requests: list[TaskRequest] = []
+        for request_list in [requests_lists.blood_pressure_requests,
+                             requests_lists.heart_rate_requests,
+                             requests_lists.respiratory_rate_requests,
+                             requests_lists.temperature_requests,
+                             requests_lists.oxygen_saturation_requests,
+                             requests_lists.medications_requests]:
+            requests.extend(request_list)
+
+        for request in requests:
+            self.requests[request.request_id] = copy.deepcopy(request)
+        
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")
