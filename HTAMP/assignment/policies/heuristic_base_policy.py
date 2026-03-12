@@ -5,21 +5,23 @@ from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
-from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import RequestsLists, NodeReservationTable, TimeReservation
 from HTAMP.planning.state import PlanningState, SimulatedState
 
 class HeuristicFutureCostEstimation:
-    def __init__(self, allow_deallocation: bool = False, base_policy_use: bool = False):
+    def __init__(self):
         self.requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
-        self.allow_deallocation = allow_deallocation
-        self.base_policy_use = base_policy_use
+    
+    def reset(self):
+        self.requests_queue = TaskQueue()
+        self.assigned_requests = {}
+        self.node_reservation_table.reset()
 
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -29,9 +31,13 @@ class HeuristicFutureCostEstimation:
                                                      requests_lists: Optional[RequestsLists],
                                                      state: PlanningState):
         simulated_state = SimulatedState(planning_state=state)
+        return simulated_state
+    
+    def _add_requests_to_simulated_state(self,
+                                        requests_lists: Optional[RequestsLists],
+                                        simulated_state: SimulatedState):
         if requests_lists is not None:
             simulated_state.add_requests_to_state(requests_lists=requests_lists)
-        return simulated_state
     
     def _add_all_requests_to_queues(self, 
                                     requests_lists: Optional[RequestsLists], 
@@ -191,6 +197,7 @@ class HeuristicFutureCostEstimation:
                                   requests_lists: Optional[RequestsLists], 
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
+                                  add_requests_in_request_lists: bool,
                                   debug: bool):
 
         if simulated_state is None:
@@ -199,6 +206,10 @@ class HeuristicFutureCostEstimation:
             simulated_state = self._generate_simulated_state_from_current_state(state=state)
         else:
             self.assigned_requests = copy.deepcopy(simulated_state.assigned_requests)
+        
+        if add_requests_in_request_lists:
+            self._add_requests_to_simulated_state(requests_lists=requests_lists,
+                                                 simulated_state=simulated_state)
 
         # Add new requests to the appropriate queues
         smallest_pickup_deadline = self._add_all_requests_to_queues(requests_lists=requests_lists,
