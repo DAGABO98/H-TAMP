@@ -335,15 +335,20 @@ class AdaptiveRollout:
             planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
 
             if planned_path:
+                new_planned_path = copy.deepcopy(planned_path)
+                new_planned_goal_indices = copy.deepcopy(planned_goal_indices)
+                new_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
+
                 if debug:
                     print(f"Found a valid path for potential assignment of request {request_id} to robot {robot_id}. Simulating future assignments...")
+                    print(f"Planned goal indices for assignment of request {request_id} to robot {robot_id}: {planned_goal_indices}")
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=currently_assigned_request_ids,
                                                 node_reservation_table=None,
-                                                planned_path=planned_path,
-                                                planned_goal_indices=planned_goal_indices,
-                                                planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
+                                                planned_path=new_planned_path,
+                                                planned_goal_indices=new_planned_goal_indices,
+                                                planned_time_to_reach_last_goal=new_planned_time_to_reach_last_goal,
                                                 state=current_state,
                                                 motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
@@ -440,7 +445,7 @@ class AdaptiveRollout:
         if requests_lists is None:
             return
         else:
-            current_requests_lists = requests_lists.copy(deep=True)
+            current_requests_lists = copy.deepcopy(requests_lists)
 
         while self.requests_queue.heap:
             request_id = self.requests_queue.pop_task()
@@ -465,6 +470,7 @@ class AdaptiveRollout:
                     print(f"1) assigned requests for robot {robot_id}: {self.assigned_requests[robot_id]}")
                     print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
                     print(f"1) Planned path for assignment of request {request_id} to robot {robot_id}: {planned_path}")
+                    print(f"1) Planned goal indices for assignment of request {request_id} to robot {robot_id}: {planned_goal_indices}")
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -474,7 +480,8 @@ class AdaptiveRollout:
                                                 planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
                                                 state=state,
                                                 motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator)
+                                                traversal_graph_generator=traversal_graph_generator,
+                                                debug=debug)
                 print(f"Assigned request {request_id} to robot {robot_id}")
             else:
                 print(f"Failed to find a valid path for any of the potential assignments of request {request_id}. Request is rejected.")
