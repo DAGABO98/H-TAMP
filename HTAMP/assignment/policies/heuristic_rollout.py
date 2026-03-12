@@ -4,8 +4,8 @@ from typing import Optional
 import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
+from HTAMP.assignment.policies.heuristic_base_policy import HeuristicFutureCostEstimation
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
-from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -27,7 +27,6 @@ class HeuristicRollout:
                  use_saved_request_data: bool,
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
-                 fps: int,
                  allow_deallocation: bool,
                  allow_reweighting: bool):
         self.requests_queue = TaskQueue()
@@ -38,7 +37,6 @@ class HeuristicRollout:
         self.end_hour = end_hour
         self.initial_time = initial_time
         self.all_task_properties = all_task_properties
-        self.fps = fps
         self.planning_request_handler = PlanningRequestHandler(start_date=start_date,
                                               end_date=end_date,
                                               date_stamp=date_stamp,
@@ -48,6 +46,7 @@ class HeuristicRollout:
                                               use_saved_data=use_saved_request_data)
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
+        self.heuristic_cost_estimator = HeuristicFutureCostEstimation()
         self.allow_deallocation = allow_deallocation
         self.allow_reweighting = allow_reweighting
         
@@ -211,7 +210,7 @@ class HeuristicRollout:
                                                   interval=reservation_interval)
                     self.node_reservation_table.add_reservation(node=goal_node_label,
                                                                 reservation=reservation)
-    
+                    
     def _determine_heuristic_distance_to_request(self,
                                                 robot_id: int,
                                                 request_id: str,
@@ -284,7 +283,7 @@ class HeuristicRollout:
         else:
             return robots_with_finite_travel_time
     
-    def _get_assignment_with_minimum_cost_increase(self,
+    def _get_assignment_with_minimum_future_costs(self,
                                             request_id: str,
                                             requests_lists: RequestsLists,
                                             potential_robot_ids: list[int],
@@ -295,14 +294,6 @@ class HeuristicRollout:
                                             minute: int,
                                             look_ahead_minutes: int,
                                             debug: bool):
-        min_path_cost = float('inf')
-        min_path_raw_cost = float('inf')
-        min_planned_path = None
-        min_planned_goal_indices = None
-        min_planned_time_to_reach_last_goal = float('inf')
-        min_robot_id = None
-
-        orig_unmodified_cost, orig_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=state)
 
         future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(date_stamp=self.date_stamp,
                                                                                     hour=hour,
@@ -318,12 +309,19 @@ class HeuristicRollout:
                                                                    hour=hour,
                                                                    minute=minute)
         
+        min_robot_id = None
+        min_planned_path = None
+        min_planned_goal_indices = None
+        min_planned_time_to_reach_last_goal = float('inf')
+        min_path_cost = float('inf')
+        min_path_raw_cost = float('inf')
+        
+        
         for robot_id in potential_robot_ids:
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
             currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
-            RolloutHelpers._add_requests_to_state(requests_lists=future_scheduled_requests_lists,
-                                             state=current_state)
+
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
                                                                         currently_assigned_request_ids=currently_assigned_request_ids,
@@ -348,23 +346,20 @@ class HeuristicRollout:
                                                 motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
                 
-                RolloutHelpers._simulate_future_assignments(base_policy=self.base_policy,
-                                                           current_state=current_state,
-                                                           requests_lists=requests_lists,
-                                                           future_scheduled_requests_lists=future_scheduled_requests_lists,
-                                                           predicted_requests_dict=predicted_requests_dict,
-                                                           motion_planner=current_motion_planner,
-                                                           traversal_graph_generator=traversal_graph_generator,
-                                                           look_ahead_minutes=look_ahead_minutes,
-                                                           fps=self.fps)
-                
-                new_unmodified_cost, new_truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=current_state)
-                path_cost = new_truncated_cost - orig_truncated_cost
-                path_raw_cost = new_unmodified_cost - orig_unmodified_cost
+                self.heuristic_cost_estimator.reset()
+                unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
+                                                                                        heuristic_cost_estimator=self.heuristic_cost_estimator,
+                                                                                        current_state=current_state,
+                                                                                        requests_lists=requests_lists,
+                                                                                        current_predicted_requests_dict=predicted_requests_dict,
+                                                                                        future_scheduled_requests_lists=future_scheduled_requests_lists,
+                                                                                        future_predicted_requests_dict=predicted_requests_dict,
+                                                                                        motion_planner=current_motion_planner,
+                                                                                        traversal_graph_generator=traversal_graph_generator)
 
-                if path_cost < min_path_cost or (path_cost == min_path_cost and path_raw_cost < min_path_raw_cost):
-                    min_path_cost = path_cost
-                    min_path_raw_cost = path_raw_cost
+                if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
+                    min_path_cost = truncated_cost
+                    min_path_raw_cost = unmodified_cost
                     min_planned_path = planned_path
                     min_planned_goal_indices = planned_goal_indices
                     min_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
@@ -389,12 +384,13 @@ class HeuristicRollout:
         else:
             robot_type = "monitoring"
         robot_ids = state.get_robots_of_type(robot_type=robot_type)
-        
+
         filtered_robot_ids = self._filter_potential_assignments_for_request(request_id=request_id,
                                                                           robot_ids=robot_ids,
                                                                           state=state,
                                                                           motion_planner=motion_planner,
                                                                           traversal_graph_generator=traversal_graph_generator)
+        
         if len(filtered_robot_ids) == 0:
             if debug:
                 print(f"No valid paths found for any potential assignment of request {request_id}.")
@@ -417,16 +413,17 @@ class HeuristicRollout:
                     print(f"No valid path found for the only potential assignment of request {request_id} to robot {robot_id}.")
                 return None, None, None, None
         else:
-            return self._get_assignment_with_minimum_cost_increase(request_id=request_id,
-                                                                    requests_lists=requests_lists,
-                                                                    potential_robot_ids=filtered_robot_ids,
-                                                                    state=state,
-                                                                    motion_planner=motion_planner,
-                                                                    traversal_graph_generator=traversal_graph_generator,
-                                                                    hour=hour,
-                                                                    minute=minute,
-                                                                    look_ahead_minutes=look_ahead_minutes,
-                                                                    debug=debug)
+            return self._get_assignment_with_minimum_future_costs(request_id=request_id,
+                                                                requests_lists=requests_lists,
+                                                                potential_robot_ids=filtered_robot_ids,
+                                                                state=state,
+                                                                motion_planner=motion_planner,
+                                                                traversal_graph_generator=traversal_graph_generator,
+                                                                hour=hour,
+                                                                minute=minute,
+                                                                look_ahead_minutes=look_ahead_minutes,
+                                                                debug=debug)
+        
 
     def _assign_requests_to_robots(self,
                                    requests_lists: Optional[RequestsLists],
