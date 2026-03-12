@@ -6,7 +6,7 @@ from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import TaskRequest
-from HTAMP.planning.state import PlanningState
+from HTAMP.planning.state import PlanningState, SimulatedState
 from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
 
 class TaskQueue:
@@ -23,7 +23,7 @@ class AssignmentHelpers:
     
     @staticmethod
     def determine_robot_nodes_and_times(robot_id: int, 
-                                        state: PlanningState) -> tuple[TraversalNode, float]:
+                                        state: PlanningState | SimulatedState) -> tuple[TraversalNode, float]:
         if state.robots_next_nodes[robot_id] is not None:
             if state.current_wait_times[robot_id] > 0.0:
                 if state.assigned_requests[robot_id]:

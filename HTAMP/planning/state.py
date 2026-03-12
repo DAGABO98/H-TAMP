@@ -453,12 +453,16 @@ class PlanningState:
     
 class SimulatedState:
     def __init__(self, 
-                 simulator_config: SimulatorConfig, 
                  planning_state: PlanningState):
-        self.robots_depots = self.robot_depots = copy.deepcopy(simulator_config.initial_nodes)
+        self.robot_profiles = planning_state.simulator_config.robot_profiles
+        self.robots_depots = self.robot_depots = copy.deepcopy(planning_state.robot_depots)
         self.robots_current_nodes = copy.deepcopy(planning_state.robots_current_nodes)
+        self.robots_next_nodes = copy.deepcopy(planning_state.robots_next_nodes)
+        self.robots_current_time = copy.deepcopy(planning_state.robots_current_time)
+        self.robots_next_time = copy.deepcopy(planning_state.robots_next_time)
+        self.current_wait_times = copy.deepcopy(planning_state.current_wait_times)
         self.assigned_requests = copy.deepcopy(planning_state.assigned_requests)
-        self.requests = {}
+        self.requests: dict[str, TaskRequest] = {}
         self._extract_requests_from_planning_state(planning_state)
     
     def _extract_requests_from_planning_state(self, planning_state: PlanningState) -> None:
