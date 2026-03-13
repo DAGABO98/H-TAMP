@@ -35,12 +35,10 @@ class AssignmentResultsPlotter:
         self.policy_order = ["fleet_manager",
                              "tp_d_alpha0.0",
                              "d_tpts_alpha0.0",
-                             "tp_d_alpha0.1",
-                             "d_tpts_alpha0.1",
                              "tp_d_alpha0.2",
                              "d_tpts_alpha0.2",
-                             "sequential_greedy",
-                             "adaptive_rollout_ropt_rwt"]
+                             "base_policy",
+                             "heuristic_rollout",]
 
         self.baseline_colors = {"human_team": "#7f0000",
                                 "fleet_manager": "#b30000",
@@ -51,10 +49,10 @@ class AssignmentResultsPlotter:
                                 "idle_prediction": "#fdd49e",
                                 "vanilla_rollout": "#fee8c8"}
         
-        self.our_methods_colors = {"sequential_greedy": "#d9f0a3",
-                                    "adaptive_rollout_ropt_rwt": "#006837"}
+        self.our_methods_colors = {"base_policy": "#d9f0a3",
+                                    "heuristic_rollout": "#006837"}
         
-        self.ablation_study_colors = {"sequential_greedy": "#d9f0a3",
+        self.ablation_study_colors = {"base_policy": "#d9f0a3",
                                      "adaptive_rollout_nopt_norwt": "#addd8e",
                                      "adaptive_rollout_ropt_norwt": "#78c679",
                                      "adaptive_rollout_nopt_rwt": "#31a354",
