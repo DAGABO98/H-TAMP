@@ -11,6 +11,7 @@ from HTAMP.assignment.baselines.D_TPTS import DeadlineAwareTokenPassingwithTaskS
 from HTAMP.assignment.baselines.TP_D import TokenPassingWithDeadlines
 from HTAMP.assignment.baselines.idle_pred import IdleTaskPrediction
 from HTAMP.assignment.policies.adaptive_rollout import AdaptiveRollout
+from HTAMP.assignment.policies.heuristic_rollout import HeuristicRollout
 from HTAMP.assignment.policies.vanilla_rollout import VanillaRollout
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.assignment.policies.base_policy import BasePolicy
@@ -52,8 +53,9 @@ class AssignmentEvaluator:
         self.state = PlanningState(simulator_config=self.simulator_config)
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                     SequentialGreedy | BasePolicy | VanillaRollout | AdaptiveRollout = self._initialize_policy(mode=args.mode, 
-                                                                                                  alpha=args.alpha)
+                     SequentialGreedy | BasePolicy | VanillaRollout | \
+                        AdaptiveRollout | HeuristicRollout = self._initialize_policy(mode=args.mode, 
+                                                                                     alpha=args.alpha)
     
     def _initialize_traversal_graph_generator(self):
         print("Generating Traversal Graph...")
@@ -140,7 +142,8 @@ class AssignmentEvaluator:
             8: AdaptiveRollout,
             9: AdaptiveRollout,
             10: AdaptiveRollout,
-            11: AdaptiveRollout
+            11: AdaptiveRollout,
+            12: HeuristicRollout
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
@@ -193,6 +196,20 @@ class AssignmentEvaluator:
                                        fps=self.simulator_config.fps,
                                        allow_deallocation=allow_deallocation,
                                        allow_reweighting=allow_reweighting)
+            print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
+        elif mode == 12:
+            policy = policy_dict[mode](start_date=self.start_date, 
+                                       end_date=self.end_date,
+                                       date_stamp=self.date_stamp.time_stamp,
+                                       end_hour=self.args.hour_end,
+                                       floor_number=self.floor_number,
+                                       annotated_data_files=self.annotated_data_files,
+                                       request_dir=self.args.request_dir,
+                                       use_saved_request_data=self.args.use_saved_request_data,
+                                       initial_time=self.simulator_config.initial_time,
+                                       all_task_properties=self.all_task_properties,
+                                       allow_deallocation=True,
+                                       allow_reweighting=True)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -286,7 +303,7 @@ class AssignmentEvaluator:
                                    look_ahead_minutes: int,
                                    requests_lists: Optional[RequestsLists] = None, 
                                    debug: bool = False):
-        if self.args.mode in [6, 7, 8, 9, 10, 11]:
+        if self.args.mode in [6, 7, 8, 9, 10, 11, 12]:
             self.policy.assign_requests_to_robots(state=self.state,
                                               requests_lists=requests_lists,
                                               motion_planner=self.motion_planner,
