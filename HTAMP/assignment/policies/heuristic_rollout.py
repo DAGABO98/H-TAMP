@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
-from HTAMP.assignment.policies.base_policy import HeuristicFutureCostEstimation
+from HTAMP.assignment.policies.base_policy import FutureCostEstimation
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.loc_dataclasses import TimeInterval
@@ -46,7 +46,7 @@ class HeuristicRollout:
                                               use_saved_data=use_saved_request_data)
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
-        self.heuristic_cost_estimator = HeuristicFutureCostEstimation()
+        self.cost_estimator = FutureCostEstimation()
         self.allow_deallocation = allow_deallocation
         self.allow_reweighting = allow_reweighting
         
@@ -351,9 +351,9 @@ class HeuristicRollout:
                                                 motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
                 
-                self.heuristic_cost_estimator.reset()
+                self.cost_estimator.reset()
                 unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
-                                                                                        heuristic_cost_estimator=self.heuristic_cost_estimator,
+                                                                                        cost_estimator=self.cost_estimator,
                                                                                         current_state=current_state,
                                                                                         requests_lists=requests_lists,
                                                                                         current_predicted_requests_dict=current_predicted_requests_dict,

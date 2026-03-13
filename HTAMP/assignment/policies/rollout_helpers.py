@@ -2,7 +2,7 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
-from HTAMP.assignment.policies.base_policy import HeuristicFutureCostEstimation
+from HTAMP.assignment.policies.base_policy import FutureCostEstimation
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
@@ -203,7 +203,7 @@ class RolloutHelpers:
         return combined_requests_lists
 
     @staticmethod
-    def _estimate_future_costs_for_scheduled_and_predicted_assignments(heuristic_cost_estimator: HeuristicFutureCostEstimation,
+    def _estimate_future_costs_for_scheduled_and_predicted_assignments(cost_estimator: FutureCostEstimation,
                                                                        current_state: PlanningState,
                                                                        requests_lists: Optional[RequestsLists],
                                                                        current_predicted_requests_dict: dict[float, RequestsLists],
@@ -213,40 +213,40 @@ class RolloutHelpers:
                                                                        traversal_graph_generator: TraversalGraphGenerator):
         
         # Cost Estimation for current requests
-        simulated_state = heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
-                                                                             simulated_state=None,
-                                                                             requests_lists=requests_lists,
-                                                                             motion_planner=motion_planner,
-                                                                             traversal_graph_generator=traversal_graph_generator,
-                                                                             add_requests_in_request_lists=False,
-                                                                             debug=False)
+        simulated_state = cost_estimator.assign_requests_to_robots(state=current_state,
+                                                                   simulated_state=None,
+                                                                   requests_lists=requests_lists,
+                                                                   motion_planner=motion_planner,
+                                                                   traversal_graph_generator=traversal_graph_generator,
+                                                                   add_requests_in_request_lists=False,
+                                                                   debug=False)
         
         current_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=current_predicted_requests_dict)
-        heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
-                                                           simulated_state=simulated_state,
-                                                           requests_lists=current_combined_requests_lists,
-                                                           motion_planner=motion_planner,
-                                                           traversal_graph_generator=traversal_graph_generator,
-                                                           add_requests_in_request_lists=True,
-                                                           debug=False)
+        cost_estimator.assign_requests_to_robots(state=current_state,
+                                                 simulated_state=simulated_state,
+                                                 requests_lists=current_combined_requests_lists,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator,
+                                                 add_requests_in_request_lists=True,
+                                                 debug=False)
         
         # Cost estimation for future requests
-        heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
-                                                           simulated_state=simulated_state,
-                                                           requests_lists=future_scheduled_requests_lists,
-                                                           motion_planner=motion_planner,
-                                                           traversal_graph_generator=traversal_graph_generator,
-                                                           add_requests_in_request_lists=True,
-                                                           debug=False)
+        cost_estimator.assign_requests_to_robots(state=current_state,
+                                                 simulated_state=simulated_state,
+                                                 requests_lists=future_scheduled_requests_lists,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator,
+                                                 add_requests_in_request_lists=True,
+                                                 debug=False)
     
         future_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=future_predicted_requests_dict)
-        heuristic_cost_estimator.assign_requests_to_robots(state=current_state,
-                                                           simulated_state=simulated_state,
-                                                           requests_lists=future_combined_requests_lists,
-                                                           motion_planner=motion_planner,
-                                                           traversal_graph_generator=traversal_graph_generator,
-                                                           add_requests_in_request_lists=True,
-                                                           debug=False)
+        cost_estimator.assign_requests_to_robots(state=current_state,
+                                                 simulated_state=simulated_state,
+                                                 requests_lists=future_combined_requests_lists,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator,
+                                                 add_requests_in_request_lists=True,
+                                                 debug=False)
         
         unmodified_cost, truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=simulated_state,
                                                                                              rejection_penalty=current_state.simulator_config.rejection_penalty)
