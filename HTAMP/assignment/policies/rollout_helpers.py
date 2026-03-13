@@ -205,6 +205,7 @@ class RolloutHelpers:
     @staticmethod
     def _estimate_future_costs_for_scheduled_and_predicted_assignments(cost_estimator: FutureCostEstimation,
                                                                        current_state: PlanningState,
+                                                                       simulated_state: Optional[SimulatedState],
                                                                        requests_lists: Optional[RequestsLists],
                                                                        current_predicted_requests_dict: dict[float, RequestsLists],
                                                                        future_scheduled_requests_lists: Optional[RequestsLists],
@@ -214,7 +215,7 @@ class RolloutHelpers:
         
         # Cost Estimation for current requests
         simulated_state = cost_estimator.assign_requests_to_robots(state=current_state,
-                                                                   simulated_state=None,
+                                                                   simulated_state=simulated_state,
                                                                    requests_lists=requests_lists,
                                                                    motion_planner=motion_planner,
                                                                    traversal_graph_generator=traversal_graph_generator,
