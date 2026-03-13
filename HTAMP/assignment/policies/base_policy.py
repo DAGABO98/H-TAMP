@@ -24,6 +24,34 @@ class Helpers:
             simulated_state.add_requests_to_state(requests_lists=requests_lists)
     
     @staticmethod
+    def extract_node_reservations_from_state(state: PlanningState,
+                                              assigned_requests: dict[int, list[str]],
+                                              node_reservation_table: NodeReservationTable):
+        node_reservation_table.reset()
+        for robot_id in assigned_requests.keys():
+            if not assigned_requests[robot_id]:
+                continue
+            for request_id in assigned_requests[robot_id]:
+                request_struct = state.requests[request_id]
+                for goal_index in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
+                    goal_node_label = request_struct.goal_nodes[goal_index]
+                    planned_goal_index = request_struct.planned_goal_indices[goal_index]
+                    planned_goal_label = state.robot_paths[robot_id][planned_goal_index][0].label
+                    assert goal_node_label == planned_goal_label, \
+                        f"Mismatch in planned goal node labels: {goal_node_label} vs {planned_goal_label}"
+                    start_time = state.robot_paths[robot_id][planned_goal_index][1].start
+                    wait_time = request_struct.wait_times_at_goals_seconds[goal_index]
+                    planned_time = state.robot_paths[robot_id][planned_goal_index][1].end
+                    assert abs(planned_time - (start_time + wait_time)) < 1e-3, \
+                        f"Mismatch in planned time and calculated time: {planned_time} vs {start_time + wait_time}"
+                    reservation_interval = TimeInterval(start=start_time,
+                                                        end=planned_time)
+                    reservation = TimeReservation(robot_id=robot_id,
+                                                  interval=reservation_interval)
+                    node_reservation_table.add_reservation(node=goal_node_label,
+                                                           reservation=reservation)
+    
+    @staticmethod
     def estimate_simulated_cost_to_fulfill_request(robot_id: int,
                                                      request_id: str,
                                                      currently_assigned_request_ids: list[str],
@@ -49,7 +77,7 @@ class Helpers:
                                                                     goal_traversal_node=goal_node,
                                                                     robot_profile=simulated_state.robot_profiles[robot_id])
             if travel_time_to_goal == float('inf'):
-                return float('inf')
+                return float('inf'), []
             arrival_time = start_time + travel_time_to_goal
             if j == 0 and service_interval.start < request_struct.ordered_time:
                 arrival_time = request_struct.ordered_time
@@ -60,7 +88,7 @@ class Helpers:
                                                                 arrival_time=arrival_time,
                                                                 wait_time=wait_time)
             if service_interval.end > request_struct.time_for_service:
-                return float('inf'), None
+                return float('inf'), []
             else:
                 heuristic_cost = service_interval.end - request_struct.scheduled_time
                 service_intervals.append(service_interval)
@@ -121,32 +149,6 @@ class BasePolicy:
         
         smallest_pickup_deadline = min(pickup_deadlines) if pickup_deadlines else None
         return smallest_pickup_deadline
-    
-    def _extract_node_reservations_from_state(self, 
-                                         state: PlanningState):
-        self.node_reservation_table.reset()
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
-                continue
-            for request_id in self.assigned_requests[robot_id]:
-                request_struct = state.requests[request_id]
-                for goal_index in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
-                    goal_node_label = request_struct.goal_nodes[goal_index]
-                    planned_goal_index = request_struct.planned_goal_indices[goal_index]
-                    planned_goal_label = state.robot_paths[robot_id][planned_goal_index][0].label
-                    assert goal_node_label == planned_goal_label, \
-                        f"Mismatch in planned goal node labels: {goal_node_label} vs {planned_goal_label}"
-                    start_time = state.robot_paths[robot_id][planned_goal_index][1].start
-                    wait_time = request_struct.wait_times_at_goals_seconds[goal_index]
-                    planned_time = state.robot_paths[robot_id][planned_goal_index][1].end
-                    assert abs(planned_time - (start_time + wait_time)) < 1e-3, \
-                        f"Mismatch in planned time and calculated time: {planned_time} vs {start_time + wait_time}"
-                    reservation_interval = TimeInterval(start=start_time,
-                                                        end=planned_time)
-                    reservation = TimeReservation(robot_id=robot_id,
-                                                  interval=reservation_interval)
-                    self.node_reservation_table.add_reservation(node=goal_node_label,
-                                                                reservation=reservation)
     
     def _estimate_heuristic_cost_to_fulfill_request(self,
                                                      robot_id: int,
@@ -309,7 +311,7 @@ class BasePolicy:
                                                                     traversal_graph_generator=traversal_graph_generator)
         
         if smallest_pickup_deadline:
-            self._extract_node_reservations_from_state(state=state)
+            Helpers.extract_node_reservations_from_state(state=state)
 
             # Assignment logic for robots
             self._assign_requests_to_robots(state=state,
@@ -431,6 +433,7 @@ class FutureCostEstimation:
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
                                   simulated_state: Optional[SimulatedState],
+                                  node_reservation_table: Optional[NodeReservationTable],
                                   requests_lists: Optional[RequestsLists], 
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
@@ -454,7 +457,11 @@ class FutureCostEstimation:
                                                                     traversal_graph_generator=traversal_graph_generator)
         
         if smallest_pickup_deadline:
-            self._extract_node_reservations_from_state(state=state)
+            if node_reservation_table is None:
+                self.node_reservation_table.reset()
+                Helpers.extract_node_reservations_from_state(state=state)
+            else:
+                self.node_reservation_table = copy.deepcopy(node_reservation_table)
 
             # Assignment logic for robots
             self._assign_requests_to_robots(simulated_state=simulated_state,
