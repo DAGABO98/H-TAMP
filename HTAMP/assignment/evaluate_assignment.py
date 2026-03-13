@@ -13,6 +13,7 @@ from HTAMP.assignment.baselines.idle_pred import IdleTaskPrediction
 from HTAMP.assignment.policies.adaptive_rollout import AdaptiveRollout
 from HTAMP.assignment.policies.vanilla_rollout import VanillaRollout
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
+from HTAMP.assignment.policies.base_policy import BasePolicy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -51,7 +52,7 @@ class AssignmentEvaluator:
         self.state = PlanningState(simulator_config=self.simulator_config)
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                     SequentialGreedy | VanillaRollout | AdaptiveRollout = self._initialize_policy(mode=args.mode, 
+                     SequentialGreedy | BasePolicy | VanillaRollout | AdaptiveRollout = self._initialize_policy(mode=args.mode, 
                                                                                                   alpha=args.alpha)
     
     def _initialize_traversal_graph_generator(self):
@@ -133,12 +134,13 @@ class AssignmentEvaluator:
             2: DeadlineAwareTokenPassingwithTaskSwaps,
             3: IdleTaskPrediction,
             4: SequentialGreedy,
-            5: VanillaRollout,
+            5: BasePolicy,
             6: VanillaRollout,
-            7: AdaptiveRollout,
+            7: VanillaRollout,
             8: AdaptiveRollout,
             9: AdaptiveRollout,
-            10: AdaptiveRollout
+            10: AdaptiveRollout,
+            11: AdaptiveRollout
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
@@ -148,7 +150,7 @@ class AssignmentEvaluator:
         if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
             policy = policy_dict[mode](alpha=alpha)
             print(f"Initialized policy with alpha: {alpha}")
-        elif mode in [5, 6]:
+        elif mode in [6, 7]:
             if mode == 5:
                 allow_premptive_moves = True
             else:
@@ -165,17 +167,17 @@ class AssignmentEvaluator:
                                        fps=self.simulator_config.fps,
                                        allow_premptive_moves=allow_premptive_moves)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
-        elif mode in [7, 8, 9, 10]:
-            if mode == 7:
+        elif mode in [8, 9, 10, 11]:
+            if mode == 8:
                 allow_deallocation = True
                 allow_reweighting = True
-            elif mode == 8:
+            elif mode == 9:
                 allow_deallocation = True
                 allow_reweighting = False
-            elif mode == 9:
+            elif mode == 10:
                 allow_deallocation = False
                 allow_reweighting = True
-            else:  # mode == 10
+            else:  # mode == 11
                 allow_deallocation = False
                 allow_reweighting = False
             policy = policy_dict[mode](start_date=self.start_date, 
@@ -544,17 +546,24 @@ def run_experiment(args):
         if args.policy_name in ["tp_d", "d_tpts"]:
             os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
             results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-        elif args.policy_name in ["adaptive_rollout"]:
-            if args.mode == 7:
+        elif args.policy_name in ["vanilla_rollout"] and args.mode in [6, 7]:
+            if args.mode == 6:
+                allow_premptive_moves_str = "prempt"
+            else:                
+                allow_premptive_moves_str = "noprempt"
+            os.makedirs(f"results/policies/{args.policy_name}_{allow_premptive_moves_str}", exist_ok=True)
+            results_df.to_csv(f"results/policies/{args.policy_name}_{allow_premptive_moves_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+        elif args.policy_name in ["adaptive_rollout"] and args.mode in [8, 9, 10, 11]:
+            if args.mode == 8:
                 deallocation_str = "ropt"
                 reweighting_str = "rwt"
-            elif args.mode == 8:
+            elif args.mode == 9:
                 deallocation_str = "ropt"
                 reweighting_str = "norwt"
-            elif args.mode == 9:
+            elif args.mode == 10:
                 deallocation_str = "nopt"
                 reweighting_str = "rwt"
-            else:  # mode == 10
+            else:  # mode == 11
                 deallocation_str = "nopt"
                 reweighting_str = "norwt"
             os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}", exist_ok=True)
