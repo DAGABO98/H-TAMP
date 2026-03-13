@@ -2,7 +2,7 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
-from HTAMP.assignment.policies.heuristic_base_policy import HeuristicFutureCostEstimation
+from HTAMP.assignment.policies.base_policy import HeuristicFutureCostEstimation
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
