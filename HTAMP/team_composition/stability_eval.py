@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime
 from typing import Optional
 
-from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
+from HTAMP.assignment.policies.base_policy import BasePolicy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -39,7 +39,7 @@ class StabilityEvaluator:
         self._initialize_simulator_config()
         self._initialize_motion_planner()
         self.state = PlanningState(simulator_config=self.simulator_config)
-        self.policy: SequentialGreedy = self._initialize_policy()
+        self.policy: BasePolicy = self._initialize_policy()
     
     def _initialize_traversal_graph_generator(self):
         print("Generating Traversal Graph...")
@@ -111,9 +111,9 @@ class StabilityEvaluator:
                                               use_saved_data=use_saved_request_data)
         return request_handler
     
-    def _initialize_policy(self) -> SequentialGreedy:
-        print("Initializing Sequential Greedy policy...")
-        policy = SequentialGreedy(allow_deallocation=False)
+    def _initialize_policy(self) -> BasePolicy:
+        print("Initializing Base Policy...")
+        policy = BasePolicy()
         print("Policy initialized.")
         return policy
     
