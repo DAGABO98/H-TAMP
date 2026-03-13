@@ -2,12 +2,11 @@ import copy
 from typing import Optional
 
 import pandas as pd
-from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
+from HTAMP.assignment.assignment_helpers import TaskQueue
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
-from HTAMP.assignment.policies.base_policy import FutureCostEstimation
+from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
-from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
@@ -185,108 +184,44 @@ class HeuristicRollout:
             else:
                 print("New request does not trigger reassignment. No requests are deallocated.")
     
-    def _extract_node_reservations_from_state(self, 
-                                         state: PlanningState):
-        self.node_reservation_table.reset()
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
-                continue
-            for request_id in self.assigned_requests[robot_id]:
-                request_struct = state.requests[request_id]
-                for goal_index in range(request_struct.completed_goals, len(request_struct.goal_nodes)):
-                    goal_node_label = request_struct.goal_nodes[goal_index]
-                    planned_goal_index = request_struct.planned_goal_indices[goal_index]
-                    planned_goal_label = state.robot_paths[robot_id][planned_goal_index][0].label
-                    assert goal_node_label == planned_goal_label, \
-                        f"Mismatch in planned goal node labels: {goal_node_label} vs {planned_goal_label}"
-                    start_time = state.robot_paths[robot_id][planned_goal_index][1].start
-                    wait_time = request_struct.wait_times_at_goals_seconds[goal_index]
-                    planned_time = state.robot_paths[robot_id][planned_goal_index][1].end
-                    assert abs(planned_time - (start_time + wait_time)) < 1e-3, \
-                        f"Mismatch in planned time and calculated time: {planned_time} vs {start_time + wait_time}"
-                    reservation_interval = TimeInterval(start=start_time,
-                                                        end=planned_time)
-                    reservation = TimeReservation(robot_id=robot_id,
-                                                  interval=reservation_interval)
-                    self.node_reservation_table.add_reservation(node=goal_node_label,
-                                                                reservation=reservation)
-                    
-    def _determine_heuristic_distance_to_request(self,
-                                                robot_id: int,
-                                                request_id: str,
-                                                state: PlanningState,
-                                                motion_planner: MotionPlanner,
-                                                traversal_graph_generator: TraversalGraphGenerator) -> float:
+    def _determine_potential_assignments_for_request(self,
+                                                     request_id: str,
+                                                     state: PlanningState,
+                                                     motion_planner: MotionPlanner,
+                                                     traversal_graph_generator: TraversalGraphGenerator) -> list[tuple[int, float]]:
         request_struct = state.requests[request_id]
-        if self.assigned_requests[robot_id]:
-            last_assigned_request_id = self.assigned_requests[robot_id][-1]
-            last_assigned_request_struct = state.requests[last_assigned_request_id]
-            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
-            last_planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
-            last_path_step = state.robot_paths[robot_id][last_planned_goal_index]
-            start_node = last_path_step[0]
-            start_time = last_path_step[1].end
-            assert planned_goal_node_label == start_node.label, \
-                f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
+        potential_assignments = []
+        if request_struct.request_type == "medication":
+            robot_type = "delivery"
         else:
-            start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
-                                                                                    state=state)
-        heuristic_cost = 0.0
-        total_travel_time = 0.0
-        for j, goal_node_label in enumerate(request_struct.goal_nodes):
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            travel_time_to_goal = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                                    goal_traversal_node=goal_node,
-                                                                    robot_profile=state.simulator_config.robot_profiles[robot_id])
-            if travel_time_to_goal == float('inf'):
-                return float('inf'), float('inf')
-            total_travel_time += travel_time_to_goal
-            arrival_time = start_time + travel_time_to_goal
-            wait_time = request_struct.wait_times_at_goals_seconds[j]
-            service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
-                                                                node_reservation_table=self.node_reservation_table,
-                                                                node_label=goal_node_label,
-                                                                arrival_time=arrival_time,
-                                                                wait_time=wait_time)
-            if service_interval.end > request_struct.time_for_service:
-                return float('inf'), float('inf')
-            else:
-                heuristic_cost = service_interval.end - request_struct.scheduled_time
-                start_node = goal_node
-                start_time = service_interval.end
-            
-        return heuristic_cost, total_travel_time
-    
-    def _filter_potential_assignments_for_request(self,
-                                            request_id: str,
-                                            robot_ids: list[int],
-                                            state: PlanningState,
-                                            motion_planner: MotionPlanner,
-                                            traversal_graph_generator: TraversalGraphGenerator):
-        robots_with_zero_travel_time = []
-        robots_with_finite_travel_time = []
+            robot_type = "monitoring"
+        robot_ids = state.get_robots_of_type(robot_type=robot_type)
+
         for robot_id in robot_ids:
-            heuristic_cost, total_travel_time = self._determine_heuristic_distance_to_request(robot_id=robot_id,
-                                                                                               request_id=request_id,
-                                                                                               state=state,
-                                                                                               motion_planner=motion_planner,
-                                                                                               traversal_graph_generator=traversal_graph_generator)
-            if heuristic_cost == float('inf'):
+            current_node_reservation_table = copy.deepcopy(self.node_reservation_table)
+            currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
+            simulated_state = Helpers.generate_simulated_state_from_current_state(current_state=state)
+            
+            heuristic_cost, service_intervals = Helpers.estimate_simulated_cost_to_fulfill_request(robot_id=robot_id,
+                                                                                                 request_id=request_id,
+                                                                                                 currently_assigned_request_ids=currently_assigned_request_ids,
+                                                                                                 node_reservation_table=current_node_reservation_table,
+                                                                                                 simulated_state=simulated_state,
+                                                                                                 motion_planner=motion_planner,
+                                                                                                 traversal_graph_generator=traversal_graph_generator)
+            if len(service_intervals) == 0 or heuristic_cost == float('inf'):
                 continue
-            elif total_travel_time == 0.0:
-                robots_with_zero_travel_time.append(robot_id)
             else:
-                robots_with_finite_travel_time.append(robot_id)
+                potential_assignments.append((robot_id, heuristic_cost))
         
-        if robots_with_zero_travel_time:
-            return robots_with_zero_travel_time
-        else:
-            return robots_with_finite_travel_time
+        potential_assignments.sort(key=lambda x: x[1])
+
+        return potential_assignments
     
     def _get_assignment_with_minimum_future_costs(self,
                                             request_id: str,
                                             requests_lists: RequestsLists,
-                                            potential_robot_ids: list[int],
+                                            potential_assignments: list[int],
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
@@ -294,7 +229,6 @@ class HeuristicRollout:
                                             minute: int,
                                             look_ahead_minutes: int,
                                             debug: bool):
-
         future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(date_stamp=self.date_stamp,
                                                                                     hour=hour,
                                                                                     minute=minute,
@@ -312,7 +246,6 @@ class HeuristicRollout:
         current_predicted_requests_dict, future_predicted_requests_dict = RolloutHelpers._split_predicted_requests_dict(predicted_requests_dict=predicted_requests_dict,
                                                                                                                         look_ahead_minutes=look_ahead_minutes)
         
-
         
         min_robot_id = None
         min_planned_path = None
@@ -322,10 +255,12 @@ class HeuristicRollout:
         min_path_raw_cost = float('inf')
         
         
-        for robot_id in potential_robot_ids:
+        for i in range(len(potential_assignments)):
+            robot_id = potential_assignments[i][0]
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
             currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
+            current_node_reservation_table = copy.deepcopy(self.node_reservation_table)
 
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
@@ -343,7 +278,7 @@ class HeuristicRollout:
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=currently_assigned_request_ids,
-                                                node_reservation_table=None,
+                                                node_reservation_table=current_node_reservation_table,
                                                 planned_path=planned_path,
                                                 planned_goal_indices=planned_goal_indices,
                                                 planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
@@ -356,6 +291,7 @@ class HeuristicRollout:
                                                                                         cost_estimator=self.cost_estimator,
                                                                                         current_state=current_state,
                                                                                         requests_lists=requests_lists,
+                                                                                        current_node_reservation_table=current_node_reservation_table,
                                                                                         current_predicted_requests_dict=current_predicted_requests_dict,
                                                                                         future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                                         future_predicted_requests_dict=future_predicted_requests_dict,
@@ -382,26 +318,17 @@ class HeuristicRollout:
                                             minute: int,
                                             look_ahead_minutes: int,
                                             debug: bool):
-
-        request_struct = state.requests[request_id]
-        if request_struct.request_type == "medication":
-            robot_type = "delivery"
-        else:
-            robot_type = "monitoring"
-        robot_ids = state.get_robots_of_type(robot_type=robot_type)
-
-        filtered_robot_ids = self._filter_potential_assignments_for_request(request_id=request_id,
-                                                                          robot_ids=robot_ids,
-                                                                          state=state,
-                                                                          motion_planner=motion_planner,
-                                                                          traversal_graph_generator=traversal_graph_generator)
         
-        if len(filtered_robot_ids) == 0:
+        potential_assignments = self._determine_potential_assignments_for_request(request_id=request_id,
+                                                                                 state=state,
+                                                                                 motion_planner=motion_planner,
+                                                                                 traversal_graph_generator=traversal_graph_generator)
+        if len(potential_assignments) == 0:
             if debug:
                 print(f"No valid paths found for any potential assignment of request {request_id}.")
             return None, None, None, None
-        elif len(filtered_robot_ids) == 1:
-            robot_id = filtered_robot_ids[0]
+        elif len(potential_assignments) == 1:
+            robot_id = potential_assignments[0][0]
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
                                                                         currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -420,7 +347,7 @@ class HeuristicRollout:
         else:
             return self._get_assignment_with_minimum_future_costs(request_id=request_id,
                                                                 requests_lists=requests_lists,
-                                                                potential_robot_ids=filtered_robot_ids,
+                                                                potential_assignments=potential_assignments,
                                                                 state=state,
                                                                 motion_planner=motion_planner,
                                                                 traversal_graph_generator=traversal_graph_generator,
@@ -510,7 +437,9 @@ class HeuristicRollout:
                                           traversal_graph_generator=traversal_graph_generator,
                                           debug=debug)
             
-            self._extract_node_reservations_from_state(state=state)
+            Helpers.extract_node_reservations_from_state(state=state,
+                                                         assigned_requests=self.assigned_requests,
+                                                        node_reservation_table=self.node_reservation_table)
 
             # Assignment logic for robots
             self._assign_requests_to_robots(state=state,

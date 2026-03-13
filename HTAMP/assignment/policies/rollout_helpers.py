@@ -6,7 +6,7 @@ from HTAMP.assignment.policies.base_policy import FutureCostEstimation
 from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskRequest, TimeSignal
+from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import PlanningRequestHandler
 from HTAMP.planning.state import PlanningState, SimulatedState
 
@@ -205,8 +205,8 @@ class RolloutHelpers:
     @staticmethod
     def _estimate_future_costs_for_scheduled_and_predicted_assignments(cost_estimator: FutureCostEstimation,
                                                                        current_state: PlanningState,
-                                                                       simulated_state: Optional[SimulatedState],
                                                                        requests_lists: Optional[RequestsLists],
+                                                                       current_node_reservation_table: Optional[NodeReservationTable],
                                                                        current_predicted_requests_dict: dict[float, RequestsLists],
                                                                        future_scheduled_requests_lists: Optional[RequestsLists],
                                                                        future_predicted_requests_dict: dict[float, RequestsLists],
@@ -215,7 +215,8 @@ class RolloutHelpers:
         
         # Cost Estimation for current requests
         simulated_state = cost_estimator.assign_requests_to_robots(state=current_state,
-                                                                   simulated_state=simulated_state,
+                                                                   simulated_state=None,
+                                                                   node_reservation_table=current_node_reservation_table,
                                                                    requests_lists=requests_lists,
                                                                    motion_planner=motion_planner,
                                                                    traversal_graph_generator=traversal_graph_generator,
@@ -225,6 +226,7 @@ class RolloutHelpers:
         current_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=current_predicted_requests_dict)
         cost_estimator.assign_requests_to_robots(state=current_state,
                                                  simulated_state=simulated_state,
+                                                 node_reservation_table=current_node_reservation_table,
                                                  requests_lists=current_combined_requests_lists,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
@@ -234,6 +236,7 @@ class RolloutHelpers:
         # Cost estimation for future requests
         cost_estimator.assign_requests_to_robots(state=current_state,
                                                  simulated_state=simulated_state,
+                                                 node_reservation_table=current_node_reservation_table,
                                                  requests_lists=future_scheduled_requests_lists,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
@@ -243,6 +246,7 @@ class RolloutHelpers:
         future_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=future_predicted_requests_dict)
         cost_estimator.assign_requests_to_robots(state=current_state,
                                                  simulated_state=simulated_state,
+                                                 node_reservation_table=current_node_reservation_table,
                                                  requests_lists=future_combined_requests_lists,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
