@@ -1,4 +1,4 @@
-from ast import Tuple
+from typing import Tuple
 import copy
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue

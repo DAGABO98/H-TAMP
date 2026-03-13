@@ -286,7 +286,7 @@ class AssignmentEvaluator:
                                    look_ahead_minutes: int,
                                    requests_lists: Optional[RequestsLists] = None, 
                                    debug: bool = False):
-        if self.args.mode in [5, 6, 7, 8, 9, 10]:
+        if self.args.mode in [6, 7, 8, 9, 10, 11]:
             self.policy.assign_requests_to_robots(state=self.state,
                                               requests_lists=requests_lists,
                                               motion_planner=self.motion_planner,
