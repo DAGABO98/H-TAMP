@@ -2,7 +2,7 @@ import copy
 from typing import Optional
 
 import pandas as pd
-from HTAMP.assignment.assignment_helpers import TaskQueue
+from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
@@ -184,6 +184,50 @@ class HeuristicRollout:
             else:
                 print("New request does not trigger reassignment. No requests are deallocated.")
     
+    def _estimate_heuristic_cost_to_fulfill_request(self,
+                                                     robot_id: int,
+                                                     request_id: str,
+                                                     state: PlanningState,
+                                                     motion_planner: MotionPlanner,
+                                                     traversal_graph_generator: TraversalGraphGenerator) -> float:
+        request_struct = state.requests[request_id]
+        if self.assigned_requests[robot_id]:
+            last_assigned_request_id = self.assigned_requests[robot_id][-1]
+            last_assigned_request_struct = state.requests[last_assigned_request_id]
+            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
+            last_planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
+            last_path_step = state.robot_paths[robot_id][last_planned_goal_index]
+            start_node = last_path_step[0]
+            start_time = last_path_step[1].end
+            assert planned_goal_node_label == start_node.label, \
+                f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
+        else:
+            start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                    state=state)
+        heuristic_cost = 0.0
+        for j, goal_node_label in enumerate(request_struct.goal_nodes):
+            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
+            travel_time_to_goal = motion_planner.planner.heuristic(start_traversal_node=start_node,
+                                                                    goal_traversal_node=goal_node,
+                                                                    robot_profile=state.simulator_config.robot_profiles[robot_id])
+            if travel_time_to_goal == float('inf'):
+                return float('inf')
+            arrival_time = start_time + travel_time_to_goal
+            wait_time = request_struct.wait_times_at_goals_seconds[j]
+            service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
+                                                                node_reservation_table=self.node_reservation_table,
+                                                                node_label=goal_node_label,
+                                                                arrival_time=arrival_time,
+                                                                wait_time=wait_time)
+            if service_interval.end > request_struct.time_for_service:
+                return float('inf')
+            else:
+                heuristic_cost = service_interval.end - request_struct.scheduled_time
+                start_node = goal_node
+                start_time = service_interval.end
+        
+        return heuristic_cost
+    
     def _determine_potential_assignments_for_request(self,
                                                      request_id: str,
                                                      state: PlanningState,
@@ -198,21 +242,14 @@ class HeuristicRollout:
         robot_ids = state.get_robots_of_type(robot_type=robot_type)
 
         for robot_id in robot_ids:
-            current_node_reservation_table = copy.deepcopy(self.node_reservation_table)
-            currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
-            simulated_state = Helpers.generate_simulated_state_from_current_state(current_state=state)
-            
-            heuristic_cost, service_intervals = Helpers.estimate_simulated_cost_to_fulfill_request(robot_id=robot_id,
-                                                                                                 request_id=request_id,
-                                                                                                 currently_assigned_request_ids=currently_assigned_request_ids,
-                                                                                                 node_reservation_table=current_node_reservation_table,
-                                                                                                 simulated_state=simulated_state,
-                                                                                                 motion_planner=motion_planner,
-                                                                                                 traversal_graph_generator=traversal_graph_generator)
-            if len(service_intervals) == 0 or heuristic_cost == float('inf'):
+            heuristic_cost = self._estimate_heuristic_cost_to_fulfill_request(robot_id=robot_id,
+                                                                              request_id=request_id,
+                                                                              state=state,
+                                                                              motion_planner=motion_planner,
+                                                                              traversal_graph_generator=traversal_graph_generator)
+            if heuristic_cost == float('inf'):
                 continue
-            else:
-                potential_assignments.append((robot_id, heuristic_cost))
+            potential_assignments.append((robot_id, heuristic_cost))
         
         potential_assignments.sort(key=lambda x: x[1])
 

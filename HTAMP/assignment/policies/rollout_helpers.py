@@ -220,7 +220,7 @@ class RolloutHelpers:
                                                                    requests_lists=requests_lists,
                                                                    motion_planner=motion_planner,
                                                                    traversal_graph_generator=traversal_graph_generator,
-                                                                   add_requests_in_request_lists=False,
+                                                                   add_requests_in_request_lists=True,
                                                                    debug=False)
         
         current_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=current_predicted_requests_dict)

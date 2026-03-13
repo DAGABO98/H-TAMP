@@ -13,7 +13,7 @@ from HTAMP.planning.state import PlanningState, SimulatedState
 
 class Helpers:
     @staticmethod
-    def generate_simulated_state_from_current_state(state: PlanningState):
+    def generate_simulated_state_from_current_state(state: PlanningState) -> SimulatedState:
         simulated_state = SimulatedState(planning_state=state)
         return simulated_state
     
@@ -79,14 +79,21 @@ class Helpers:
             if travel_time_to_goal == float('inf'):
                 return float('inf'), []
             arrival_time = start_time + travel_time_to_goal
-            if j == 0 and service_interval.start < request_struct.ordered_time:
-                arrival_time = request_struct.ordered_time
             wait_time = request_struct.wait_times_at_goals_seconds[j]
             service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
                                                                 node_reservation_table=node_reservation_table,
                                                                 node_label=goal_node_label,
                                                                 arrival_time=arrival_time,
                                                                 wait_time=wait_time)
+            
+            if j == 0 and service_interval.start < request_struct.ordered_time:
+                arrival_time = request_struct.ordered_time
+                service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
+                                                                node_reservation_table=node_reservation_table,
+                                                                node_label=goal_node_label,
+                                                                arrival_time=arrival_time,
+                                                                wait_time=wait_time)
+                
             if service_interval.end > request_struct.time_for_service:
                 return float('inf'), []
             else:
@@ -425,7 +432,7 @@ class FutureCostEstimation:
         
         if add_requests_in_request_lists:
             Helpers.add_requests_to_simulated_state(requests_lists=requests_lists,
-                                                          simulated_state=simulated_state)
+                                                    simulated_state=simulated_state)
 
         # Add new requests to the appropriate queues
         smallest_pickup_deadline = self._add_all_requests_to_queues(requests_lists=requests_lists,
