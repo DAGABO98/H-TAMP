@@ -11,6 +11,84 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import RequestsLists, NodeReservationTable, TimeReservation
 from HTAMP.planning.state import PlanningState, SimulatedState
 
+class Helpers:
+    @staticmethod
+    def generate_simulated_state_from_current_state(state: PlanningState):
+        simulated_state = SimulatedState(planning_state=state)
+        return simulated_state
+    
+    @staticmethod
+    def add_requests_to_simulated_state(requests_lists: Optional[RequestsLists],
+                                        simulated_state: SimulatedState):
+        if requests_lists is not None:
+            simulated_state.add_requests_to_state(requests_lists=requests_lists)
+    
+    @staticmethod
+    def estimate_simulated_cost_to_fulfill_request(robot_id: int,
+                                                     request_id: str,
+                                                     currently_assigned_request_ids: list[str],
+                                                     node_reservation_table: NodeReservationTable,
+                                                     simulated_state: SimulatedState,
+                                                     motion_planner: MotionPlanner,
+                                                     traversal_graph_generator: TraversalGraphGenerator) -> Tuple[float, list[TimeInterval]]:
+        request_struct = simulated_state.requests[request_id]
+        if currently_assigned_request_ids:
+            last_assigned_request_id = currently_assigned_request_ids[-1]
+            last_assigned_request_struct = simulated_state.requests[last_assigned_request_id]
+            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
+            start_node = traversal_graph_generator.traversal_graph.nodes_dict[planned_goal_node_label]
+            start_time = last_assigned_request_struct.planned_time
+        else:
+            start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
+                                                                                    state=simulated_state)
+        heuristic_cost = 0.0
+        service_intervals = []
+        for j, goal_node_label in enumerate(request_struct.goal_nodes):
+            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
+            travel_time_to_goal = motion_planner.planner.heuristic(start_traversal_node=start_node,
+                                                                    goal_traversal_node=goal_node,
+                                                                    robot_profile=simulated_state.robot_profiles[robot_id])
+            if travel_time_to_goal == float('inf'):
+                return float('inf')
+            arrival_time = start_time + travel_time_to_goal
+            if j == 0 and service_interval.start < request_struct.ordered_time:
+                arrival_time = request_struct.ordered_time
+            wait_time = request_struct.wait_times_at_goals_seconds[j]
+            service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
+                                                                node_reservation_table=node_reservation_table,
+                                                                node_label=goal_node_label,
+                                                                arrival_time=arrival_time,
+                                                                wait_time=wait_time)
+            if service_interval.end > request_struct.time_for_service:
+                return float('inf'), None
+            else:
+                heuristic_cost = service_interval.end - request_struct.scheduled_time
+                service_intervals.append(service_interval)
+                start_node = goal_node
+                start_time = service_interval.end
+        
+        return heuristic_cost, service_intervals
+    
+    @staticmethod
+    def schedule_request_for_robot(robot_id: int,
+                                   request_id: str,
+                                   currently_assigned_request_ids: list[str],
+                                   node_reservation_table: NodeReservationTable,
+                                   service_intervals: list[TimeInterval],
+                                   simulated_state: SimulatedState):
+        currently_assigned_request_ids.append(request_id)
+        request_struct = simulated_state.requests[request_id]
+        request_struct.schedule_task(planned_time=service_intervals[-1].end,
+                                     planned_goal_indices=list(range(request_struct.completed_goals, len(request_struct.goal_nodes))),
+                                     assigned_robot_id=robot_id)
+        simulated_state.assigned_requests[robot_id].append(request_id)
+        for i, goal_label in enumerate(request_struct.goal_nodes):
+            reservation_interval = service_intervals[i]
+            reservation = TimeReservation(robot_id=robot_id,
+                                        interval=reservation_interval)
+            node_reservation_table.add_reservation(node=goal_label,
+                                                    reservation=reservation)
+
 class BasePolicy:
     def __init__(self, base_policy_use: bool = False):
         self.requests_queue = TaskQueue()
@@ -256,18 +334,6 @@ class FutureCostEstimation:
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
     
-    def _generate_simulated_state_from_current_state(self,
-                                                     requests_lists: Optional[RequestsLists],
-                                                     state: PlanningState):
-        simulated_state = SimulatedState(planning_state=state)
-        return simulated_state
-    
-    def _add_requests_to_simulated_state(self,
-                                        requests_lists: Optional[RequestsLists],
-                                        simulated_state: SimulatedState):
-        if requests_lists is not None:
-            simulated_state.add_requests_to_state(requests_lists=requests_lists)
-    
     def _add_all_requests_to_queues(self, 
                                     requests_lists: Optional[RequestsLists], 
                                     motion_planner: MotionPlanner, 
@@ -314,50 +380,6 @@ class FutureCostEstimation:
                     self.node_reservation_table.add_reservation(node=goal_node_label,
                                                                 reservation=reservation)
     
-    def _estimate_heuristic_cost_to_fulfill_request(self,
-                                                     robot_id: int,
-                                                     request_id: str,
-                                                     simulated_state: SimulatedState,
-                                                     motion_planner: MotionPlanner,
-                                                     traversal_graph_generator: TraversalGraphGenerator) -> Tuple[float, list[TimeInterval]]:
-        request_struct = simulated_state.requests[request_id]
-        if self.assigned_requests[robot_id]:
-            last_assigned_request_id = self.assigned_requests[robot_id][-1]
-            last_assigned_request_struct = simulated_state.requests[last_assigned_request_id]
-            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
-            start_node = traversal_graph_generator.traversal_graph.nodes_dict[planned_goal_node_label]
-            start_time = last_assigned_request_struct.planned_time
-        else:
-            start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
-                                                                                    state=simulated_state)
-        heuristic_cost = 0.0
-        service_intervals = []
-        for j, goal_node_label in enumerate(request_struct.goal_nodes):
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            travel_time_to_goal = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                                    goal_traversal_node=goal_node,
-                                                                    robot_profile=simulated_state.robot_profiles[robot_id])
-            if travel_time_to_goal == float('inf'):
-                return float('inf')
-            arrival_time = start_time + travel_time_to_goal
-            if j == 0 and service_interval.start < request_struct.ordered_time:
-                arrival_time = request_struct.ordered_time
-            wait_time = request_struct.wait_times_at_goals_seconds[j]
-            service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
-                                                                node_reservation_table=self.node_reservation_table,
-                                                                node_label=goal_node_label,
-                                                                arrival_time=arrival_time,
-                                                                wait_time=wait_time)
-            if service_interval.end > request_struct.time_for_service:
-                return float('inf'), None
-            else:
-                heuristic_cost = service_interval.end - request_struct.scheduled_time
-                service_intervals.append(service_interval)
-                start_node = goal_node
-                start_time = service_interval.end
-        
-        return heuristic_cost, service_intervals
-    
     def _determine_best_assignment_for_request(self,
                                               request_id: str,
                                               simulated_state: SimulatedState,
@@ -368,8 +390,10 @@ class FutureCostEstimation:
         best_service_intervals = []
 
         for robot_id in simulated_state.robots_current_nodes.keys():
-            heuristic_cost, service_intervals = self._estimate_heuristic_cost_to_fulfill_request(robot_id=robot_id,
+            heuristic_cost, service_intervals = Helpers.estimate_simulated_cost_to_fulfill_request(robot_id=robot_id,
                                                                                                  request_id=request_id,
+                                                                                                 currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                                                                 node_reservation_table=self.node_reservation_table,
                                                                                                  simulated_state=simulated_state,
                                                                                                  motion_planner=motion_planner,
                                                                                                  traversal_graph_generator=traversal_graph_generator)
@@ -379,24 +403,6 @@ class FutureCostEstimation:
                 best_service_intervals = service_intervals
 
         return best_robot_id, best_service_intervals
-    
-    def _schedule_request_for_robot(self,
-                                   robot_id: int,
-                                   request_id: str,
-                                   service_intervals: list[TimeInterval],
-                                   simulated_state: SimulatedState):
-        self.assigned_requests[robot_id].append(request_id)
-        request_struct = simulated_state.requests[request_id]
-        request_struct.schedule_task(planned_time=service_intervals[-1].end,
-                                     planned_goal_indices=list(range(request_struct.completed_goals, len(request_struct.goal_nodes))),
-                                     assigned_robot_id=robot_id)
-        simulated_state.assigned_requests[robot_id].append(request_id)
-        for i, goal_label in enumerate(request_struct.goal_nodes):
-            reservation_interval = service_intervals[i]
-            reservation = TimeReservation(robot_id=robot_id,
-                                        interval=reservation_interval)
-            self.node_reservation_table.add_reservation(node=goal_label,
-                                                        reservation=reservation)
         
     def _assign_requests_to_robots(self,
                                   simulated_state: SimulatedState,
@@ -411,8 +417,10 @@ class FutureCostEstimation:
                                                                                                  motion_planner=motion_planner,
                                                                                                  traversal_graph_generator=traversal_graph_generator)
             if best_robot_id is not None:
-                self._schedule_request_for_robot(robot_id=best_robot_id,
+                Helpers.schedule_request_for_robot(robot_id=best_robot_id,
                                                 request_id=next_request_id,
+                                                currently_assigned_request_ids=self.assigned_requests[best_robot_id],
+                                                node_reservation_table=self.node_reservation_table,
                                                 service_intervals=best_service_intervals,
                                                 simulated_state=simulated_state)
             else:
@@ -432,13 +440,13 @@ class FutureCostEstimation:
         if simulated_state is None:
             # Extract assigned requests from state
             self._extract_assigned_requests_from_state(state=state)
-            simulated_state = self._generate_simulated_state_from_current_state(state=state)
+            simulated_state = Helpers.generate_simulated_state_from_current_state(state=state)
         else:
             self.assigned_requests = copy.deepcopy(simulated_state.assigned_requests)
         
         if add_requests_in_request_lists:
-            self._add_requests_to_simulated_state(requests_lists=requests_lists,
-                                                 simulated_state=simulated_state)
+            Helpers.add_requests_to_simulated_state(requests_lists=requests_lists,
+                                                          simulated_state=simulated_state)
 
         # Add new requests to the appropriate queues
         smallest_pickup_deadline = self._add_all_requests_to_queues(requests_lists=requests_lists,
