@@ -73,7 +73,7 @@ class PlanningState:
         return zipped_samples, cumulative_lengths, edge_length
     
     def add_request(self, request: TaskRequest) -> None:
-        self.requests[request.request_id] = request
+        self.requests[request.request_id] = copy.deepcopy(request)
 
     def add_new_requests(self, requests: list[TaskRequest]) -> None:
         for request in requests:
