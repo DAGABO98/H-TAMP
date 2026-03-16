@@ -339,7 +339,6 @@ class FutureCostEstimation:
     def reset(self):
         self.requests_queue = TaskQueue()
         self.assigned_requests = {}
-        self.node_reservation_table.reset()
 
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -374,7 +373,14 @@ class FutureCostEstimation:
         best_heuristic_cost = float('inf')
         best_service_intervals = []
 
-        for robot_id in simulated_state.robots_current_nodes.keys():
+        request_struct = simulated_state.requests[request_id]
+        if request_struct.request_type == "medication":
+            robot_type = "delivery"
+        else:
+            robot_type = "monitoring"
+        robot_ids = simulated_state.get_robots_of_type(robot_type=robot_type)
+
+        for robot_id in robot_ids:
             heuristic_cost, service_intervals = Helpers.estimate_simulated_cost_to_fulfill_request(robot_id=robot_id,
                                                                                                  request_id=request_id,
                                                                                                  currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -403,8 +409,8 @@ class FutureCostEstimation:
                                                                                                  traversal_graph_generator=traversal_graph_generator)
             if best_robot_id is not None:
                 if debug:
-                    print(f"2) Assigning request {next_request_id} to robot {best_robot_id} with estimated service intervals {best_service_intervals}")
-                    print(f"2) Node reservation table before assignment: {self.node_reservation_table}")
+                    print(f"3) Assigning request {next_request_id} to robot {best_robot_id} with estimated service intervals {best_service_intervals}")
+                    print(f"3) Node reservation table before assignment: {self.node_reservation_table}")
 
                 Helpers.schedule_request_for_robot(robot_id=best_robot_id,
                                                 request_id=next_request_id,
