@@ -485,6 +485,14 @@ class SimulatedState:
 
         for request in requests:
             self.requests[request.request_id] = copy.deepcopy(request)
+    
+    def get_robots_of_type(self, robot_type: str) -> list[int]:
+        robots_of_type = []
+        for robot_id in self.robots_current_nodes.keys():
+            profile = self.robot_profiles[robot_id]
+            if profile.robot_type == robot_type:
+                robots_of_type.append(profile.robot_id)
+        return robots_of_type
         
 def main():
     parser = argparse.ArgumentParser()

@@ -43,7 +43,7 @@ class TimeReservation:
         return complements
     
     def __repr__(self) -> str:
-        return f"TimeReservation(start={self.interval.start}, end={self.interval.end}, robot_id={self.robot_id})"
+        return f"(start={self.interval.start}, end={self.interval.end}, robot_id={self.robot_id})"
 
 @dataclass
 class CellReservationTable:
@@ -62,7 +62,7 @@ class CellReservationTable:
                         self.reservations[cell][i] = merged
                         return merged
                     else:
-                        raise ValueError(f"Conflict detected for cell {cell} between robot {existing.robot_id} and robot {reservation.robot_id}.")
+                        raise ValueError(f"Conflict detected for cell {cell} between robot {existing.robot_id} with reservation {existing.interval} and robot {reservation.robot_id} with {reservation.interval}.")
             self.reservations[cell].append(reservation)
             self.robot_cell_dict.setdefault(reservation.robot_id, []).append(cell)
         else:
@@ -132,7 +132,7 @@ class NodeReservationTable:
                         self.reservations[node][i] = merged
                         return merged
                     else:
-                        raise ValueError(f"Conflict detected for node {node} between robot {existing.robot_id} and robot {reservation.robot_id}.")
+                        raise ValueError(f"Conflict detected for node {node} between robot {existing.robot_id} with reservation {existing.interval} and robot {reservation.robot_id} with {reservation.interval}.")
             self.reservations[node].append(reservation)
             self.robot_node_dict.setdefault(reservation.robot_id, []).append(node)
         else:
@@ -176,7 +176,7 @@ class NodeReservationTable:
         return safe_intervals
     
     def __repr__(self):
-        return f"NodeReservationTable(reservations={self.reservations}, robot_node_dict={self.robot_node_dict})"
+        return f"({self.reservations})"
 
 class DateOperationalRange:
     def __init__(self, year: int, month: int, day: int, start_hour: int, end_hour: int, month_lengths=None):
