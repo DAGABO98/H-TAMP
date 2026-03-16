@@ -402,6 +402,10 @@ class FutureCostEstimation:
                                                                                                  motion_planner=motion_planner,
                                                                                                  traversal_graph_generator=traversal_graph_generator)
             if best_robot_id is not None:
+                if debug:
+                    print(f"2) Assigning request {next_request_id} to robot {best_robot_id} with estimated service intervals {best_service_intervals}")
+                    print(f"2) Node reservation table before assignment: {self.node_reservation_table}")
+
                 Helpers.schedule_request_for_robot(robot_id=best_robot_id,
                                                 request_id=next_request_id,
                                                 currently_assigned_request_ids=self.assigned_requests[best_robot_id],
@@ -440,12 +444,7 @@ class FutureCostEstimation:
                                                                     traversal_graph_generator=traversal_graph_generator)
         
         if smallest_pickup_deadline:
-            if node_reservation_table is None:
-                Helpers.extract_node_reservations_from_state(state=state,
-                                                             assigned_requests=self.assigned_requests,
-                                                            node_reservation_table=self.node_reservation_table)
-            else:
-                self.node_reservation_table = node_reservation_table
+            self.node_reservation_table = node_reservation_table
 
             # Assignment logic for robots
             self._assign_requests_to_robots(simulated_state=simulated_state,

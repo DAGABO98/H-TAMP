@@ -211,8 +211,12 @@ class RolloutHelpers:
                                                                        future_scheduled_requests_lists: Optional[RequestsLists],
                                                                        future_predicted_requests_dict: dict[float, RequestsLists],
                                                                        motion_planner: MotionPlanner,
-                                                                       traversal_graph_generator: TraversalGraphGenerator):
+                                                                       traversal_graph_generator: TraversalGraphGenerator,
+                                                                       debug: bool=False) -> Tuple[float, float]:
         
+        if debug:
+            print(f"Estimating costs for current and future scheduled and predicted requests...")
+            print(f"Current node reservation table: {current_node_reservation_table} at the beginning of cost estimation")
         # Cost Estimation for current requests
         simulated_state = cost_estimator.assign_requests_to_robots(state=current_state,
                                                                    simulated_state=None,
@@ -221,7 +225,10 @@ class RolloutHelpers:
                                                                    motion_planner=motion_planner,
                                                                    traversal_graph_generator=traversal_graph_generator,
                                                                    add_requests_in_request_lists=True,
-                                                                   debug=False)
+                                                                   debug=debug)
+        
+        if debug:
+            print(f"Node reservation table after assigning current scheduled requests: {current_node_reservation_table}")
         
         current_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=current_predicted_requests_dict)
         cost_estimator.assign_requests_to_robots(state=current_state,
@@ -231,7 +238,10 @@ class RolloutHelpers:
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  add_requests_in_request_lists=True,
-                                                 debug=False)
+                                                 debug=debug)
+        
+        if debug:
+            print(f"Node reservation table after assigning current predicted requests: {current_node_reservation_table}")
         
         # Cost estimation for future requests
         cost_estimator.assign_requests_to_robots(state=current_state,
@@ -241,7 +251,10 @@ class RolloutHelpers:
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  add_requests_in_request_lists=True,
-                                                 debug=False)
+                                                 debug=debug)
+        
+        if debug:
+            print(f"Node reservation table after assigning future scheduled requests: {current_node_reservation_table}")
     
         future_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=future_predicted_requests_dict)
         cost_estimator.assign_requests_to_robots(state=current_state,
@@ -251,7 +264,9 @@ class RolloutHelpers:
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  add_requests_in_request_lists=True,
-                                                 debug=False)
+                                                 debug=debug)
+        if debug:
+            print(f"Node reservation table after assigning future predicted requests: {current_node_reservation_table}")
         
         unmodified_cost, truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=simulated_state,
                                                                                              rejection_penalty=current_state.simulator_config.rejection_penalty)

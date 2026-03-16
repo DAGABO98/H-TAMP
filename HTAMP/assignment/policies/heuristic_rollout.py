@@ -297,6 +297,7 @@ class HeuristicRollout:
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
             currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
+            current_node_reservation_table = copy.deepcopy(self.node_reservation_table)
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
                                                                         currently_assigned_request_ids=currently_assigned_request_ids,
@@ -310,7 +311,6 @@ class HeuristicRollout:
                 if debug:
                     print(f"Found a valid path for potential assignment of request {request_id} to robot {robot_id}. Simulating future assignments...")
                     print(f"Planned goal indices for assignment of request {request_id} to robot {robot_id}: {planned_goal_indices}")
-                current_node_reservation_table = copy.deepcopy(self.node_reservation_table)
                 PolicyHelpers._schedule_request(robot_id=robot_id,
                                                 request_id=request_id,
                                                 currently_assigned_request_ids=currently_assigned_request_ids,
