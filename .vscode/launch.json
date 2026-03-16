@@ -9,8 +9,8 @@
             "type": "debugpy",
             "request": "launch",
             "module": "HTAMP.assignment.evaluate_assignment",
-            "args": ["--use_saved_data", "--use_saved_request_data", "--mode", "7", "--policy_name", "adaptive_rollout", 
-            "--year", "2024", "--month", "9", "--day", "30", "--floor_number", "2", "--num_monitoring_robots", "6",
+            "args": ["--use_saved_data", "--use_saved_request_data", "--mode", "12", "--policy_name", "heuristic_rollout", 
+            "--year", "2025", "--month", "1", "--day", "28", "--floor_number", "3", "--num_monitoring_robots", "6",
             "--num_delivery_robots", "3", "--debug"],
             "console": "integratedTerminal"
         },
