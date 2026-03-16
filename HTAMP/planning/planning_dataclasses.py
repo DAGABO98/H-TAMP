@@ -174,6 +174,9 @@ class NodeReservationTable:
         if current_time < horizon:
             safe_intervals.append(TimeReservation(TimeInterval(current_time, horizon), robot_id=robot_id))
         return safe_intervals
+    
+    def __repr__(self):
+        return f"NodeReservationTable(reservations={self.reservations}, robot_node_dict={self.robot_node_dict})"
 
 class DateOperationalRange:
     def __init__(self, year: int, month: int, day: int, start_hour: int, end_hour: int, month_lengths=None):
