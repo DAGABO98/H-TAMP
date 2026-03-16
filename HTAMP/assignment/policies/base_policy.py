@@ -441,7 +441,6 @@ class FutureCostEstimation:
         
         if smallest_pickup_deadline:
             if node_reservation_table is None:
-                self.node_reservation_table.reset()
                 Helpers.extract_node_reservations_from_state(state=state,
                                                              assigned_requests=self.assigned_requests,
                                                             node_reservation_table=self.node_reservation_table)

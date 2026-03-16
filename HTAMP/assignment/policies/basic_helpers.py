@@ -97,9 +97,9 @@ class PolicyHelpers:
             reservations.sort(key=lambda x: x.interval.start)
             reservations = [res for res in reservations if res.robot_id != robot_id]
             for reservation in reservations:
-                if interval_end <= reservation.interval.start:
+                if interval_end < reservation.interval.start:
                     break
-                elif interval_start >= reservation.interval.end:
+                elif interval_start > reservation.interval.end:
                     continue
                 else:
                     interval_start = reservation.interval.end + movement_time
