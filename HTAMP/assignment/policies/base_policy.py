@@ -446,7 +446,7 @@ class FutureCostEstimation:
                                                              assigned_requests=self.assigned_requests,
                                                             node_reservation_table=self.node_reservation_table)
             else:
-                self.node_reservation_table = copy.deepcopy(node_reservation_table)
+                self.node_reservation_table = node_reservation_table
 
             # Assignment logic for robots
             self._assign_requests_to_robots(simulated_state=simulated_state,
