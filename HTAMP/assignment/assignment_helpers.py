@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import heapq
 from typing import Optional
 
@@ -18,7 +19,24 @@ class TaskQueue:
 
     def pop_task(self):
         return heapq.heappop(self.heap)[1] if self.heap else None
+
+@dataclass
+class RequestsDict:
+    medication: list[str] = []
+    monitoring: list[str] = []
+
+    def add_request(self, request: TaskRequest):
+        if request.request_type == "medication":
+            self.medication.append(request.request_id)
+        elif request.request_type == "monitoring":
+            self.monitoring.append(request.request_id)
     
+    def remove_request(self, request_id: str):
+        if request_id in self.medication:
+            self.medication.remove(request_id)
+        elif request_id in self.monitoring:
+            self.monitoring.remove(request_id)
+
 class AssignmentHelpers:
     
     @staticmethod

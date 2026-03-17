@@ -2,7 +2,7 @@ import copy
 from typing import Optional
 
 import pandas as pd
-from HTAMP.assignment.assignment_helpers import AssignmentHelpers
+from HTAMP.assignment.assignment_helpers import AssignmentHelpers, RequestsDict
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
@@ -28,6 +28,7 @@ class VanillaRollout:
                  all_task_properties:AllTaskProperties,
                  allow_deallocation: bool,
                  allow_reweighting: bool):
+        self.unassigned_requests_dict = RequestsDict(monitoring=[], medication=[])
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.date_stamp = date_stamp
@@ -51,207 +52,40 @@ class VanillaRollout:
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
     
-    def _add_all_real_requests_to_queues(self, 
-                                    requests_lists: Optional[RequestsLists], 
-                                    motion_planner: MotionPlanner, 
-                                    traversal_graph_generator: TraversalGraphGenerator):
+    def _add_all_real_requests_to_requests_dict(self, 
+                                    requests_lists: Optional[RequestsLists]):
         if requests_lists is None:
-            return None
-        pickup_deadlines = []
+            return False
         for data_field in requests_lists.__dataclass_fields__.keys():
             requests_list = getattr(requests_lists, data_field)
             for request in requests_list:
-                pickup_deadline = PolicyHelpers._add_request_to_queue_using_pickup_deadline(request=request,
-                                           task_queue=self.requests_queue,
-                                           delivery_robot_profile=self.dummy_delivery_robot_profile,
-                                           motion_planner=motion_planner,
-                                           traversal_graph_generator=traversal_graph_generator)
-                pickup_deadlines.append(pickup_deadline)
+                self.unassigned_requests_dict.add_request(request)
         
-        smallest_pickup_deadline = min(pickup_deadlines) if pickup_deadlines else None
-        return smallest_pickup_deadline
+        return True
     
-    def _deallocate_requests_from_robot(self,
-                                       robot_id: int,
-                                       state: PlanningState,
-                                       motion_planner: MotionPlanner,
-                                       traversal_graph_generator: TraversalGraphGenerator,
-                                       debug: bool) -> dict[int, list[str]]:
-        
-        if not self.assigned_requests[robot_id]:
-            return None
-        
-        largest_assigned_request_index = None
-        for i, request_id in enumerate(self.assigned_requests[robot_id]):
-            request_struct = state.requests[request_id]
-            if request_struct.started:
-                largest_assigned_request_index = i
-                if debug:
-                    print(f"Skipping deallocation of request {request_id} from robot {robot_id} because the request has already started.")
-                continue
-            pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
-                                                                      request=request_struct,
-                                                                      motion_planner=motion_planner,
-                                                                      traversal_graph_generator=traversal_graph_generator)
-            if debug:
-                print(f"Deallocating request {request_id} from robot {robot_id}.")
-            self.requests_queue.add_task(priority=pickup_deadline, 
-                                        task_id=request_id)
-            request_struct.reset_assignment()
-            state.remove_request_from_robot(request_id=request_id, 
-                                            robot_id=robot_id)
-        
-        return largest_assigned_request_index
-    
-    def _determine_if_new_request_triggers_reassignment(self,
-                                        smallest_pickup_deadline: float,
-                                        state: PlanningState,
-                                        motion_planner: MotionPlanner,
-                                        traversal_graph_generator: TraversalGraphGenerator) -> bool:
-        for robot_id in self.assigned_requests.keys():
-            if not self.assigned_requests[robot_id]:
-                continue
-
-            for i, request_id in enumerate(self.assigned_requests[robot_id]):
-                request_struct = state.requests[request_id]
-                if request_struct.started:
-                    continue
-                pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
-                                                                          request=request_struct,
-                                                                          motion_planner=motion_planner,
-                                                                          traversal_graph_generator=traversal_graph_generator)
-                if pickup_deadline > smallest_pickup_deadline:
-                    return True
-        return False
-    
-    def _determine_if_reweighting_triggers_reassignment(self,
-                                        state: PlanningState,
-                                        debug: bool) -> bool:
-        # TODO: to be implemented once the prediction errors is calculated
-        return False
-
-    def _deallocate_requests(self,
-                             smallest_pickup_deadline: float,
-                             state: PlanningState,
-                             motion_planner: MotionPlanner,
-                             traversal_graph_generator: TraversalGraphGenerator,
-                             debug: bool):
-        new_req_trigger_reassignment = self._determine_if_new_request_triggers_reassignment(smallest_pickup_deadline=smallest_pickup_deadline,
-                                                                                   state=state,
-                                                                                   motion_planner=motion_planner,
-                                                                                   traversal_graph_generator=traversal_graph_generator)
-        
-        if self.allow_reweighting:
-            weighting_trigger_reassignment = self._determine_if_reweighting_triggers_reassignment(state=state,
-                                                                                                  debug=debug)
-            trigger_reassignment = new_req_trigger_reassignment or weighting_trigger_reassignment
-        else:
-            trigger_reassignment = new_req_trigger_reassignment
-
-        if trigger_reassignment:
-            print("New request triggers reassignment. Deallocating requests from robots...")
-            for robot_id in self.assigned_requests.keys():
-                largest_assigned_request_index = self._deallocate_requests_from_robot(robot_id=robot_id,
-                                                                                     state=state,
-                                                                                     motion_planner=motion_planner,
-                                                                                     traversal_graph_generator=traversal_graph_generator,
-                                                                                     debug=debug)
-                if largest_assigned_request_index is not None:
-                    if largest_assigned_request_index < len(self.assigned_requests[robot_id]) - 1:
-                        self.assigned_requests[robot_id] = self.assigned_requests[robot_id][:largest_assigned_request_index+1]
-                        PolicyHelpers._generate_motion_plan_to_depot(robot_id=robot_id,
-                                                         currently_assigned_request_ids=self.assigned_requests[robot_id],
-                                                         state=state,
-                                                         motion_planner=motion_planner,
-                                                         traversal_graph_generator=traversal_graph_generator,
-                                                         debug=debug)
-                    else:
-                        continue
-
-                else:
-                    if self.assigned_requests[robot_id]:
-                        self.assigned_requests[robot_id] = []
-                        PolicyHelpers._generate_motion_plan_to_depot(robot_id=robot_id,
-                                                            currently_assigned_request_ids=self.assigned_requests[robot_id],
-                                                            state=state,
-                                                            motion_planner=motion_planner,
-                                                            traversal_graph_generator=traversal_graph_generator,
-                                                            debug=debug)
-                    else:
-                        continue
-            else:
-                print("New request does not trigger reassignment. No requests are deallocated.")
-    
-    def _estimate_heuristic_cost_to_fulfill_request(self,
-                                                     robot_id: int,
-                                                     request_id: str,
-                                                     state: PlanningState,
-                                                     motion_planner: MotionPlanner,
-                                                     traversal_graph_generator: TraversalGraphGenerator) -> float:
-        request_struct = state.requests[request_id]
-        if self.assigned_requests[robot_id]:
-            last_assigned_request_id = self.assigned_requests[robot_id][-1]
-            last_assigned_request_struct = state.requests[last_assigned_request_id]
-            planned_goal_node_label = last_assigned_request_struct.goal_nodes[-1]
-            last_planned_goal_index = last_assigned_request_struct.planned_goal_indices[-1]
-            last_path_step = state.robot_paths[robot_id][last_planned_goal_index]
-            start_node = last_path_step[0]
-            start_time = last_path_step[1].end
-            assert planned_goal_node_label == start_node.label, \
-                f"Mismatch in planned goal node label and start node label: {planned_goal_node_label} vs {start_node.label}"
-        else:
-            start_node, start_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
-                                                                                    state=state)
-        heuristic_cost = 0.0
-        for j, goal_node_label in enumerate(request_struct.goal_nodes):
-            goal_node = traversal_graph_generator.traversal_graph.nodes_dict[goal_node_label]
-            travel_time_to_goal = motion_planner.planner.heuristic(start_traversal_node=start_node,
-                                                                    goal_traversal_node=goal_node,
-                                                                    robot_profile=state.simulator_config.robot_profiles[robot_id])
-            if travel_time_to_goal == float('inf'):
-                return float('inf')
-            arrival_time = start_time + travel_time_to_goal
-            wait_time = request_struct.wait_times_at_goals_seconds[j]
-            service_interval = PolicyHelpers._obtain_time_to_service_node(robot_id=robot_id,
-                                                                node_reservation_table=self.node_reservation_table,
-                                                                node_label=goal_node_label,
-                                                                arrival_time=arrival_time,
-                                                                wait_time=wait_time)
-            if service_interval.end > request_struct.time_for_service:
-                return float('inf')
-            else:
-                heuristic_cost = service_interval.end - request_struct.scheduled_time
-                start_node = goal_node
-                start_time = service_interval.end
-        
-        return heuristic_cost
-    
-    def _determine_potential_assignments_for_request(self,
-                                                     request_id: str,
-                                                     state: PlanningState,
-                                                     motion_planner: MotionPlanner,
-                                                     traversal_graph_generator: TraversalGraphGenerator) -> list[tuple[int, float]]:
-        request_struct = state.requests[request_id]
-        potential_assignments = []
-        if request_struct.request_type == "medication":
-            robot_type = "delivery"
-        else:
-            robot_type = "monitoring"
-        robot_ids = state.get_robots_of_type(robot_type=robot_type)
-
-        for robot_id in robot_ids:
-            heuristic_cost = self._estimate_heuristic_cost_to_fulfill_request(robot_id=robot_id,
-                                                                              request_id=request_id,
-                                                                              state=state,
-                                                                              motion_planner=motion_planner,
-                                                                              traversal_graph_generator=traversal_graph_generator)
-            if heuristic_cost == float('inf'):
-                continue
-            potential_assignments.append((robot_id, heuristic_cost))
-        
-        potential_assignments.sort(key=lambda x: x[1])
-
-        return potential_assignments
+    def _convert_requests_dict_to_requests_lists(self, state: PlanningState):
+        requests_lists = RequestsLists(blood_pressure_requests=[], 
+                                       heart_rate_requests=[],
+                                       respiratory_rate_requests=[],
+                                        oxygen_saturation_requests=[],
+                                        temperature_requests=[],
+                                        medications_requests=[])
+        for request_id in self.unassigned_requests_dict.monitoring:
+            request = copy.deepcopy(state.requests[request_id])
+            if request.request_type == "blood_pressure":
+                requests_lists.blood_pressure_requests.append(request)
+            elif request.request_type == "heart_rate":
+                requests_lists.heart_rate_requests.append(request)
+            elif request.request_type == "respiratory_rate":
+                requests_lists.respiratory_rate_requests.append(request)
+            elif request.request_type == "oxygen_saturation":
+                requests_lists.oxygen_saturation_requests.append(request)
+            elif request.request_type == "temperature":
+                requests_lists.temperature_requests.append(request)
+        for request_id in self.unassigned_requests_dict.medication:
+            request = copy.deepcopy(state.requests[request_id])
+            if request.request_type == "medication":
+                requests_lists.medications_requests.append(request)
     
     def _get_assignment_with_minimum_future_costs(self,
                                             request_id: str,
@@ -400,10 +234,6 @@ class VanillaRollout:
                                   minute: int,
                                   look_ahead_minutes: int,
                                   debug: bool):
-        if requests_lists is None:
-            return
-        else:
-            current_requests_lists = copy.deepcopy(requests_lists)
 
         while self.requests_queue.heap:
             request_id = self.requests_queue.pop_task()
@@ -459,18 +289,16 @@ class VanillaRollout:
         self._extract_assigned_requests_from_state(state=state)
 
         # Add new requests to the appropriate queues
-        smallest_pickup_deadline = self._add_all_real_requests_to_queues(requests_lists=requests_lists,
-                                                                    motion_planner=motion_planner,
-                                                                    traversal_graph_generator=traversal_graph_generator)
+        new_requests_added = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists)
+        robot_close_to_being_done = PolicyHelpers._check_if_any_robot_is_close_to_being_done(state=state,
+                                                                                             motion_planner=motion_planner,
+                                                                                             traversal_graph_generator=traversal_graph_generator,
+                                                                                             hour=hour,
+                                                                                             minute=minute,
+                                                                                             look_ahead_minutes=look_ahead_minutes,
+                                                                                             debug=debug)
         
-        if smallest_pickup_deadline:
-            if self.allow_deallocation:
-                self._deallocate_requests(smallest_pickup_deadline=smallest_pickup_deadline,
-                                          state=state,
-                                          motion_planner=motion_planner,
-                                          traversal_graph_generator=traversal_graph_generator,
-                                          debug=debug)
-            
+        if new_requests_added or robot_close_to_being_done:
             Helpers.extract_node_reservations_from_state(state=state,
                                                          assigned_requests=self.assigned_requests,
                                                         node_reservation_table=self.node_reservation_table)
