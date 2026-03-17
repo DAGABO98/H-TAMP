@@ -3,7 +3,6 @@ from typing import Optional, Tuple
 import pandas as pd
 
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation
-from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists, TaskRequest, TimeSignal
@@ -126,66 +125,6 @@ class RolloutHelpers:
                 return scheduled_requests_lists
         else:
             return None
-    
-    @staticmethod
-    def _simulate_scheduled_and_predicted_assignments(base_policy: SequentialGreedy,
-                                                      current_state: PlanningState,
-                                                      requests_lists: Optional[RequestsLists],
-                                                      predicted_requests_dict: dict[float, RequestsLists],
-                                                      motion_planner: MotionPlanner,
-                                                      traversal_graph_generator: TraversalGraphGenerator,
-                                                      look_ahead_minutes: int,
-                                                      fps: int):
-        base_policy.assign_requests_to_robots(state=current_state,
-                                                requests_lists=requests_lists,
-                                                motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator,
-                                                debug=False)
-        
-        for i in range(look_ahead_minutes):
-            for second in range(60):
-                current_time = current_state.simulator_time
-                predicted_requests_lists = predicted_requests_dict.get(current_time, None)
-                if predicted_requests_lists:
-                    RolloutHelpers._add_requests_to_state(requests_lists=predicted_requests_lists, 
-                                                         state=current_state)
-                    base_policy.assign_requests_to_robots(state=current_state,
-                                                            requests_lists=predicted_requests_lists,
-                                                            motion_planner=motion_planner,
-                                                            traversal_graph_generator=traversal_graph_generator,
-                                                            debug=False)
-                for frame in range(fps):
-                    current_state.step(traversal_graph=traversal_graph_generator.traversal_graph,
-                                       planning_flag=True)
-    
-    @staticmethod
-    def _simulate_future_assignments(base_policy: SequentialGreedy,
-                                     current_state: PlanningState,
-                                     requests_lists: Optional[RequestsLists],
-                                     future_scheduled_requests_lists: Optional[RequestsLists],
-                                     predicted_requests_dict: dict[float, RequestsLists],
-                                     motion_planner: MotionPlanner,
-                                     traversal_graph_generator: TraversalGraphGenerator,
-                                     look_ahead_minutes: int,
-                                     fps: int):
-        
-        RolloutHelpers._simulate_scheduled_and_predicted_assignments(base_policy=base_policy,
-                                                                    current_state=current_state,
-                                                                    requests_lists=requests_lists,
-                                                                    predicted_requests_dict=predicted_requests_dict,
-                                                                    motion_planner=motion_planner,
-                                                                    traversal_graph_generator=traversal_graph_generator,
-                                                                    look_ahead_minutes=look_ahead_minutes,
-                                                                    fps=fps)
-        
-        RolloutHelpers._simulate_scheduled_and_predicted_assignments(base_policy=base_policy,
-                                                                    current_state=current_state,
-                                                                    requests_lists=future_scheduled_requests_lists,
-                                                                    predicted_requests_dict=predicted_requests_dict,
-                                                                    motion_planner=motion_planner,
-                                                                    traversal_graph_generator=traversal_graph_generator,
-                                                                    look_ahead_minutes=10,
-                                                                    fps=fps)
     
     @staticmethod
     def _convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict: dict[float, RequestsLists]) -> RequestsLists:
