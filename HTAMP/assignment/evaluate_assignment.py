@@ -10,10 +10,8 @@ from typing import Optional
 from HTAMP.assignment.baselines.D_TPTS import DeadlineAwareTokenPassingwithTaskSwaps
 from HTAMP.assignment.baselines.TP_D import TokenPassingWithDeadlines
 from HTAMP.assignment.baselines.idle_pred import IdleTaskPrediction
-from HTAMP.assignment.policies.adaptive_rollout import AdaptiveRollout
 from HTAMP.assignment.policies.heuristic_rollout import HeuristicRollout
 from HTAMP.assignment.policies.vanilla_rollout import VanillaRollout
-from HTAMP.assignment.policies.sequential_greedy import SequentialGreedy
 from HTAMP.assignment.policies.base_policy import BasePolicy
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.grid_world import GridWorld
@@ -53,8 +51,7 @@ class AssignmentEvaluator:
         self.state = PlanningState(simulator_config=self.simulator_config)
         self.policy: FleetManager | TokenPassingWithDeadlines | \
                      DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                     SequentialGreedy | BasePolicy | VanillaRollout | \
-                        AdaptiveRollout | HeuristicRollout = self._initialize_policy(mode=args.mode, 
+                     BasePolicy | VanillaRollout | HeuristicRollout = self._initialize_policy(mode=args.mode, 
                                                                                      alpha=args.alpha)
     
     def _initialize_traversal_graph_generator(self):
@@ -127,7 +124,7 @@ class AssignmentEvaluator:
     
     def _initialize_policy(self, mode: int, alpha: float) -> FleetManager | TokenPassingWithDeadlines | \
                                                 DeadlineAwareTokenPassingwithTaskSwaps | IdleTaskPrediction | \
-                                                    SequentialGreedy | VanillaRollout | AdaptiveRollout:
+                                                    BasePolicy | VanillaRollout | HeuristicRollout :
         print("Initializing Policy...")
         print(f"Selected mode: {mode}")
         policy_dict = {
@@ -135,15 +132,13 @@ class AssignmentEvaluator:
             1: TokenPassingWithDeadlines,
             2: DeadlineAwareTokenPassingwithTaskSwaps,
             3: IdleTaskPrediction,
-            4: SequentialGreedy,
-            5: BasePolicy,
+            4: BasePolicy,
+            5: VanillaRollout,
             6: VanillaRollout,
-            7: VanillaRollout,
-            8: AdaptiveRollout,
-            9: AdaptiveRollout,
-            10: AdaptiveRollout,
-            11: AdaptiveRollout,
-            12: HeuristicRollout
+            7: HeuristicRollout,
+            8: HeuristicRollout,
+            9: HeuristicRollout,
+            10: HeuristicRollout
         }
         print(f"Selected policy: {str(policy_dict[mode].__name__)}")
         
@@ -153,7 +148,7 @@ class AssignmentEvaluator:
         if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
             policy = policy_dict[mode](alpha=alpha)
             print(f"Initialized policy with alpha: {alpha}")
-        elif mode in [6, 7]:
+        elif mode in [5, 6]:
             if mode == 5:
                 allow_premptive_moves = True
             else:
@@ -170,17 +165,17 @@ class AssignmentEvaluator:
                                        fps=self.simulator_config.fps,
                                        allow_premptive_moves=allow_premptive_moves)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
-        elif mode in [8, 9, 10, 11]:
-            if mode == 8:
+        elif mode in [7, 8, 9, 10]:
+            if mode == 7:
                 allow_deallocation = True
                 allow_reweighting = True
-            elif mode == 9:
+            elif mode == 8:
                 allow_deallocation = True
                 allow_reweighting = False
-            elif mode == 10:
+            elif mode == 9:
                 allow_deallocation = False
                 allow_reweighting = True
-            else:  # mode == 11
+            else:  # mode == 10
                 allow_deallocation = False
                 allow_reweighting = False
             policy = policy_dict[mode](start_date=self.start_date, 
@@ -193,23 +188,8 @@ class AssignmentEvaluator:
                                        use_saved_request_data=self.args.use_saved_request_data,
                                        initial_time=self.simulator_config.initial_time,
                                        all_task_properties=self.all_task_properties,
-                                       fps=self.simulator_config.fps,
                                        allow_deallocation=allow_deallocation,
                                        allow_reweighting=allow_reweighting)
-            print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
-        elif mode == 12:
-            policy = policy_dict[mode](start_date=self.start_date, 
-                                       end_date=self.end_date,
-                                       date_stamp=self.date_stamp.time_stamp,
-                                       end_hour=self.args.hour_end,
-                                       floor_number=self.floor_number,
-                                       annotated_data_files=self.annotated_data_files,
-                                       request_dir=self.args.request_dir,
-                                       use_saved_request_data=self.args.use_saved_request_data,
-                                       initial_time=self.simulator_config.initial_time,
-                                       all_task_properties=self.all_task_properties,
-                                       allow_deallocation=True,
-                                       allow_reweighting=True)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -303,7 +283,7 @@ class AssignmentEvaluator:
                                    look_ahead_minutes: int,
                                    requests_lists: Optional[RequestsLists] = None, 
                                    debug: bool = False):
-        if self.args.mode in [6, 7, 8, 9, 10, 11, 12]:
+        if self.args.mode in [5, 6, 7, 8, 9, 10]:  # If the selected policy is one of the rollout variants that use contextual information
             self.policy.assign_requests_to_robots(state=self.state,
                                               requests_lists=requests_lists,
                                               motion_planner=self.motion_planner,
@@ -563,24 +543,24 @@ def run_experiment(args):
         if args.policy_name in ["tp_d", "d_tpts"]:
             os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
             results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-        elif args.policy_name in ["vanilla_rollout"] and args.mode in [6, 7]:
-            if args.mode == 6:
+        elif args.policy_name in ["vanilla_rollout"] and args.mode in [5, 6]:
+            if args.mode == 5:
                 allow_premptive_moves_str = "prempt"
             else:                
                 allow_premptive_moves_str = "noprempt"
             os.makedirs(f"results/policies/{args.policy_name}_{allow_premptive_moves_str}", exist_ok=True)
             results_df.to_csv(f"results/policies/{args.policy_name}_{allow_premptive_moves_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-        elif args.policy_name in ["adaptive_rollout"] and args.mode in [8, 9, 10, 11]:
-            if args.mode == 8:
+        elif args.policy_name in ["heuristic_rollout"] and args.mode in [7, 8, 9, 10]:
+            if args.mode == 7:
                 deallocation_str = "ropt"
                 reweighting_str = "rwt"
-            elif args.mode == 9:
+            elif args.mode == 8:
                 deallocation_str = "ropt"
                 reweighting_str = "norwt"
-            elif args.mode == 10:
+            elif args.mode == 9:
                 deallocation_str = "nopt"
                 reweighting_str = "rwt"
-            else:  # mode == 11
+            else:  # mode == 10
                 deallocation_str = "nopt"
                 reweighting_str = "norwt"
             os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}", exist_ok=True)
