@@ -42,7 +42,6 @@ ALLOWED_ISO_WEEKS: set[tuple[int, int]] = {
     (2024, 36),
 }
 
-
 # ----------------------------
 # POLICY SPEC
 # ----------------------------
@@ -67,16 +66,15 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("d_tpts", mode=2, alpha=0.0),
     PolicySpec("d_tpts", mode=2, alpha=0.2),
 
-    PolicySpec("base_policy", mode=5),
-    PolicySpec("heuristic_rollout", mode=12),
+    PolicySpec("base_policy", mode=4),
 
-    # PolicySpec("sequential_greedy", mode=4),
-    # PolicySpec("vanilla_rollout", mode=5, allow_premptive_moves=True),
-    # PolicySpec("vanilla_rollout", mode=6, allow_premptive_moves=False),
-    # PolicySpec("adaptive_rollout", mode=7, allow_deallocation=True, allow_reweighting=True),
-    # PolicySpec("adaptive_rollout", mode=8, allow_deallocation=True, allow_reweighting=False),
-    # PolicySpec("adaptive_rollout", mode=9, allow_deallocation=False, allow_reweighting=True),
-    # PolicySpec("adaptive_rollout", mode=10, allow_deallocation=False, allow_reweighting=False),
+    PolicySpec("vanilla_rollout", mode=5, allow_premptive_moves=True),
+    PolicySpec("vanilla_rollout", mode=6, allow_premptive_moves=False),
+
+    PolicySpec("heuristic_rollout", mode=7, allow_deallocation=True, allow_reweighting=True),
+    PolicySpec("heuristic_rollout", mode=8, allow_deallocation=True, allow_reweighting=False),
+    PolicySpec("heuristic_rollout", mode=9, allow_deallocation=False, allow_reweighting=True),
+    PolicySpec("heuristic_rollout", mode=10, allow_deallocation=False, allow_reweighting=False),
 ]
 
 
@@ -113,13 +111,13 @@ def policy_run_tag(p: PolicySpec) -> str:
     if p.allow_deallocation:
         tag += "_ropt"
     else:
-        if p.mode in [7, 8, 9, 10]:  # Only add nopt tag for adaptive rollout variants
+        if p.mode in [7, 8, 9, 10]:  # Only add nopt tag for heuristic rollout variants
             tag += "_nopt"
 
     if p.allow_reweighting:
         tag += "_rwt"
     else:
-        if p.mode in [7, 8, 9, 10]:  # Only add norwt tag for adaptive rollout variants
+        if p.mode in [7, 8, 9, 10]:  # Only add norwt tag for heuristic rollout variants
             tag += "_norwt"
     
     if p.allow_premptive_moves:
