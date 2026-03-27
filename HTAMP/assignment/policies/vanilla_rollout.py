@@ -31,6 +31,7 @@ class VanillaRollout:
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.blocked_robots = set()
+        self.robots_servicing_pred_requests = set()
         self.date_stamp = date_stamp
         self.end_hour = end_hour
         self.initial_time = initial_time
@@ -232,6 +233,9 @@ class VanillaRollout:
             current_motion_planner = motion_planner.fork_with_reservations()
             currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
             current_node_reservation_table = copy.deepcopy(self.node_reservation_table)
+            
+            if robot_id in self.robots_servicing_pred_requests:
+                current_node_reservation_table.remove_reservations_for_robot(robot_id=robot_id)
 
             if request_id == -1:
                 if debug:
@@ -345,7 +349,7 @@ class VanillaRollout:
                     if debug:
                         print(f"Robot {robot_id} has no valid potential assignments at this time step, but there are unassigned monitoring requests.")
                         
-            return None, None, None, None
+            return None, None, None, None, new_state
         else:
             requests_lists = self._convert_requests_dict_to_requests_lists(state=new_state)
             return self._get_assignment_with_minimum_future_costs(robot_id=robot_id,
@@ -359,7 +363,7 @@ class VanillaRollout:
                                                                 hour=hour,
                                                                 minute=minute,
                                                                 look_ahead_minutes=look_ahead_minutes,
-                                                                debug=debug)
+                                                                debug=debug), new_state
         
 
     def _assign_requests_to_robots(self,
@@ -382,7 +386,7 @@ class VanillaRollout:
                                                             minute=minute,
                                                             look_ahead_minutes=look_ahead_minutes,
                                                             debug=debug)
-            assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+            assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal, new_state = path_results
             if assigned_request_id is not None:
                 if assigned_request_id == -1:
                     self.blocked_robots.add(robot_id)
@@ -394,6 +398,10 @@ class VanillaRollout:
                         print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
                         print(f"1) Planned path for assignment of request {assigned_request_id} to robot {robot_id}: {planned_path}")
                         print(f"1) Planned goal indices for assignment of request {assigned_request_id} to robot {robot_id}: {planned_goal_indices}")
+                    
+                    if robot_id in self.robots_servicing_pred_requests:
+                        self.node_reservation_table.remove_reservations_for_robot(robot_id=robot_id)
+                        self.robots_servicing_pred_requests.remove(robot_id)
                     
                     if assigned_request_id in self.unassigned_requests_dict.monitoring or assigned_request_id in self.unassigned_requests_dict.medication:
                         PolicyHelpers._schedule_request(robot_id=robot_id,
@@ -424,6 +432,13 @@ class VanillaRollout:
                         motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
                         motion_planner.reserve_path_for_agent(path=state.robot_paths[robot_id],
                                                             robot_profile=state.simulator_config.robot_profiles[robot_id])
+                        
+                        PolicyHelpers._reserve_nodes_for_request(robot_id=robot_id,
+                                        request_id=assigned_request_id,
+                                        node_reservation_table=self.node_reservation_table,
+                                        state=new_state)
+                        
+                        self.robots_servicing_pred_requests.add(robot_id)
 
 
 
