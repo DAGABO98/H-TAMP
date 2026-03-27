@@ -199,6 +199,7 @@ class RolloutHelpers:
                                                                        future_predicted_requests_dict: dict[float, RequestsLists],
                                                                        motion_planner: MotionPlanner,
                                                                        traversal_graph_generator: TraversalGraphGenerator,
+                                                                       blocked_robots: Optional[set[int]] = None,
                                                                        debug: bool=False) -> Tuple[float, float]:
         
         if debug:
@@ -212,7 +213,8 @@ class RolloutHelpers:
                                                                    motion_planner=motion_planner,
                                                                    traversal_graph_generator=traversal_graph_generator,
                                                                    add_requests_in_request_lists=True,
-                                                                   debug=debug)
+                                                                   debug=debug,
+                                                                   blocked_robots=blocked_robots)
         
         if debug:
             print(f"2) Node reservation table after assigning current scheduled requests: {current_node_reservation_table}")

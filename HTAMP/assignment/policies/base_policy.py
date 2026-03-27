@@ -368,7 +368,8 @@ class FutureCostEstimation:
                                               request_id: str,
                                               simulated_state: SimulatedState,
                                               motion_planner: MotionPlanner,
-                                              traversal_graph_generator: TraversalGraphGenerator) -> Tuple[Optional[int], list[TimeInterval]]:
+                                              traversal_graph_generator: TraversalGraphGenerator,
+                                              blocked_robots: Optional[set[int]]) -> Tuple[Optional[int], list[TimeInterval]]:
         best_robot_id = None
         best_heuristic_cost = float('inf')
         best_service_intervals = []
@@ -381,6 +382,8 @@ class FutureCostEstimation:
         robot_ids = simulated_state.get_robots_of_type(robot_type=robot_type)
 
         for robot_id in robot_ids:
+            if blocked_robots and robot_id in blocked_robots:
+                continue
             heuristic_cost, service_intervals = Helpers.estimate_simulated_cost_to_fulfill_request(robot_id=robot_id,
                                                                                                  request_id=request_id,
                                                                                                  currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -399,6 +402,7 @@ class FutureCostEstimation:
                                   simulated_state: SimulatedState,
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
+                                  blocked_robots: Optional[set[int]],
                                   debug: bool):
         while self.requests_queue.heap:
             next_request_id = self.requests_queue.pop_task()
@@ -406,7 +410,8 @@ class FutureCostEstimation:
             best_robot_id, best_service_intervals = self._determine_best_assignment_for_request(request_id=next_request_id,
                                                                                                  simulated_state=simulated_state,
                                                                                                  motion_planner=motion_planner,
-                                                                                                 traversal_graph_generator=traversal_graph_generator)
+                                                                                                 traversal_graph_generator=traversal_graph_generator,
+                                                                                                 blocked_robots=blocked_robots)
             if best_robot_id is not None:
                 if debug:
                     print(f"3) Assigning request {next_request_id} to robot {best_robot_id} with estimated service intervals {best_service_intervals}")
@@ -431,7 +436,8 @@ class FutureCostEstimation:
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
                                   add_requests_in_request_lists: bool,
-                                  debug: bool):
+                                  debug: bool,
+                                  blocked_robots: Optional[set[int]] = None) -> SimulatedState:
 
         if simulated_state is None:
             # Extract assigned requests from state
@@ -456,6 +462,7 @@ class FutureCostEstimation:
             self._assign_requests_to_robots(simulated_state=simulated_state,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
+                                            blocked_robots=blocked_robots,
                                             debug=debug)
         
         return simulated_state
