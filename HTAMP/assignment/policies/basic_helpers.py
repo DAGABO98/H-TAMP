@@ -107,12 +107,9 @@ class PolicyHelpers:
             return TimeInterval(start=interval_start, end=interval_end)
     
     @staticmethod
-    def _update_path_and_requests_indices(robot_id: int,
-                                          planned_path: list[tuple[TraversalNode, TimeInterval]],
-                                          currently_assigned_request_ids: list[int],
-                                          state: PlanningState,
-                                          traversal_graph_generator: TraversalGraphGenerator,
-                                          debug: bool = False):
+    def _generate_final_path_for_robot(robot_id: int,
+                                   planned_path: list[tuple[TraversalNode, TimeInterval]],
+                                   state: PlanningState) -> list[tuple[TraversalNode, TimeInterval]]:
         if state.robots_next_nodes[robot_id] is not None:
             if state.assigned_requests[robot_id]:
                 if state.current_wait_times[robot_id] > 0.0:
@@ -136,6 +133,20 @@ class PolicyHelpers:
                 current_node_index = 0
                 next_node_index = 0
                 final_path = planned_path
+        
+        return final_path, current_node_index, next_node_index
+    
+    @staticmethod
+    def _update_path_and_requests_indices(robot_id: int,
+                                          planned_path: list[tuple[TraversalNode, TimeInterval]],
+                                          currently_assigned_request_ids: list[int],
+                                          state: PlanningState,
+                                          traversal_graph_generator: TraversalGraphGenerator,
+                                          debug: bool = False):
+        
+        final_path, current_node_index, next_node_index = PolicyHelpers._generate_final_path_for_robot(robot_id=robot_id,
+                                                                                                        planned_path=planned_path,
+                                                                                                        state=state)
         
         if debug:
             print(f"Updating path and request indices for robot {robot_id} after path change. Current node index: {current_node_index}, next node index: {next_node_index}, final path: {final_path}")
