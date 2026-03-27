@@ -288,8 +288,8 @@ class VanillaRollout:
                                                     motion_planner=current_motion_planner,
                                                     traversal_graph_generator=traversal_graph_generator)
                     current_requests_lists = copy.deepcopy(requests_lists)
-                    current_requests_lists = RolloutHelpers._remove_request_from_requests_lists(request_id=request_id,
-                                                                                            requests_lists=current_requests_lists)
+                    RolloutHelpers._remove_request_from_requests_lists(request_id=request_id,
+                                                                       requests_lists=current_requests_lists)
                     current_blocked_robots = copy.deepcopy(self.blocked_robots)
                     self.cost_estimator.reset()
                     unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
@@ -336,9 +336,15 @@ class VanillaRollout:
                                                                                            motion_planner=motion_planner,
                                                                                            traversal_graph_generator=traversal_graph_generator)
         if len(potential_assignments) == 0:
-            if self.unassigned_requests_dict.monitoring or self.unassigned_requests_dict.medication:
-                 if debug:
-                    print(f"Robot {robot_id} has no valid potential assignments at this time step, but there are unassigned requests.")
+            if state.simulator_config.robot_profiles[robot_id].robot_type == "delivery":
+                if self.unassigned_requests_dict.medication:
+                    if debug:
+                        print(f"Robot {robot_id} has no valid potential assignments at this time step, but there are unassigned medication requests.")
+            else:
+                if self.unassigned_requests_dict.monitoring:
+                    if debug:
+                        print(f"Robot {robot_id} has no valid potential assignments at this time step, but there are unassigned monitoring requests.")
+                        
             return None, None, None, None
         else:
             requests_lists = self._convert_requests_dict_to_requests_lists(state=new_state)
