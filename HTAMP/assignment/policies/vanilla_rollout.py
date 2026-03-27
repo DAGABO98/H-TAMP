@@ -53,16 +53,37 @@ class VanillaRollout:
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
     
+    def _check_for_expired_requests_in_request_dict(self, state: PlanningState, debug: bool=False):
+        expired_request_ids = []
+        for request_id in self.unassigned_requests_dict.monitoring:
+            request = state.requests[request_id]
+            if request.time_for_service < state.simulator_time:
+                request.mark_rejected()
+                expired_request_ids.append(request_id)
+        for request_id in self.unassigned_requests_dict.medication:
+            request = state.requests[request_id]
+            if request.time_for_service < state.simulator_time:
+                request.mark_rejected()
+                expired_request_ids.append(request_id)
+
+        for request_id in expired_request_ids:
+            self.unassigned_requests_dict.remove_request(request_id)
+            if debug:
+                print(f"Removed expired request {request_id} from unassigned requests.")
+    
     def _add_all_real_requests_to_requests_dict(self, 
                                     requests_lists: Optional[RequestsLists]):
         if requests_lists is None:
             return False
+        
+        flag = False
         for data_field in requests_lists.__dataclass_fields__.keys():
             requests_list = getattr(requests_lists, data_field)
             for request in requests_list:
+                flag = True
                 self.unassigned_requests_dict.add_request(request)
         
-        return True
+        return flag
     
     def _get_available_robots(self,
                               state: PlanningState,
@@ -110,8 +131,37 @@ class VanillaRollout:
             if request.request_type == "medication":
                 requests_lists.medications_requests.append(request)
     
+    def _determine_potential_assignments_for_robot(self,
+                                                   robot_id: int,
+                                                   state: PlanningState,
+                                                   motion_planner: MotionPlanner,
+                                                   traversal_graph_generator: TraversalGraphGenerator):
+        robot_type = state.simulator_config.robot_profiles[robot_id].robot_type
+        if robot_type == "delivery":
+            potential_request_ids = self.unassigned_requests_dict.medication
+        else:
+            potential_request_ids = self.unassigned_requests_dict.monitoring
+
+        potential_assignments = []
+        for request_id in potential_request_ids:
+            heuristic_cost = RolloutHelpers._estimate_heuristic_cost_to_fulfill_request(assigned_requests=self.assigned_requests,
+                                                                                        node_reservation_table=self.node_reservation_table,
+                                                                                        robot_id=robot_id,
+                                                                                        request_id=request_id,
+                                                                                        state=state,
+                                                                                        motion_planner=motion_planner,
+                                                                                        traversal_graph_generator=traversal_graph_generator)
+            if heuristic_cost == float('inf'):
+                continue
+            potential_assignments.append((request_id, heuristic_cost))
+
+        potential_assignments.sort(key=lambda x: x[1])
+
+        return potential_assignments
+        
+
     def _get_assignment_with_minimum_future_costs(self,
-                                            request_id: str,
+                                            robot_id: str,
                                             requests_lists: RequestsLists,
                                             potential_assignments: list[int],
                                             state: PlanningState,
@@ -139,7 +189,7 @@ class VanillaRollout:
                                                                                                                         look_ahead_minutes=look_ahead_minutes)
         
         
-        min_robot_id = None
+        min_request_id = None
         min_planned_path = None
         min_planned_goal_indices = None
         min_planned_time_to_reach_last_goal = float('inf')
@@ -148,7 +198,7 @@ class VanillaRollout:
         
         
         for i in range(len(potential_assignments)):
-            robot_id = potential_assignments[i][0]
+            request_id = potential_assignments[i][0]
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
             currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
@@ -176,12 +226,14 @@ class VanillaRollout:
                                                 state=current_state,
                                                 motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
-                
+                current_requests_lists = copy.deepcopy(requests_lists)
+                current_requests_lists = RolloutHelpers._remove_request_from_requests_lists(request_id=request_id,
+                                                                                        requests_lists=current_requests_lists)
                 self.cost_estimator.reset()
                 unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
                                                                                         cost_estimator=self.cost_estimator,
                                                                                         current_state=current_state,
-                                                                                        requests_lists=requests_lists,
+                                                                                        requests_lists=current_requests_lists,
                                                                                         current_node_reservation_table=current_node_reservation_table,
                                                                                         current_predicted_requests_dict=current_predicted_requests_dict,
                                                                                         future_scheduled_requests_lists=future_scheduled_requests_lists,
@@ -195,31 +247,30 @@ class VanillaRollout:
                     min_planned_path = planned_path
                     min_planned_goal_indices = planned_goal_indices
                     min_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
-                    min_robot_id = robot_id
+                    min_request_id = request_id
 
-        return min_robot_id, min_planned_path, min_planned_goal_indices, min_planned_time_to_reach_last_goal
+        return min_request_id, min_planned_path, min_planned_goal_indices, min_planned_time_to_reach_last_goal
     
-    def _assign_single_request_to_robot_team(self,
-                                            request_id: str,
-                                            requests_lists: RequestsLists,
-                                            state: PlanningState,
-                                            motion_planner: MotionPlanner,
-                                            traversal_graph_generator: TraversalGraphGenerator,
-                                            hour: int,
-                                            minute: int,
-                                            look_ahead_minutes: int,
-                                            debug: bool):
+    def _generate_robot_assignment(self,
+                                   robot_id: int,
+                                   state: PlanningState,
+                                   motion_planner: MotionPlanner,
+                                   traversal_graph_generator: TraversalGraphGenerator,
+                                   hour: int,
+                                   minute: int,
+                                   look_ahead_minutes: int,
+                                   debug: bool):
         
-        potential_assignments = self._determine_potential_assignments_for_request(request_id=request_id,
-                                                                                 state=state,
-                                                                                 motion_planner=motion_planner,
-                                                                                 traversal_graph_generator=traversal_graph_generator)
+        potential_assignments = self._determine_potential_assignments_for_robot(robot_id=robot_id,
+                                                                              state=state,
+                                                                              motion_planner=motion_planner,
+                                                                              traversal_graph_generator=traversal_graph_generator)
         if len(potential_assignments) == 0:
             if debug:
-                print(f"No valid paths found for any potential assignment of request {request_id}.")
+                print(f"No requests can be assigned to robot {robot_id}.")
             return None, None, None, None
         elif len(potential_assignments) == 1:
-            robot_id = potential_assignments[0][0]
+            request_id = potential_assignments[0][0]
             path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                         request_id=request_id,
                                                                         currently_assigned_request_ids=self.assigned_requests[robot_id],
@@ -236,6 +287,7 @@ class VanillaRollout:
                     print(f"No valid path found for the only potential assignment of request {request_id} to robot {robot_id}.")
                 return None, None, None, None
         else:
+            requests_lists = self._convert_requests_dict_to_requests_lists(state=state)
             return self._get_assignment_with_minimum_future_costs(request_id=request_id,
                                                                 requests_lists=requests_lists,
                                                                 potential_assignments=potential_assignments,
@@ -249,41 +301,34 @@ class VanillaRollout:
         
 
     def _assign_requests_to_robots(self,
-                                   requests_lists: Optional[RequestsLists],
                                   state: PlanningState,
+                                  available_robots: set[int],
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
                                   hour: int,
                                   minute: int,
                                   look_ahead_minutes: int,
                                   debug: bool):
+        
 
-        while self.requests_queue.heap:
-            request_id = self.requests_queue.pop_task()
-            if debug:
-                print(f"Attempting to assign request {request_id} at simulator time {state.simulator_time}")
-            RolloutHelpers._remove_request_from_requests_lists(request_id=request_id, 
-                                                              requests_lists=current_requests_lists)
-            
-            path_results = self._assign_single_request_to_robot_team(request_id=request_id,
-                                                                     requests_lists=current_requests_lists,
-                                                                     state=state,
-                                                                     motion_planner=motion_planner,
-                                                                     traversal_graph_generator=traversal_graph_generator,
-                                                                     hour=hour,
-                                                                     minute=minute,
-                                                                     look_ahead_minutes=look_ahead_minutes,
-                                                                     debug=debug)
-
-            robot_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
-            if planned_path:
+        for robot_id in available_robots:
+            path_results = self._generate_robot_assignment(robot_id=robot_id,
+                                                            state=state,
+                                                            motion_planner=motion_planner,
+                                                            traversal_graph_generator=traversal_graph_generator,
+                                                            hour=hour,
+                                                            minute=minute,
+                                                            look_ahead_minutes=look_ahead_minutes,
+                                                            debug=debug)
+            assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+            if assigned_request_id is not None:
                 if debug:
                     print(f"1) assigned requests for robot {robot_id}: {self.assigned_requests[robot_id]}")
                     print(f"1) State path for robot {robot_id}: {state.robot_paths[robot_id]}")
-                    print(f"1) Planned path for assignment of request {request_id} to robot {robot_id}: {planned_path}")
-                    print(f"1) Planned goal indices for assignment of request {request_id} to robot {robot_id}: {planned_goal_indices}")
+                    print(f"1) Planned path for assignment of request {assigned_request_id} to robot {robot_id}: {planned_path}")
+                    print(f"1) Planned goal indices for assignment of request {assigned_request_id} to robot {robot_id}: {planned_goal_indices}")
                 PolicyHelpers._schedule_request(robot_id=robot_id,
-                                                request_id=request_id,
+                                                request_id=assigned_request_id,
                                                 currently_assigned_request_ids=self.assigned_requests[robot_id],
                                                 node_reservation_table=self.node_reservation_table,
                                                 planned_path=planned_path,
@@ -291,13 +336,10 @@ class VanillaRollout:
                                                 planned_time_to_reach_last_goal=planned_time_to_reach_last_goal,
                                                 state=state,
                                                 motion_planner=motion_planner,
-                                                traversal_graph_generator=traversal_graph_generator,
-                                                debug=debug)
-                print(f"Assigned request {request_id} to robot {robot_id}")
-            else:
-                print(f"Failed to find a valid path for any of the potential assignments of request {request_id}. Request is rejected.")
-                request = state.requests[request_id]
-                request.mark_rejected()
+                                                traversal_graph_generator=traversal_graph_generator)
+                self.unassigned_requests_dict.remove_request(assigned_request_id)
+                print(f"Assigned request {assigned_request_id} to robot {robot_id}")
+
 
     def assign_requests_to_robots(self, 
                                   state: PlanningState,
@@ -312,6 +354,7 @@ class VanillaRollout:
         self._extract_assigned_requests_from_state(state=state)
 
         # Add new requests to the appropriate queues
+        self._check_for_expired_requests_in_request_dict(state=state)
         new_requests_added = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists)
         available_robots = self._get_available_robots(state=state,
                                                      new_requests_added=new_requests_added)
@@ -323,7 +366,7 @@ class VanillaRollout:
 
             # Assignment logic for robots
             self._assign_requests_to_robots(state=state,
-                                            requests_lists=requests_lists,
+                                            available_robots=available_robots,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
                                             hour=hour,
