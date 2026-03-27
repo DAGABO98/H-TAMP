@@ -31,6 +31,7 @@ class VanillaRollout:
         self.unassigned_requests_dict = RequestsDict(monitoring=[], medication=[])
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
+        self.blocked_robots = set()
         self.date_stamp = date_stamp
         self.end_hour = end_hour
         self.initial_time = initial_time
@@ -62,6 +63,28 @@ class VanillaRollout:
                 self.unassigned_requests_dict.add_request(request)
         
         return True
+    
+    def _get_available_robots(self,
+                              state: PlanningState,
+                              new_requests_added: bool):
+        if new_requests_added:
+            self.blocked_robots = set()
+
+        available_robots = set()
+        for robot_id in state.assigned_requests.keys():
+            if robot_id in self.blocked_robots:
+                continue
+            if len(state.assigned_requests[robot_id]) == 0:
+                available_robots.add(robot_id)
+            else:
+                last_assigned_request_id = state.assigned_requests[robot_id][-1]
+                last_assigned_request = state.requests[last_assigned_request_id]
+                planned_time_to_reach_request = last_assigned_request.planned_time
+                if state.simulator_time >= planned_time_to_reach_request - 60.0: 
+                    available_robots.add(robot_id)
+
+        return available_robots
+
     
     def _convert_requests_dict_to_requests_lists(self, state: PlanningState):
         requests_lists = RequestsLists(blood_pressure_requests=[], 
@@ -290,15 +313,10 @@ class VanillaRollout:
 
         # Add new requests to the appropriate queues
         new_requests_added = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists)
-        robot_close_to_being_done = PolicyHelpers._check_if_any_robot_is_close_to_being_done(state=state,
-                                                                                             motion_planner=motion_planner,
-                                                                                             traversal_graph_generator=traversal_graph_generator,
-                                                                                             hour=hour,
-                                                                                             minute=minute,
-                                                                                             look_ahead_minutes=look_ahead_minutes,
-                                                                                             debug=debug)
+        available_robots = self._get_available_robots(state=state,
+                                                     new_requests_added=new_requests_added)
         
-        if new_requests_added or robot_close_to_being_done:
+        if available_robots:
             Helpers.extract_node_reservations_from_state(state=state,
                                                          assigned_requests=self.assigned_requests,
                                                         node_reservation_table=self.node_reservation_table)
