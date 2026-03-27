@@ -26,8 +26,7 @@ class VanillaRollout:
                  use_saved_request_data: bool,
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
-                 allow_deallocation: bool,
-                 allow_reweighting: bool):
+                 allow_premptive_moves: bool):
         self.unassigned_requests_dict = RequestsDict(monitoring=[], medication=[])
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -46,8 +45,7 @@ class VanillaRollout:
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
         self.cost_estimator = FutureCostEstimation()
-        self.allow_deallocation = allow_deallocation
-        self.allow_reweighting = allow_reweighting
+        self.allow_premptive_moves = allow_premptive_moves
         
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -133,6 +131,7 @@ class VanillaRollout:
     
     def _determine_potential_assignments_for_robot(self,
                                                    robot_id: int,
+                                                   current_predicted_requests: dict[float, RequestsLists],
                                                    state: PlanningState,
                                                    motion_planner: MotionPlanner,
                                                    traversal_graph_generator: TraversalGraphGenerator):
@@ -154,6 +153,27 @@ class VanillaRollout:
             if heuristic_cost == float('inf'):
                 continue
             potential_assignments.append((request_id, heuristic_cost))
+        
+        if self.allow_premptive_moves:
+            for time_for_predicted_request, predicted_requests_lists in current_predicted_requests.items():
+                if robot_type == "delivery":
+                    predicted_request_ids = [request.request_id for request in predicted_requests_lists.medications_requests]
+                else:
+                    predicted_request_ids = []
+                    for data_field in predicted_requests_lists.__dataclass_fields__.keys():
+                        requests_list = getattr(predicted_requests_lists, data_field)
+                        predicted_request_ids.extend([request.request_id for request in requests_list])
+                for request_id in predicted_request_ids:
+                    heuristic_cost = RolloutHelpers._estimate_heuristic_cost_to_fulfill_request(assigned_requests=self.assigned_requests,
+                                                                                                node_reservation_table=self.node_reservation_table,
+                                                                                                robot_id=robot_id,
+                                                                                                request_id=request_id,
+                                                                                                state=state,
+                                                                                                motion_planner=motion_planner,
+                                                                                                traversal_graph_generator=traversal_graph_generator)
+                    if heuristic_cost == float('inf'):
+                        continue
+                    potential_assignments.append((request_id, heuristic_cost))
 
         potential_assignments.sort(key=lambda x: x[1])
 
@@ -164,6 +184,8 @@ class VanillaRollout:
                                             robot_id: str,
                                             requests_lists: RequestsLists,
                                             potential_assignments: list[int],
+                                            current_predicted_requests_dict: dict[float, RequestsLists],
+                                            future_predicted_requests_dict: dict[float, RequestsLists],
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
@@ -180,13 +202,6 @@ class VanillaRollout:
                                                                                     initial_time=self.initial_time,
                                                                                     all_task_properties=self.all_task_properties,
                                                                                     traversal_graph_generator=traversal_graph_generator)
-        
-        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=state, 
-                                                                   hour=hour,
-                                                                   minute=minute)
-        
-        current_predicted_requests_dict, future_predicted_requests_dict = RolloutHelpers._split_predicted_requests_dict(predicted_requests_dict=predicted_requests_dict,
-                                                                                                                        look_ahead_minutes=look_ahead_minutes)
         
         
         min_request_id = None
@@ -260,8 +275,15 @@ class VanillaRollout:
                                    minute: int,
                                    look_ahead_minutes: int,
                                    debug: bool):
+        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=state, 
+                                                                   hour=hour,
+                                                                   minute=minute)
+        
+        current_predicted_requests_dict, future_predicted_requests_dict = RolloutHelpers._split_predicted_requests_dict(predicted_requests_dict=predicted_requests_dict,
+                                                                                                                        look_ahead_minutes=look_ahead_minutes)
         
         potential_assignments = self._determine_potential_assignments_for_robot(robot_id=robot_id,
+                                                                                current_predicted_requests=current_predicted_requests_dict,
                                                                               state=state,
                                                                               motion_planner=motion_planner,
                                                                               traversal_graph_generator=traversal_graph_generator)
@@ -291,6 +313,8 @@ class VanillaRollout:
             return self._get_assignment_with_minimum_future_costs(request_id=request_id,
                                                                 requests_lists=requests_lists,
                                                                 potential_assignments=potential_assignments,
+                                                                current_predicted_requests_dict=current_predicted_requests_dict,
+                                                                future_predicted_requests_dict=future_predicted_requests_dict,
                                                                 state=state,
                                                                 motion_planner=motion_planner,
                                                                 traversal_graph_generator=traversal_graph_generator,
