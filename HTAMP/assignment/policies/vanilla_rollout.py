@@ -336,8 +336,9 @@ class VanillaRollout:
                                                                                            motion_planner=motion_planner,
                                                                                            traversal_graph_generator=traversal_graph_generator)
         if len(potential_assignments) == 0:
-            if debug:
-                print(f"No requests can be assigned to robot {robot_id}.")
+            if self.unassigned_requests_dict.monitoring or self.unassigned_requests_dict.medication:
+                 if debug:
+                    print(f"Robot {robot_id} has no valid potential assignments at this time step, but there are unassigned requests.")
             return None, None, None, None
         else:
             requests_lists = self._convert_requests_dict_to_requests_lists(state=new_state)
