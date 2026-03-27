@@ -27,7 +27,7 @@ class VanillaRollout:
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
                  allow_premptive_moves: bool):
-        self.unassigned_requests_dict = RequestsDict(monitoring=[], medication=[])
+        self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.blocked_robots = set()
@@ -128,6 +128,8 @@ class VanillaRollout:
             request = copy.deepcopy(state.requests[request_id])
             if request.request_type == "medication":
                 requests_lists.medications_requests.append(request)
+        
+        return requests_lists
     
     def _determine_potential_assignments_for_robot(self,
                                                    robot_id: int,

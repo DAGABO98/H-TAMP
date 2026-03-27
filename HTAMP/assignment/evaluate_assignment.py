@@ -79,7 +79,7 @@ class AssignmentEvaluator:
         self._generate_parking_positions()
         self.simulator_config = SimulatorConfig(fps=int(self.args.fps),
                                        robot_profiles=self.robot_profiles,
-                                       rejection_penalty=100.0,
+                                       rejection_penalty=self.args.rejection_penalty,
                                        initial_time=pd.Timestamp(year=self.date_stamp.year, month=self.date_stamp.month, day=self.date_stamp.day, hour=self.args.hour_start, minute=0),
                                        initial_robot_positions={i: copy.deepcopy(self.selected_start_nodes[i].position) for i in range(self.team_size)},
                                        initial_nodes={i: copy.deepcopy(self.selected_start_nodes[i]) for i in range(self.team_size)},
@@ -156,13 +156,13 @@ class AssignmentEvaluator:
             policy = policy_dict[mode](start_date=self.start_date, 
                                        end_date=self.end_date,
                                        date_stamp=self.date_stamp.time_stamp,
+                                       end_hour=self.args.hour_end,
                                        floor_number=self.floor_number,
                                        annotated_data_files=self.annotated_data_files,
                                        request_dir=self.args.request_dir,
                                        use_saved_request_data=self.args.use_saved_request_data,
                                        initial_time=self.simulator_config.initial_time,
                                        all_task_properties=self.all_task_properties,
-                                       fps=self.simulator_config.fps,
                                        allow_premptive_moves=allow_premptive_moves)
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         elif mode in [7, 8, 9, 10]:

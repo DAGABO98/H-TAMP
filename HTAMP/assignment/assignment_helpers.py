@@ -28,7 +28,7 @@ class RequestsDict:
     def add_request(self, request: TaskRequest):
         if request.request_type == "medication":
             self.medication.append(request.request_id)
-        elif request.request_type == "monitoring":
+        else:
             self.monitoring.append(request.request_id)
     
     def remove_request(self, request_id: str):
