@@ -20,10 +20,10 @@ class TaskQueue:
     def pop_task(self):
         return heapq.heappop(self.heap)[1] if self.heap else None
 
-@dataclass
 class RequestsDict:
-    medication: list[str] = []
-    monitoring: list[str] = []
+    def __init__(self):
+        self.medication: list[str] = []
+        self.monitoring: list[str] = []
 
     def add_request(self, request: TaskRequest):
         if request.request_type == "medication":
