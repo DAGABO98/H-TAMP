@@ -352,7 +352,7 @@ class VanillaRollout:
             return None, None, None, None, new_state
         else:
             requests_lists = self._convert_requests_dict_to_requests_lists(state=new_state)
-            return self._get_assignment_with_minimum_future_costs(robot_id=robot_id,
+            path_results = self._get_assignment_with_minimum_future_costs(robot_id=robot_id,
                                                                 requests_lists=requests_lists,
                                                                 potential_assignments=potential_assignments,
                                                                 current_predicted_requests_dict=current_predicted_requests_dict,
@@ -363,7 +363,10 @@ class VanillaRollout:
                                                                 hour=hour,
                                                                 minute=minute,
                                                                 look_ahead_minutes=look_ahead_minutes,
-                                                                debug=debug), new_state
+                                                                debug=debug)
+            assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
+            
+            return assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal, new_state
         
 
     def _assign_requests_to_robots(self,
