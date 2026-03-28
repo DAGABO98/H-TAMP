@@ -300,9 +300,9 @@ class AssignmentEvaluator:
                                               debug=debug)
     
     def _assign_requests_and_step_simulator(self,
-                                            hour: Optional[int] = None,
-                                            minute: Optional[int] = None,
-                                            look_ahead_minutes: Optional[int] = None,
+                                            hour: int,
+                                            minute: int,
+                                            look_ahead_minutes: int,
                                             requests_lists: Optional[RequestsLists] = None,
                                             frame_data: Optional[FrameData] = None,
                                             save_frame_data: bool = False,
@@ -326,8 +326,8 @@ class AssignmentEvaluator:
                     self._store_frame_data(frame_data=frame_data)
     
     def _generate_assignment_for_minute(self, 
-                                        hour, 
-                                        minute, 
+                                        hour: int,
+                                        minute: int,
                                         request_handler: DailyRequestHandler,
                                         frame_data: Optional[FrameData] = None,
                                         save_frame_data: bool = False,
@@ -413,6 +413,7 @@ class AssignmentEvaluator:
         for minute in range(60):
             self._assign_requests_and_step_simulator(hour=end_hour,
                                                      minute=minute,
+                                                     look_ahead_minutes=look_ahead_minutes,
                                                      requests_lists=None,
                                                      frame_data=frame_data,
                                                      save_frame_data=save_frame_data,
