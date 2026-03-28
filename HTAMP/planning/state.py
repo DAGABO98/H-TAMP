@@ -389,7 +389,7 @@ class PlanningState:
         new.simulator_config = self.simulator_config
 
         # Scalars
-        new.simulator_time = float(self.simulator_time)
+        new.simulator_time = copy.deepcopy(self.simulator_time)
 
         # Dicts of immutable / small items
         new.robots_current_time = dict(self.robots_current_time)
