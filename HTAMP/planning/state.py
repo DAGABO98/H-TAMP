@@ -299,16 +299,16 @@ class PlanningState:
                     if current_node.label == goal_node_label:
                         current_request.completed_goals += 1
                         if not planning_flag:
-                            print(f"Robot {robot_id} reached goal {goal_node_label} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} for task {current_request_id}")
+                            print(f"Robot {robot_id} reached goal {goal_node_label} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} for task {current_request_id} with sim time {self.simulator_time} and wait time {self.current_wait_times[robot_id]}")
                         if current_request.completed_goals >= len(current_request.goal_nodes):
                             assert math.isclose(time_interval.end, self.simulator_time + self.current_wait_times[robot_id]), \
-                                f"Time mismatch at goal for robot {robot_id}: expected {time_interval.end}, got {self.simulator_time + self.current_wait_times[robot_id]}"
+                                f"Time mismatch at goal for robot {robot_id}: expected {time_interval.end}, got {self.simulator_time + self.current_wait_times[robot_id]} with simulator time {self.simulator_time} and wait time {self.current_wait_times[robot_id]}"
                             completed_request_id = self.assigned_requests[robot_id].pop(0)
                             completed_request = self.requests[completed_request_id]
                             completed_request.mark_completed(completion_time=self.simulator_time + self.current_wait_times[robot_id],
                                                              planning_flag=planning_flag)
                             if not planning_flag:
-                                print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f}")
+                                print(f"Robot {robot_id} completed task {completed_request_id} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} with sim time {self.simulator_time} and wait time {self.current_wait_times[robot_id]}")
 
     def _update_robot_location(self, 
                                robot_id: int, 
