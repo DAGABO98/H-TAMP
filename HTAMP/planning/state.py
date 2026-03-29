@@ -296,7 +296,7 @@ class PlanningState:
                 current_request = self.requests[current_request_id]
                 if current_request.completed_goals < len(current_request.goal_nodes):
                     goal_node_label = current_request.goal_nodes[current_request.completed_goals]
-                    if current_node.label == goal_node_label:
+                    if current_node.label == goal_node_label and current_index == current_request.planned_goal_indices[current_request.completed_goals]:
                         current_request.completed_goals += 1
                         if not planning_flag:
                             print(f"Robot {robot_id} reached goal {goal_node_label} at time {self.simulator_time + self.current_wait_times[robot_id]:.2f} for task {current_request_id} with sim time {self.simulator_time} and wait time {self.current_wait_times[robot_id]}")
