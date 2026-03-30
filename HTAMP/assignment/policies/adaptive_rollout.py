@@ -14,7 +14,7 @@ from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservati
 from HTAMP.planning.request_handler import PlanningRequestHandler
 from HTAMP.planning.state import PlanningState
 
-class VanillaRollout:
+class AdaptiveRollout:
     def __init__(self,
                  start_date: str,
                  end_date: str,
