@@ -103,6 +103,7 @@ class AdaptiveRollout:
     
     def _determine_if_deallocation_should_occur(self, 
                                                 min_pickup_deadline: float,
+                                                state: PlanningState,
                                                 motion_planner: MotionPlanner,
                                                 traversal_graph_generator: TraversalGraphGenerator
                                                 ) -> bool:
@@ -113,7 +114,7 @@ class AdaptiveRollout:
             return False
         
         for request_id in self.unassigned_requests_dict.monitoring:
-            request = self.unassigned_requests_dict.monitoring[request_id]
+            request = state.requests[request_id]
             current_pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
                                                                                request=request,
                                                                                motion_planner=motion_planner,
@@ -160,6 +161,7 @@ class AdaptiveRollout:
                               debug: bool) -> set[int]:
         
         deallocate_flag = self._determine_if_deallocation_should_occur(min_pickup_deadline=min_pickup_deadline,
+                                                                       state=state,
                                                                        motion_planner=motion_planner,
                                                                        traversal_graph_generator=traversal_graph_generator)
         if self.allow_reweighting:
@@ -173,8 +175,8 @@ class AdaptiveRollout:
                 self.blocked_robots = set()
 
         if trigger_reassignment and self.allow_deallocation:
-            self._deallocate_requests(state=state, 
-                                      motion_planner=motion_planner, 
+            self._deallocate_requests(state=state,
+                                      motion_planner=motion_planner,
                                       traversal_graph_generator=traversal_graph_generator,
                                       debug=debug)
         
@@ -247,7 +249,8 @@ class AdaptiveRollout:
         
         new_state = None
         
-        if self.allow_premptive_moves:
+        # TODO: Change inclusion of predicted requests based on weight of the prediction 
+        if self.allow_reweighting:
             new_state = state.fork()
             for time_for_predicted_request, predicted_requests_lists in current_predicted_requests.items():
                 if robot_type == "delivery":
@@ -547,7 +550,9 @@ class AdaptiveRollout:
 
         # Add new requests to the appropriate queues
         self._check_for_expired_requests_in_request_dict(state=state)
-        min_pickup_deadline = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists)
+        min_pickup_deadline = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists,
+                                                                           motion_planner=motion_planner,
+                                                                           traversal_graph_generator=traversal_graph_generator)
 
         available_robots = self._get_available_robots(state=state,
                                                       min_pickup_deadline=min_pickup_deadline,
