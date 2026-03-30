@@ -53,7 +53,6 @@ class PolicySpec:
     alpha: Optional[float] = None
     allow_deallocation: bool = False
     allow_reweighting: bool = False
-    allow_premptive_moves: bool = False
     extra_args: tuple[str, ...] = ()  # any extra CLI args you want to add
 
 
@@ -68,13 +67,10 @@ POLICIES: list[PolicySpec] = [
 
     PolicySpec("base_policy", mode=4),
 
-    PolicySpec("vanilla_rollout", mode=5, allow_premptive_moves=True),
-    PolicySpec("vanilla_rollout", mode=6, allow_premptive_moves=False),
-
-    PolicySpec("heuristic_rollout", mode=7, allow_deallocation=True, allow_reweighting=True),
-    PolicySpec("heuristic_rollout", mode=8, allow_deallocation=True, allow_reweighting=False),
-    PolicySpec("heuristic_rollout", mode=9, allow_deallocation=False, allow_reweighting=True),
-    PolicySpec("heuristic_rollout", mode=10, allow_deallocation=False, allow_reweighting=False),
+    PolicySpec("adaptive_rollout", mode=5, allow_deallocation=True, allow_reweighting=True),
+    PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False),
+    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True),
+    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=False),
 ]
 
 
@@ -111,20 +107,15 @@ def policy_run_tag(p: PolicySpec) -> str:
     if p.allow_deallocation:
         tag += "_ropt"
     else:
-        if p.mode in [7, 8, 9, 10]:  # Only add nopt tag for heuristic rollout variants
+        if p.mode in [5, 6, 7, 8]:  # Only add nopt tag for heuristic rollout variants
             tag += "_nopt"
 
     if p.allow_reweighting:
         tag += "_rwt"
     else:
-        if p.mode in [7, 8, 9, 10]:  # Only add norwt tag for heuristic rollout variants
+        if p.mode in [5, 6, 7, 8]:  # Only add norwt tag for heuristic rollout variants
             tag += "_norwt"
     
-    if p.allow_premptive_moves:
-        tag += "_prempt"
-    else:
-        if p.mode in [5, 6]:  # Only add noprempt tag for vanilla rollout variants
-            tag += "_noprempt"
     return tag
 
 
