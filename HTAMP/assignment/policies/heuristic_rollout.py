@@ -181,8 +181,8 @@ class HeuristicRollout:
                                                             debug=debug)
                     else:
                         continue
-            else:
-                print("New request does not trigger reassignment. No requests are deallocated.")
+        else:
+            print("New request does not trigger reassignment. No requests are deallocated.")
     
     def _determine_potential_assignments_for_request(self,
                                                      request_id: str,
