@@ -2,7 +2,7 @@ import copy
 from typing import Optional
 
 import pandas as pd
-from HTAMP.assignment.assignment_helpers import AssignmentHelpers, RequestsDict
+from HTAMP.assignment.assignment_helpers import RequestsDict
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
@@ -26,11 +26,13 @@ class AdaptiveRollout:
                  use_saved_request_data: bool,
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
-                 allow_premptive_moves: bool):
+                 allow_deallocation: bool,
+                 allow_reweighting: bool):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
         self.blocked_robots = set()
+        self.robots_to_be_sent_to_depot = set()
         self.robots_servicing_pred_requests = set()
         self.date_stamp = date_stamp
         self.end_hour = end_hour
@@ -46,8 +48,9 @@ class AdaptiveRollout:
         self.node_reservation_table = NodeReservationTable(reservations={},
                                                           robot_node_dict={})
         self.cost_estimator = FutureCostEstimation()
-        self.allow_premptive_moves = allow_premptive_moves
-        
+        self.allow_deallocation = allow_deallocation
+        self.allow_reweighting = allow_reweighting
+
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
@@ -71,25 +74,110 @@ class AdaptiveRollout:
                 print(f"Removed expired request {request_id} from unassigned requests.")
     
     def _add_all_real_requests_to_requests_dict(self, 
-                                    requests_lists: Optional[RequestsLists]):
+                                    requests_lists: Optional[RequestsLists],
+                                    motion_planner: MotionPlanner,
+                                    traversal_graph_generator: TraversalGraphGenerator
+                                    ) -> float:
         if requests_lists is None:
-            return False
+            return float('inf')
         
-        flag = False
+        min_pickup_deadline = float('inf')
         for data_field in requests_lists.__dataclass_fields__.keys():
             requests_list = getattr(requests_lists, data_field)
             for request in requests_list:
-                flag = True
+                current_pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
+                                                                                   request=request,
+                                                                                   motion_planner=motion_planner,
+                                                                                   traversal_graph_generator=traversal_graph_generator)
+                if current_pickup_deadline < min_pickup_deadline:
+                    min_pickup_deadline = current_pickup_deadline
                 self.unassigned_requests_dict.add_request(request)
         
-        return flag
+        return min_pickup_deadline
+    
+    def _determine_if_reweighting_triggers_reassignment(self,
+                                        state: PlanningState,
+                                        debug: bool) -> bool:
+        # TODO: to be implemented once the prediction errors is calculated
+        return False
+    
+    def _determine_if_deallocation_should_occur(self, 
+                                                min_pickup_deadline: float,
+                                                motion_planner: MotionPlanner,
+                                                traversal_graph_generator: TraversalGraphGenerator
+                                                ) -> bool:
+        if not self.allow_deallocation:
+            return False
+        
+        if min_pickup_deadline == float('inf'):
+            return False
+        
+        for request_id in self.unassigned_requests_dict.monitoring:
+            request = self.unassigned_requests_dict.monitoring[request_id]
+            current_pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
+                                                                               request=request,
+                                                                               motion_planner=motion_planner,
+                                                                               traversal_graph_generator=traversal_graph_generator)
+            if current_pickup_deadline > min_pickup_deadline:
+                return True
+        
+        return False
+    
+    def _deallocate_requests(self,
+                             state: PlanningState,
+                             motion_planner: MotionPlanner,
+                             traversal_graph_generator: TraversalGraphGenerator,
+                             debug: bool):
+        for robot_id in state.assigned_requests.keys():
+            requests_to_be_removed = []
+            for request_id in state.assigned_requests[robot_id]:
+                request = state.requests[request_id]
+                if request.started:
+                    if debug:
+                        print(f"Not deallocating request {request_id} from robot {robot_id} because it has already been started.")
+                    continue
+                request.reset_assignment()
+                requests_to_be_removed.append(request_id)
+                self.unassigned_requests_dict.add_request(request)
+            for request_id in requests_to_be_removed:
+                if debug:                    
+                    print(f"Deallocating request {request_id} from robot {robot_id} and adding it back to the pool of unassigned requests.")
+                self.assigned_requests[robot_id].remove(request_id)
+                state.remove_request_from_robot(robot_id=robot_id, request_id=request_id)
+            if len(requests_to_be_removed) > 0:
+                PolicyHelpers._generate_motion_plan_to_depot(robot_id=robot_id,
+                                                             currently_assigned_request_ids=self.assigned_requests[robot_id],
+                                                             state=state,
+                                                             motion_planner=motion_planner,
+                                                             traversal_graph_generator=traversal_graph_generator,
+                                                             debug=debug)
     
     def _get_available_robots(self,
                               state: PlanningState,
-                              new_requests_added: bool):
-        if new_requests_added:
-            self.blocked_robots = set()
+                              min_pickup_deadline: float,
+                              motion_planner: MotionPlanner,
+                              traversal_graph_generator: TraversalGraphGenerator,
+                              debug: bool) -> set[int]:
+        
+        deallocate_flag = self._determine_if_deallocation_should_occur(min_pickup_deadline=min_pickup_deadline,
+                                                                       motion_planner=motion_planner,
+                                                                       traversal_graph_generator=traversal_graph_generator)
+        if self.allow_reweighting:
+            weighting_trigger_reassignment = self._determine_if_reweighting_triggers_reassignment(state=state,
+                                                                                                  debug=debug)
+            trigger_reassignment = deallocate_flag or weighting_trigger_reassignment
+        else:
+            trigger_reassignment = deallocate_flag
 
+        if min_pickup_deadline != float('inf'):
+                self.blocked_robots = set()
+
+        if trigger_reassignment and self.allow_deallocation:
+            self._deallocate_requests(state=state, 
+                                      motion_planner=motion_planner, 
+                                      traversal_graph_generator=traversal_graph_generator,
+                                      debug=debug)
+        
         available_robots = set()
         for robot_id in state.assigned_requests.keys():
             if robot_id in self.blocked_robots:
@@ -459,9 +547,13 @@ class AdaptiveRollout:
 
         # Add new requests to the appropriate queues
         self._check_for_expired_requests_in_request_dict(state=state)
-        new_requests_added = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists)
+        min_pickup_deadline = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists)
+
         available_robots = self._get_available_robots(state=state,
-                                                     new_requests_added=new_requests_added)
+                                                      min_pickup_deadline=min_pickup_deadline,
+                                                      motion_planner=motion_planner,
+                                                      traversal_graph_generator=traversal_graph_generator,
+                                                      debug=debug)
         
         if available_robots:
             Helpers.extract_node_reservations_from_state(state=state,
