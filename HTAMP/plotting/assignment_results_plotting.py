@@ -38,9 +38,9 @@ class AssignmentResultsPlotter:
                              "tp_d_alpha0.2",
                              "d_tpts_alpha0.2",
                              "idle_prediction",
-                             "vanilla_rollout_prempt",
                              "base_policy",
-                             "heuristic_rollout_ropt_rwt",]
+                             "heuristic_rollout_ropt_rwt",
+                             "adaptive_rollout_nopt_norwt",]
 
         self.baseline_colors = {"human_team": "#7f0000",
                                 "fleet_manager": "#b30000",
@@ -49,17 +49,18 @@ class AssignmentResultsPlotter:
                                 "tp_d_alpha0.2": "#fc8d59",
                                 "d_tpts_alpha0.2": "#fdbb84",
                                 "idle_prediction": "#fdd49e",
-                                "vanilla_rollout_prempt": "#fee8c8",
-                                "vanilla_rollout_noprempt": "#fbb29d"}
+                                "vanilla_rollout_prempt": "#fee8c8"}
         
         self.our_methods_colors = {"base_policy": "#d9f0a3",
-                                    "heuristic_rollout_ropt_rwt": "#006837"}
+                                    "heuristic_rollout_ropt_rwt": "#addd8e",
+                                    "adaptive_rollout_nopt_norwt": "#78c679",
+                                    "adaptive_rollout_ropt_rwt": "#006837"}
         
         self.ablation_study_colors = {"base_policy": "#d9f0a3",
-                                     "heuristic_rollout_nopt_norwt": "#addd8e",
-                                     "heuristic_rollout_ropt_norwt": "#78c679",
-                                     "heuristic_rollout_nopt_rwt": "#31a354",
-                                     "heuristic_rollout_ropt_rwt": "#006837"}
+                                     "adaptive_rollout_nopt_norwt": "#addd8e",
+                                     "adaptive_rollout_ropt_norwt": "#78c679",
+                                     "adaptive_rollout_nopt_rwt": "#31a354",
+                                     "adaptive_rollout_ropt_rwt": "#006837"}
         
         self.week_buckets: dict[str, set[tuple[int, int]]] = {
             "highest": {(2024, 40), (2025, 5)},
