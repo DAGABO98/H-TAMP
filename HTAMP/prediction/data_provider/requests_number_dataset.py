@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
 
 from HTAMP.planning.request_handler import GlobalRequestHandler
-from HTAMP.prediction.request_number_config import MedicalRequestDatasetConfig
+from HTAMP.prediction.configs.request_number_config import MedicalRequestDatasetConfig
 
 TASK_SPECS: dict[str, str] = {
     "medication": "Medication Scheduled DTTM",
