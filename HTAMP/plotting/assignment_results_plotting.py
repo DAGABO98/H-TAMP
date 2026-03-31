@@ -40,7 +40,8 @@ class AssignmentResultsPlotter:
                              "idle_prediction",
                              "base_policy",
                              "heuristic_rollout_ropt_rwt",
-                             "adaptive_rollout_nopt_norwt",]
+                             "adaptive_rollout_nopt_norwt",
+                             "adaptive_rollout_ropt_rwt",]
 
         self.baseline_colors = {"human_team": "#7f0000",
                                 "fleet_manager": "#b30000",
