@@ -1,177 +1,207 @@
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
 import torch
 import lightning as L
 
-from bus_routing.Data_structures import Timeseries_model_config
-from bus_routing.generative_models.time_series.architectures import TimesNet, TimeMixer, iTransformer, PatchTST
-from bus_routing.generative_models.time_series.utils.metrics import metric
+from HTAMP.prediction.request_number_config import TimeseriesModelConfig
+from HTAMP.prediction.time_series_models.architectures.i_transformer import Model as ITransformerModel
+from HTAMP.prediction.time_series_models.architectures.patch_tst import Model as PatchTSTModel
+from HTAMP.prediction.time_series_models.architectures.time_mixer import Model as TimeMixerModel
+from HTAMP.prediction.time_series_models.architectures.times_net import Model as TimesNetModel
+from HTAMP.prediction.time_series_models.utils.metrics import metric
 
-class Requests_number_module(L.LightningModule):
 
-    def __init__(self, model_config: Timeseries_model_config, scaler):
-        model_dict = {
-            'TimesNet': TimesNet,
-            'TimeMixer': TimeMixer,
-            'iTransformer': iTransformer,
-            'PatchTST': PatchTST
-        }
+def _coerce_model_config(model_config: TimeseriesModelConfig | dict[str, Any]) -> TimeseriesModelConfig:
+    if isinstance(model_config, TimeseriesModelConfig):
+        return model_config
+    return TimeseriesModelConfig(**model_config)
+
+
+class RequestsNumberModule(L.LightningModule):
+    def __init__(
+        self,
+        model_config: TimeseriesModelConfig | dict[str, Any],
+        target_scaler_mean: list[float] | np.ndarray,
+        target_scaler_scale: list[float] | np.ndarray,
+        target_channel_indices: list[int],
+    ) -> None:
         super().__init__()
-        self.model_config = model_config
-        self.forecaster = model_dict[model_config.model_name].Model(self.model_config).float()
-        self.scaler = scaler
-        if self.model_config.loss == "MSE":
-            self.criterion = torch.nn.MSELoss()
-        else:
-            self.criterion = torch.nn.L1Loss()
-        self.save_hyperparameters()
-    
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.model_config.learning_rate)
-        return optimizer
-    
-    def _log_stats(self, section, outs):
-        for key in outs.keys():
-            stat = outs[key]
-            if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
+
+        model_dict = {
+            "TimesNet": TimesNetModel,
+            "TimeMixer": TimeMixerModel,
+            "iTransformer": ITransformerModel,
+            "PatchTST": PatchTSTModel,
+        }
+
+        self.model_config = _coerce_model_config(model_config=model_config)
+        if self.model_config.model_name not in model_dict:
+            raise ValueError(f"Unsupported model_name: {self.model_config.model_name}")
+
+        self.forecaster = model_dict[self.model_config.model_name](self.model_config).float()
+        self.criterion = (
+            torch.nn.MSELoss()
+            if self.model_config.loss == "MSE"
+            else torch.nn.L1Loss()
+        )
+
+        scaler_mean_tensor = torch.as_tensor(target_scaler_mean, dtype=torch.float32)
+        scaler_scale_tensor = torch.as_tensor(target_scaler_scale, dtype=torch.float32)
+        target_channel_indices_tensor = torch.as_tensor(target_channel_indices, dtype=torch.long)
+        self.register_buffer("target_scaler_mean", scaler_mean_tensor)
+        self.register_buffer("target_scaler_scale", scaler_scale_tensor)
+        self.register_buffer("target_channel_indices", target_channel_indices_tensor)
+
+        self.save_hyperparameters(
+            {
+                "model_config": self.model_config.to_dict(),
+                "target_scaler_mean": scaler_mean_tensor.detach().cpu().tolist(),
+                "target_scaler_scale": scaler_scale_tensor.detach().cpu().tolist(),
+                "target_channel_indices": target_channel_indices_tensor.detach().cpu().tolist(),
+            }
+        )
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        return torch.optim.Adam(self.parameters(), lr=self.model_config.learning_rate)
+
+    def _log_stats(self, section: str, outs: dict[str, torch.Tensor | float]) -> None:
+        for key, stat in outs.items():
+            if isinstance(stat, np.ndarray):
+                stat = float(stat.mean())
+            if isinstance(stat, torch.Tensor):
                 stat = stat.mean()
-            self.log(f"{section}_{key}", stat, sync_dist=True, on_step=False, on_epoch=True)
-    
-    def _compute_stats(self, pred: torch.Tensor, true: torch.Tensor):
-        pred = pred.detach().cpu().numpy()
-        true = true.detach().cpu().numpy()
+            self.log(
+                f"{section}_{key}",
+                stat,
+                sync_dist=True,
+                on_step=False,
+                on_epoch=True,
+            )
 
-        shape = pred.shape
-        scaled_pred = self.scaler.inverse_transform(pred.reshape(shape[0] * shape[1], -1)).reshape(shape)
-        scaled_true = self.scaler.inverse_transform(true.reshape(shape[0] * shape[1], -1)).reshape(shape)
+    def _inverse_transform_tensor(self, data: torch.Tensor) -> torch.Tensor:
+        scale = self.target_scaler_scale.view(1, 1, -1)
+        mean = self.target_scaler_mean.view(1, 1, -1)
+        return data * scale + mean
 
-        scaled_pred = scaled_pred[:, :, -1:]
-        scaled_true = scaled_true[:, :, -1:]
+    def _select_target_channels(self, data: torch.Tensor) -> torch.Tensor:
+        return torch.index_select(data, dim=-1, index=self.target_channel_indices)
+
+    def _compute_stats(self, pred: torch.Tensor, true: torch.Tensor) -> dict[str, float]:
+        scaled_pred = self._inverse_transform_tensor(pred.detach()).cpu().numpy()
+        scaled_true = self._inverse_transform_tensor(true.detach()).cpu().numpy()
 
         mae, mse, rmse = metric(scaled_pred, scaled_true)
-
-        stats = {
+        return {
             "mae": mae,
             "mse": mse,
-            "rmse": rmse
+            "rmse": rmse,
         }
 
-        return stats
-    
-    def training_step(self, batch, batch_idx):
+    def _shared_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> dict[str, torch.Tensor | float]:
         batch_x, batch_y, batch_x_mark, batch_y_mark = batch
 
-        dec_inp = torch.zeros_like(batch_y[:, -self.model_config.pred_len:, :]).float()
-        dec_inp = torch.cat([batch_y[:, :self.model_config.label_len, :], dec_inp], dim=1).float()
+        decoder_zeros = torch.zeros_like(batch_y[:, -self.model_config.pred_len :, :]).float()
+        decoder_input = torch.cat(
+            [batch_y[:, : self.model_config.label_len, :], decoder_zeros],
+            dim=1,
+        ).float()
 
-        outputs = self.forecaster(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+        outputs = self.forecaster(batch_x, batch_x_mark, decoder_input, batch_y_mark)
+        predictions = outputs[:, -self.model_config.pred_len :, :]
+        targets = batch_y[:, -self.model_config.pred_len :, :]
 
-        f_dim = -1
-        outputs = outputs[:, -self.model_config.pred_len:, :]
-        batch_y = batch_y[:, -self.model_config.pred_len:, :]
+        predictions = self._select_target_channels(predictions)
+        targets = self._select_target_channels(targets)
 
-        stats = self._compute_stats(pred=outputs, true=batch_y)
-
-        outputs = outputs[:, :, f_dim:]
-        batch_y = batch_y[:, :, f_dim:]
-
-        loss = self.criterion(outputs, batch_y)
-
+        loss = self.criterion(predictions, targets)
+        stats = self._compute_stats(pred=predictions, true=targets)
         stats["loss"] = loss
 
         return stats
-    
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        self._log_stats(section="train",
-                        outs=outputs)
-        
+
+    def training_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor | float]:
+        return self._shared_step(batch=batch)
+
+    def on_train_batch_end(
+        self,
+        outputs: dict[str, torch.Tensor | float],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor | float]:
+        self._log_stats(section="train", outs=outputs)
         return outputs
-    
-    def validation_step(self, batch, batch_idx):
-        batch_x, batch_y, batch_x_mark, batch_y_mark = batch
 
-        dec_inp = torch.zeros_like(batch_y[:, -self.model_config.pred_len:, :]).float()
-        dec_inp = torch.cat([batch_y[:, :self.model_config.label_len, :], dec_inp], dim=1).float()
+    def validation_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor | float]:
+        return self._shared_step(batch=batch)
 
-        outputs = self.forecaster(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-
-        f_dim = -1
-        outputs = outputs[:, -self.model_config.pred_len:, :]
-        batch_y = batch_y[:, -self.model_config.pred_len:, :]
-
-        stats = self._compute_stats(pred=outputs, true=batch_y)
-
-        outputs = outputs[:, :, f_dim:]
-        batch_y = batch_y[:, :, f_dim:]
-        
-        loss = self.criterion(outputs, batch_y)
-
-        stats["loss"] = loss
-
-        return stats
-    
-    def on_validation_batch_end(self, outputs, batch, batch_idx):
-        self._log_stats(section="val",
-                        outs=outputs)
-        
+    def on_validation_batch_end(
+        self,
+        outputs: dict[str, torch.Tensor | float],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor | float]:
+        self._log_stats(section="val", outs=outputs)
         return outputs
-    
-    def test_step(self, batch, batch_idx):
-        batch_x, batch_y, batch_x_mark, batch_y_mark = batch
 
-        dec_inp = torch.zeros_like(batch_y[:, -self.model_config.pred_len:, :]).float()
-        dec_inp = torch.cat([batch_y[:, :self.model_config.label_len, :], dec_inp], dim=1).float()
+    def test_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor | float]:
+        return self._shared_step(batch=batch)
 
-        outputs = self.forecaster(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-
-        f_dim = -1
-        outputs = outputs[:, -self.model_config.pred_len:, :]
-        batch_y = batch_y[:, -self.model_config.pred_len:, :]
-
-        stats = self._compute_stats(pred=outputs, true=batch_y)
-
-        outputs = outputs[:, :, f_dim:]
-        batch_y = batch_y[:, :, f_dim:]
-        
-        loss = self.criterion(outputs, batch_y)
-
-        stats["loss"] = loss
-
-        return stats
-    
-    def on_test_batch_end(self, outputs, batch, batch_idx):
-        self._log_stats(section="test",
-                        outs=outputs)
-        
+    def on_test_batch_end(
+        self,
+        outputs: dict[str, torch.Tensor | float],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor]:
+        self._log_stats(section="test", outs=outputs)
         return {"loss": outputs["loss"].mean()}
-    
-    def predict(self, x: torch.Tensor, x_mark: torch.Tensor, y_mark: torch.Tensor):
 
+    def predict(
+        self,
+        x: torch.Tensor,
+        x_mark: torch.Tensor,
+        y_mark: torch.Tensor,
+    ) -> np.ndarray:
         x = x.to(self.device).float()
         x_mark = x_mark.to(self.device).float()
         y_mark = y_mark.to(self.device).float()
 
-        dec_inp = torch.zeros_like(x[:, :, :], device=self.device).float()
+        decoder_zeros = torch.zeros(
+            (x.shape[0], self.model_config.pred_len, x.shape[-1]),
+            device=self.device,
+            dtype=torch.float32,
+        )
 
         if self.model_config.label_len > 0:
-            dec_inp = torch.cat([x[:, -self.model_config.label_len:, :], dec_inp], dim=1).float()
+            decoder_input = torch.cat(
+                [x[:, -self.model_config.label_len :, :], decoder_zeros],
+                dim=1,
+            ).float()
+        else:
+            decoder_input = decoder_zeros
 
         with torch.no_grad():
-            outputs = self.forecaster(x, x_mark, dec_inp, y_mark)
+            outputs = self.forecaster(x, x_mark, decoder_input, y_mark)
 
-        f_dim = -1
-        outputs = outputs[:, -self.model_config.pred_len:, :]
+        predictions = outputs[:, -self.model_config.pred_len :, :]
+        predictions = self._select_target_channels(predictions)
+        scaled_predictions = self._inverse_transform_tensor(predictions)
 
-        pred = outputs.detach().cpu().numpy()
-
-        shape = pred.shape
-        scaled_pred = self.scaler.inverse_transform(pred.reshape(shape[0] * shape[1], -1)).reshape(shape)
-
-        scaled_pred = scaled_pred[:, :, f_dim:]
-
-        return scaled_pred
-
-
-
-    
-
-    
+        return scaled_predictions.detach().cpu().numpy()
