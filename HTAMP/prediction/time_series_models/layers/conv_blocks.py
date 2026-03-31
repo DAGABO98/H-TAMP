@@ -5,7 +5,7 @@ from torch import Tensor
 import torch.nn as nn
 
 
-class Inception_Block_V1(nn.Module):
+class InceptionBlockV1(nn.Module):
     def __init__(
         self,
         in_channels: int,
@@ -52,7 +52,7 @@ class Inception_Block_V1(nn.Module):
         return res
 
 
-class Inception_Block_V2(nn.Module):
+class InceptionBlockV2(nn.Module):
     def __init__(
         self,
         in_channels: int,

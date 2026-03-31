@@ -173,7 +173,7 @@ class DataEmbedding(nn.Module):
         return self.dropout(x)
 
 
-class DataEmbedding_inverted(nn.Module):
+class DataEmbeddingInverted(nn.Module):
     def __init__(
         self,
         c_in: int,
@@ -197,7 +197,7 @@ class DataEmbedding_inverted(nn.Module):
         return self.dropout(x)
 
 
-class DataEmbedding_wo_pos(nn.Module):
+class DataEmbeddingWoPos(nn.Module):
     def __init__(
         self,
         c_in: int,

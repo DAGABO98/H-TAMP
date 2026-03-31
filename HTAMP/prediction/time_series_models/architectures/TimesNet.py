@@ -14,8 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.fft
 
-from HTAMP.prediction.time_series_models.layers.Embed import DataEmbedding
-from HTAMP.prediction.time_series_models.layers.Conv_Blocks import Inception_Block_V1
+from HTAMP.prediction.time_series_models.layers.embed import DataEmbedding
+from HTAMP.prediction.time_series_models.layers.conv_blocks import InceptionBlockV1
 
 
 def FFT_for_Period(x: Tensor, k: int = 2) -> Tuple[Tensor, Tensor]:
@@ -40,13 +40,13 @@ class TimesBlock(nn.Module):
 
         # parameter-efficient design
         self.conv = nn.Sequential(
-            Inception_Block_V1(
+            InceptionBlockV1(
                 configs.d_model,
                 configs.d_ff,
                 num_kernels=configs.num_kernels,
             ),
             nn.GELU(),
-            Inception_Block_V1(
+            InceptionBlockV1(
                 configs.d_ff,
                 configs.d_model,
                 num_kernels=configs.num_kernels,

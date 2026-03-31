@@ -6,19 +6,19 @@ Code based on the implementation provided in
 https://github.com/thuml/Time-Series-Library/blob/main/models/TimeMixer.py
 """
 
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 
-from HTAMP.prediction.time_series_models.layers.Autoformer_EncDec import series_decomp
-from HTAMP.prediction.time_series_models.layers.Embed import DataEmbedding_wo_pos
-from HTAMP.prediction.time_series_models.layers.StandardNorm import Normalize
+from HTAMP.prediction.time_series_models.layers.autoformer_encdec import SeriesDecomp
+from HTAMP.prediction.time_series_models.layers.embed import DataEmbeddingWoPos
+from HTAMP.prediction.time_series_models.layers.standard_norm import Normalize
 
 
-class DFT_series_decomp(nn.Module):
+class DFTSeriesDecomp(nn.Module):
     """
     Series decomposition block
     """
@@ -140,9 +140,9 @@ class PastDecomposableMixing(nn.Module):
 
         self.decompsition: nn.Module
         if configs.decomp_method == "moving_avg":
-            self.decompsition = series_decomp(configs.moving_avg)
+            self.decompsition = SeriesDecomp(configs.moving_avg)
         elif configs.decomp_method == "dft_decomp":
-            self.decompsition = DFT_series_decomp(configs.top_k)
+            self.decompsition = DFTSeriesDecomp(configs.top_k)
         else:
             raise ValueError("decompsition is error")
 
@@ -213,11 +213,11 @@ class Model(nn.Module):
             [PastDecomposableMixing(configs) for _ in range(configs.e_layers)]
         )
 
-        self.preprocess = series_decomp(configs.moving_avg)
+        self.preprocess = SeriesDecomp(configs.moving_avg)
         self.enc_in: int = configs.enc_in
 
         if self.channel_independence:
-            self.enc_embedding = DataEmbedding_wo_pos(
+            self.enc_embedding = DataEmbeddingWoPos(
                 1,
                 configs.d_model,
                 configs.embed,
@@ -225,7 +225,7 @@ class Model(nn.Module):
                 configs.dropout,
             )
         else:
-            self.enc_embedding = DataEmbedding_wo_pos(
+            self.enc_embedding = DataEmbeddingWoPos(
                 configs.enc_in,
                 configs.d_model,
                 configs.embed,

@@ -13,15 +13,15 @@ from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 
-from HTAMP.prediction.time_series_models.layers.Transformer_EncDec import (
+from HTAMP.prediction.time_series_models.layers.transformer_encdec import (
     Encoder,
     EncoderLayer,
 )
-from HTAMP.prediction.time_series_models.layers.SelfAttention_Family import (
+from HTAMP.prediction.time_series_models.layers.self_attention_family import (
     AttentionLayer,
     FullAttention,
 )
-from HTAMP.prediction.time_series_models.layers.Embed import DataEmbedding_inverted
+from HTAMP.prediction.time_series_models.layers.embed import DataEmbeddingInverted
 
 
 class Model(nn.Module):
@@ -37,7 +37,7 @@ class Model(nn.Module):
         self.output_attention: bool = configs.output_attention
 
         # Embedding
-        self.enc_embedding = DataEmbedding_inverted(
+        self.enc_embedding = DataEmbeddingInverted(
             configs.seq_len,
             configs.d_model,
             configs.embed,

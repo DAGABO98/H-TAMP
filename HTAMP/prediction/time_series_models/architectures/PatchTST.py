@@ -5,15 +5,15 @@ from typing import Any, Optional
 import torch
 from torch import Tensor, nn
 
-from HTAMP.prediction.time_series_models.layers.Transformer_EncDec import (
+from HTAMP.prediction.time_series_models.layers.transformer_encdec import (
     Encoder,
     EncoderLayer,
 )
-from HTAMP.prediction.time_series_models.layers.SelfAttention_Family import (
+from HTAMP.prediction.time_series_models.layers.self_attention_family import (
     AttentionLayer,
     FullAttention,
 )
-from HTAMP.prediction.time_series_models.layers.Embed import PatchEmbedding
+from HTAMP.prediction.time_series_models.layers.embed import PatchEmbedding
 
 
 class Transpose(nn.Module):

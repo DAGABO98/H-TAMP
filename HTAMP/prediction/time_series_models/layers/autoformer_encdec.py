@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class my_Layernorm(nn.Module):
+class MyLayernorm(nn.Module):
     """
     Special designed layernorm for the seasonal part
     """
@@ -21,7 +21,7 @@ class my_Layernorm(nn.Module):
         return x_hat - bias
 
 
-class moving_avg(nn.Module):
+class MovingAvg(nn.Module):
     """
     Moving average block to highlight the trend of time series
     """
@@ -41,14 +41,14 @@ class moving_avg(nn.Module):
         return x
 
 
-class series_decomp(nn.Module):
+class SeriesDecomp(nn.Module):
     """
     Series decomposition block
     """
 
     def __init__(self, kernel_size: int) -> None:
         super().__init__()
-        self.moving_avg = moving_avg(kernel_size, stride=1)
+        self.moving_avg = MovingAvg(kernel_size, stride=1)
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         moving_mean = self.moving_avg(x)
@@ -56,7 +56,7 @@ class series_decomp(nn.Module):
         return res, moving_mean
 
 
-class series_decomp_multi(nn.Module):
+class SeriesDecompMulti(nn.Module):
     """
     Multiple Series decomposition block from FEDformer
     """
@@ -65,7 +65,7 @@ class series_decomp_multi(nn.Module):
         super().__init__()
         self.kernel_size = kernel_size
         self.series_decomp = nn.ModuleList(
-            [series_decomp(kernel) for kernel in kernel_size]
+            [SeriesDecomp(kernel) for kernel in kernel_size]
         )
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
@@ -105,8 +105,8 @@ class EncoderLayer(nn.Module):
         self.conv2 = nn.Conv1d(
             in_channels=d_ff, out_channels=d_model, kernel_size=1, bias=False
         )
-        self.decomp1 = series_decomp(moving_avg)
-        self.decomp2 = series_decomp(moving_avg)
+        self.decomp1 = SeriesDecomp(moving_avg)
+        self.decomp2 = SeriesDecomp(moving_avg)
         self.dropout = nn.Dropout(dropout)
         self.activation = F.relu if activation == "relu" else F.gelu
 
@@ -188,9 +188,9 @@ class DecoderLayer(nn.Module):
         self.conv2 = nn.Conv1d(
             in_channels=d_ff, out_channels=d_model, kernel_size=1, bias=False
         )
-        self.decomp1 = series_decomp(moving_avg)
-        self.decomp2 = series_decomp(moving_avg)
-        self.decomp3 = series_decomp(moving_avg)
+        self.decomp1 = SeriesDecomp(moving_avg)
+        self.decomp2 = SeriesDecomp(moving_avg)
+        self.decomp3 = SeriesDecomp(moving_avg)
         self.dropout = nn.Dropout(dropout)
         self.projection = nn.Conv1d(
             in_channels=d_model,
