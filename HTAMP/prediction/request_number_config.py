@@ -1,9 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Optional
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
+
+
+def _default_test_iso_weeks() -> tuple[tuple[int, int], ...]:
+    try:
+        from HTAMP.assignment.run_test import ALLOWED_ISO_WEEKS
+
+        return tuple(sorted(ALLOWED_ISO_WEEKS))
+    except Exception:
+        return (
+            (2024, 27),
+            (2024, 36),
+            (2024, 40),
+            (2024, 44),
+            (2025, 5),
+            (2025, 14),
+        )
 
 
 @dataclass
@@ -18,15 +34,29 @@ class MedicalRequestDatasetConfig:
     train_ratio: float = 0.70
     val_ratio: float = 0.15
     test_ratio: float = 0.15
+    test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
 
     def __post_init__(self) -> None:
         if self.time_step_minutes <= 0:
             raise ValueError("time_step_minutes must be greater than zero.")
 
+        if min(self.train_ratio, self.val_ratio, self.test_ratio) < 0.0:
+            raise ValueError("train_ratio, val_ratio, and test_ratio must be non-negative.")
+
+        if (self.train_ratio + self.val_ratio) <= 0.0:
+            raise ValueError("train_ratio and val_ratio must sum to a positive value.")
+
         total_ratio = self.train_ratio + self.val_ratio + self.test_ratio
-        if abs(total_ratio - 1.0) > 1e-6:
-            raise ValueError("train_ratio, val_ratio, and test_ratio must sum to 1.0.")
+        if not self.test_iso_weeks and abs(total_ratio - 1.0) > 1e-6:
+            raise ValueError(
+                "train_ratio, val_ratio, and test_ratio must sum to 1.0 when test_iso_weeks is not provided."
+            )
+
+        normalized_weeks = []
+        for iso_year, iso_week in self.test_iso_weeks:
+            normalized_weeks.append((int(iso_year), int(iso_week)))
+        self.test_iso_weeks = tuple(sorted(set(normalized_weeks)))
 
 
 @dataclass
