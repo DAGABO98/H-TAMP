@@ -31,10 +31,17 @@ class RequestsDataModule(L.LightningDataModule):
         return self._make_dloader("test", shuffle=shuffle)
 
     def _make_dloader(self, split, shuffle=False):
-        return DataLoader(
-            self.datasetCls(**self.dataset_kwargs, split=split),
-            shuffle=shuffle,
-            batch_size=self.batch_size,
-            num_workers=self.workers,
-            collate_fn=self.collate_fn,
-            prefetch_factor=self.prefetch_factor)
+        dataloader_kwargs = {
+            "dataset": self.datasetCls(**self.dataset_kwargs, split=split),
+            "shuffle": shuffle,
+            "batch_size": self.batch_size,
+            "num_workers": self.workers,
+            "collate_fn": self.collate_fn,
+        }
+        if self.workers > 0 and self.prefetch_factor is not None:
+            dataloader_kwargs["prefetch_factor"] = self.prefetch_factor
+
+        return DataLoader(**dataloader_kwargs)
+
+
+Requests_data_module = RequestsDataModule
