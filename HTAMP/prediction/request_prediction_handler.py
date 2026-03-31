@@ -1,365 +1,387 @@
-import os
-import torch
+from __future__ import annotations
+
+import argparse
 import datetime
+import json
 import traceback
-import numpy as np
+from pathlib import Path
+from typing import Optional, Sequence
+
 import pandas as pd
+import torch
 
-from bus_routing.Map_graph import Map_graph
-from bus_routing.Data_structures import Data_folders, Temporal_data_config
-from bus_routing.generative_models.Requests_locations_module import Requests_locations_module
-from bus_routing.generative_models.Requests_number_module import Requests_number_module
-from bus_routing.generative_models.data_provider.Requests_locations_dataset import Request_Locations_Data_Manager, Requests_locations_dataset, Requests_locations_time_series
-from bus_routing.generative_models.data_provider.Requests_number_dataset import Request_Number_Data_Manager, Requests_numbers_dataset, Requests_numbers_time_series
+from HTAMP.data_processing.data_helpers import DataHelpers
+from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
+from HTAMP.prediction.data_provider.requests_number_dataset import (
+    RequestNumberDataManager,
+    RequestsNumberDataset,
+    RequestsNumberTimeSeries,
+)
+from HTAMP.prediction.request_number_config import (
+    MedicalRequestDatasetConfig,
+    TimeseriesModelConfig,
+)
+from HTAMP.prediction.request_number_module import RequestsNumberModule
+from HTAMP.prediction.request_number_predictor import build_parser as build_training_parser
 
-class Request_Number_Prediction_Manager:
+SPLITS = ("train", "val", "test")
 
-    def __init__(self, data_folders: Data_folders, num_intervals: int, checkpoint_file_path: str,
-                 load_predictions: bool, label_length: int):
-        self.checkpoint_path = checkpoint_file_path
-        self.num_intervals = num_intervals
-        self.label_length = label_length
-        self.data_folders = data_folders
+
+def _build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDatasetConfig:
+    dataset_config_kwargs = dict(
+        annotated_data_files=AnnotatedDataFiles(
+            annotated_visits="",
+            annotated_admissions_discharges="",
+            annotated_medications=args.medications_orders_file,
+            annotated_blood_pressure=args.blood_pressure_orders_file,
+            annotated_heart_rate=args.heart_rate_orders_file,
+            annotated_respiratory_rate=args.respiratory_rate_orders_file,
+            annotated_temperature=args.temperature_orders_file,
+            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
+        ),
+        request_dir=args.request_dir,
+        dataset_dir=args.dataset_dir,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        time_step_minutes=args.time_step_minutes,
+        patient_id_col=args.patient_id_col,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+        test_ratio=args.test_ratio,
+        use_saved_request_data=args.use_saved_request_data,
+    )
+    if args.test_iso_weeks:
+        dataset_config_kwargs["test_iso_weeks"] = tuple(
+            DataHelpers.parse_iso_week_args(args.test_iso_weeks)
+        )
+
+    return MedicalRequestDatasetConfig(**dataset_config_kwargs)
+
+
+class RequestNumberPredictionManager:
+    def __init__(
+        self,
+        dataset_config: MedicalRequestDatasetConfig,
+        model_config: TimeseriesModelConfig,
+        checkpoint_file_path: str,
+        predictions_dir: Optional[str] = None,
+        data_folders: object | None = None,
+        load_predictions: bool = False,
+        splits: Sequence[str] = SPLITS,
+    ) -> None:
+        self.dataset_config = dataset_config
+        self.model_config = model_config
+        self.checkpoint_path = Path(checkpoint_file_path)
+        self.predictions_dir = self._resolve_predictions_dir(
+            predictions_dir=predictions_dir,
+            data_folders=data_folders,
+        )
+        self.predictions_dir.mkdir(parents=True, exist_ok=True)
+        self.splits = self._normalize_splits(splits=splits)
+
         if load_predictions:
             self.prediction_df = self._load_request_predictions()
         else:
             self.prediction_df = self._initialize_prediction_df()
-    
-    def _initialize_prediction_df(self):
-        interval_length = 60 // self.num_intervals
-        temporal_config = Temporal_data_config(interval_length=interval_length)
-        request_data_manager = Request_Number_Data_Manager(data_folders=self.data_folders,
-                                                temporal_config=temporal_config,
-                                                preprocess=False,
-                                                save_data=False)
-        
-        train_data_df, train_slice_start_points_df = request_data_manager.get_requests_numbers_training_data()
-        val_data_df, val_slice_start_points_df = request_data_manager.get_requests_numbers_validation_data()
-        test_data_df, test_slice_start_points_df = request_data_manager.get_requests_numbers_testing_data()
 
-        slice_start_points_dict = {"train": train_slice_start_points_df["start_points"].tolist(),
-                                "test": test_slice_start_points_df["start_points"].tolist(),
-                                "val": val_slice_start_points_df["start_points"].tolist()}
+    def _resolve_predictions_dir(
+        self,
+        predictions_dir: Optional[str],
+        data_folders: object | None,
+    ) -> Path:
+        if predictions_dir is not None:
+            return Path(predictions_dir)
 
-        time_series = Requests_numbers_time_series(train_data_df=train_data_df,
-                                                   val_data_df=val_data_df,
-                                                   test_data_df=test_data_df,
-                                                   temporal_config=temporal_config)
-        
-        device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+        predicted_requests_path = getattr(data_folders, "predicted_requests_folder_path", None)
+        if predicted_requests_path is not None:
+            return Path(predicted_requests_path)
 
-        train_prediction_df = self._generate_prediction_df(split="train",
-                                                          time_series=time_series,
-                                                          slice_start_points_dict=slice_start_points_dict,
-                                                          data_df=train_data_df,
-                                                          slice_start_points_df=train_slice_start_points_df,
-                                                          device=device)
-        
-        val_prediction_df = self._generate_prediction_df(split="val",
-                                                         time_series=time_series,
-                                                         slice_start_points_dict=slice_start_points_dict,
-                                                         data_df=val_data_df,
-                                                         slice_start_points_df=val_slice_start_points_df,
-                                                         device=device)
-        
-        test_prediction_df = self._generate_prediction_df(split="test",
-                                                          time_series=time_series,
-                                                          slice_start_points_dict=slice_start_points_dict,
-                                                          data_df=test_data_df,
-                                                          slice_start_points_df=test_slice_start_points_df,
-                                                          device=device)
+        return Path(self.dataset_config.dataset_dir) / "predictions"
 
-        prediction_df = pd.concat([train_prediction_df, val_prediction_df, test_prediction_df], axis=0, ignore_index=True)
-        self._save_request_predictions(prediction_df=prediction_df)
+    def _normalize_splits(self, splits: Sequence[str]) -> tuple[str, ...]:
+        normalized_splits = []
+        for split in splits:
+            if split not in SPLITS:
+                raise ValueError(f"Unsupported split '{split}'. Expected one of {SPLITS}.")
+            normalized_splits.append(split)
+        return tuple(dict.fromkeys(normalized_splits))
 
-        return prediction_df
-    
-    def _generate_prediction_df(self, split: str, time_series: Requests_locations_time_series,
-                                slice_start_points_dict, data_df, slice_start_points_df, device):
-        
-        request_number_dataset = Requests_numbers_dataset(request_time_series=time_series,
-                                                          slice_start_points_dict=slice_start_points_dict,
-                                                          split=split,
-                                                          sequence_length=self.num_intervals,
-                                                          label_length=label_length,
-                                                          prediction_length=self.num_intervals,)
-        
-        prediction_dict = self._generate_request_predictions(request_number_dataset=request_number_dataset,
-                                                             test_data_df=data_df,
-                                                             test_slice_start_points_df=slice_start_points_df,
-                                                             device=device)
-        prediction_df = pd.DataFrame(prediction_dict)
+    def _prediction_pickle_path(self) -> Path:
+        return self.predictions_dir / "request_numbers.pkl"
 
-        return prediction_df
+    def _prediction_csv_path(self) -> Path:
+        return self.predictions_dir / "request_numbers.csv"
 
-    
-    def _load_model(self, device: torch.device):
+    def _prediction_metadata_path(self) -> Path:
+        return self.predictions_dir / "request_numbers_metadata.json"
+
+    def _build_time_series(self) -> RequestsNumberTimeSeries:
+        request_data_manager = RequestNumberDataManager(
+            dataset_config=self.dataset_config,
+            preprocess=self.model_config.preprocess_data,
+            save_data=self.model_config.preprocess_data,
+        )
+
+        train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
+        val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
+        test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
+
+        time_series = RequestsNumberTimeSeries(
+            train_data_df=train_data_df,
+            val_data_df=val_data_df,
+            test_data_df=test_data_df,
+            train_segments_df=train_segments_df,
+            val_segments_df=val_segments_df,
+            test_segments_df=test_segments_df,
+            metadata=request_data_manager.metadata,
+        )
+        self.model_config.sync_channel_dimensions(num_channels=len(time_series.feature_cols))
+        return time_series
+
+    def _load_model(self, device: torch.device) -> RequestsNumberModule:
         print("Loading request number predictor ...")
-        requests_number_forecaster = Requests_number_module.load_from_checkpoint(checkpoint_path=self.checkpoint_path)
+        requests_number_forecaster = RequestsNumberModule.load_from_checkpoint(
+            checkpoint_path=str(self.checkpoint_path),
+            map_location=device,
+        )
         requests_number_forecaster.to(device)
+        requests_number_forecaster.eval()
         print("Request number predictor has been loaded!")
-        
         return requests_number_forecaster
-    
-    def _populate_prediction_dict(self, start_row, prediction_dict):
-        prediction_dict["year"].append(int(start_row["year"]))
-        prediction_dict["month"].append(int(start_row["month"]))
-        prediction_dict["day"].append(int(start_row["day"]))
-        prediction_dict["hour"].append(int(start_row["hour"]))
-        prediction_dict["interval_index"].append(int(start_row["interval_index"]))
 
-        print(f"Generating predictions for {prediction_dict["year"][-1]}-{prediction_dict["month"][-1]}-{prediction_dict["day"][-1]}-{prediction_dict["hour"][-1]}-{prediction_dict["interval_index"][-1]}")
-    
-    def _generate_request_predictions(self, request_number_dataset: Requests_numbers_dataset,
-                                      test_data_df: pd.DataFrame, test_slice_start_points_df: pd.DataFrame,
-                                      device: torch.device):
-        prediction_dict = {"year": [],
-                            "month": [],
-                            "day": [],
-                            "hour": [],
-                            "interval_index": [],
-                            "prediction": [],
-                            "true_value": []}
-        
-        requests_number_forecaster = self._load_model(device=device)
+    def _raw_split_df(self, time_series: RequestsNumberTimeSeries, split: str) -> pd.DataFrame:
+        return {
+            "train": time_series.train_data_df,
+            "val": time_series.val_data_df,
+            "test": time_series.test_data_df,
+        }[split]
 
-        print("Generating predictions for number of requests ...")
-        for i, start_point in enumerate(test_slice_start_points_df["start_points"]):
-            start_row = test_data_df.iloc[start_point + request_number_dataset.sequence_length]
-            self._populate_prediction_dict(start_row=start_row,
-                                           prediction_dict=prediction_dict)
+    def _build_dataset(
+        self,
+        time_series: RequestsNumberTimeSeries,
+        split: str,
+    ) -> RequestsNumberDataset:
+        return RequestsNumberDataset(
+            request_time_series=time_series,
+            split=split,
+            sequence_length=self.model_config.seq_len,
+            label_length=self.model_config.label_len,
+            prediction_length=self.model_config.pred_len,
+        )
 
-            seq_x, seq_y, seq_x_mark, seq_y_mark = request_number_dataset.__getitem__(i=i)
+    def _build_prediction_record(
+        self,
+        split: str,
+        time_series: RequestsNumberTimeSeries,
+        split_raw_df: pd.DataFrame,
+        start_point: int,
+        prediction,
+        true_value,
+    ) -> dict[str, object]:
+        target_start_idx = start_point + self.model_config.seq_len
+        target_end_idx = target_start_idx + self.model_config.pred_len - 1
+        input_start_idx = start_point
+        input_end_idx = target_start_idx - 1
+
+        input_start_row = split_raw_df.iloc[input_start_idx]
+        input_end_row = split_raw_df.iloc[input_end_idx]
+        target_start_row = split_raw_df.iloc[target_start_idx]
+        target_end_row = split_raw_df.iloc[target_end_idx]
+        horizon_slice = split_raw_df.iloc[target_start_idx : target_end_idx + 1]
+
+        target_timestamp = pd.Timestamp(target_start_row[time_series.timestamp_col])
+
+        return {
+            "split": split,
+            "patient_id": str(target_start_row[time_series.patient_id_col]),
+            "input_start_timestamp": pd.Timestamp(input_start_row[time_series.timestamp_col]),
+            "input_end_timestamp": pd.Timestamp(input_end_row[time_series.timestamp_col]),
+            "forecast_start_timestamp": target_timestamp,
+            "forecast_end_timestamp": pd.Timestamp(target_end_row[time_series.timestamp_col]),
+            "forecast_start_year": int(target_timestamp.year),
+            "forecast_start_month": int(target_start_row["month"]),
+            "forecast_start_day": int(target_start_row["day"]),
+            "forecast_start_weekday": int(target_start_row["weekday"]),
+            "forecast_start_hour": int(target_start_row["hour"]),
+            "forecast_start_minute": int(target_start_row["minute"]),
+            "horizon_timestamps": horizon_slice[time_series.timestamp_col].astype(str).tolist(),
+            "target_columns": list(time_series.target_cols),
+            "prediction": prediction.tolist(),
+            "true_value": true_value.tolist(),
+        }
+
+    def _generate_request_predictions(
+        self,
+        request_number_dataset: RequestsNumberDataset,
+        time_series: RequestsNumberTimeSeries,
+        split: str,
+        requests_number_forecaster: RequestsNumberModule,
+        device: torch.device,
+    ) -> list[dict[str, object]]:
+        split_raw_df = self._raw_split_df(time_series=time_series, split=split)
+        prediction_records: list[dict[str, object]] = []
+
+        print(f"Generating predictions for number of requests on split '{split}' ...")
+        for i, start_point in enumerate(request_number_dataset.slice_start_points):
+            seq_x, seq_y, seq_x_mark, seq_y_mark = request_number_dataset[i]
 
             seq_x = seq_x.unsqueeze(0)
             seq_y = seq_y.unsqueeze(0)
             seq_x_mark = seq_x_mark.unsqueeze(0)
             seq_y_mark = seq_y_mark.unsqueeze(0)
 
-            true = seq_y[:, -requests_number_forecaster.model_config.pred_len:, :].numpy()
-            shape = true.shape
-            scaled_true = requests_number_forecaster.scaler.inverse_transform(true.reshape(shape[0] * shape[1], -1)).reshape(shape)
-            scaled_true = scaled_true[:, :, -1:]
+            true_value = seq_y[
+                :,
+                -self.model_config.pred_len :,
+                time_series.target_channel_indices,
+            ].cpu().numpy()
+            true_value = time_series.inverse_transform(true_value)[0]
 
-            pred = requests_number_forecaster.predict(x=seq_x, x_mark=seq_x_mark, y_mark=seq_y_mark)
-            pred = pred.flatten()
-            prediction_dict["prediction"].append(pred)
-            prediction_dict["true_value"].append(scaled_true)
-        
-        print("Predicted number of requests has been generated!")
+            prediction = requests_number_forecaster.predict(
+                x=seq_x,
+                x_mark=seq_x_mark,
+                y_mark=seq_y_mark,
+            )[0]
 
-        return prediction_dict
-    
-    def _save_request_predictions(self, prediction_df: pd.DataFrame):
-        print("Saving number predictions ...")
-        prediction_df.to_pickle(os.path.join(self.data_folders.predicted_requests_folder_path, "request_numbers.pkl"))
-        prediction_df.to_csv(os.path.join(self.data_folders.predicted_requests_folder_path, "request_numbers.csv"))
-        print("Number predictions have been saved!")
-    
-    def _load_request_predictions(self):
-        print("Loading number predictions ...")
-        prediction_df = pd.read_pickle(os.path.join(self.data_folders.predicted_requests_folder_path, "request_numbers.pkl"))
-        print("Number predictions have been loaded ...")
-        return prediction_df
+            prediction_records.append(
+                self._build_prediction_record(
+                    split=split,
+                    time_series=time_series,
+                    split_raw_df=split_raw_df,
+                    start_point=start_point,
+                    prediction=prediction,
+                    true_value=true_value,
+                )
+            )
 
+            if (i + 1) % 100 == 0:
+                print(f"Generated {i + 1} windows for split '{split}'.")
 
-class Request_Locations_Prediction_Manager:
+        print(f"Predicted number of requests has been generated for split '{split}'!")
+        return prediction_records
 
-    def __init__(self, data_folders: Data_folders, num_intervals: int, checkpoint_file_path: str,
-                 load_predictions: bool):
-        self.num_intervals = num_intervals
-        self.checkpoint_path = checkpoint_file_path
-        self.data_folders = data_folders
-        if load_predictions:
-            self.prediction_df = self._load_request_predictions()
-        else:
-            self.prediction_df = self._initialize_prediction_df()
+    def _build_prediction_metadata(self, time_series: RequestsNumberTimeSeries) -> dict[str, object]:
+        return {
+            "checkpoint_path": str(self.checkpoint_path),
+            "dataset_dir": self.dataset_config.dataset_dir,
+            "request_dir": self.dataset_config.request_dir,
+            "splits": list(self.splits),
+            "seq_len": self.model_config.seq_len,
+            "label_len": self.model_config.label_len,
+            "pred_len": self.model_config.pred_len,
+            "feature_columns": list(time_series.feature_cols),
+            "target_columns": list(time_series.target_cols),
+            "auxiliary_feature_columns": list(time_series.auxiliary_feature_cols),
+            "metadata": time_series.metadata,
+        }
 
-    def _initialize_prediction_df(self):
-        interval_length = 60 // self.num_intervals
-        temporal_config = Temporal_data_config(interval_length=interval_length)
-        map_object = Map_graph(initialize_shortest_path=False, 
-                               routing_data_folder=self.data_folders.routing_data_folder,
-                               area_text_file=self.data_folders.area_text_file, 
-                               use_saved_map=True, 
-                               save_map_structure=False)
-        
-        request_data_manager = Request_Locations_Data_Manager(data_folders=self.data_folders,
-                                                              temporal_config=temporal_config,
-                                                              map_graph=map_object,
-                                                              preprocess=False,
-                                                              save_data=False)
-        
-        train_data_df, train_slice_start_points_df = request_data_manager.get_requests_locations_training_data()
-        val_data_df, val_slice_start_points_df = request_data_manager.get_requests_locations_validation_data()
-        test_data_df, test_slice_start_points_df = request_data_manager.get_requests_locations_testing_data()
-        
-        target_cols = [f'{temporal_config.location_target_field}_{i+1}' for i in range(len(map_object.G.nodes))]
-
-        time_series = Requests_locations_time_series(train_data_df=train_data_df,
-                                                     val_data_df=val_data_df,
-                                                     test_data_df=test_data_df,
-                                                     target_cols=target_cols,
-                                                     temporal_config=temporal_config)
-        
-        slice_start_points_dict = {"train": train_slice_start_points_df["start_points"].tolist(),
-                                "test": test_slice_start_points_df["start_points"].tolist(),
-                                "val": val_slice_start_points_df["start_points"].tolist()}
-        
+    def _initialize_prediction_df(self) -> pd.DataFrame:
+        time_series = self._build_time_series()
         device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-
-        train_prediction_df = self._generate_prediction_df(split="train",
-                                                          time_series=time_series,
-                                                          slice_start_points_dict=slice_start_points_dict,
-                                                          data_df=train_data_df,
-                                                          slice_start_points_df=train_slice_start_points_df,
-                                                          device=device)
-        
-        val_prediction_df = self._generate_prediction_df(split="val",
-                                                         time_series=time_series,
-                                                         slice_start_points_dict=slice_start_points_dict,
-                                                         data_df=val_data_df,
-                                                         slice_start_points_df=val_slice_start_points_df,
-                                                         device=device)
-        
-        test_prediction_df = self._generate_prediction_df(split="test",
-                                                          time_series=time_series,
-                                                          slice_start_points_dict=slice_start_points_dict,
-                                                          data_df=test_data_df,
-                                                          slice_start_points_df=test_slice_start_points_df,
-                                                          device=device)
-
-        prediction_df = pd.concat([train_prediction_df, val_prediction_df, test_prediction_df], axis=0, ignore_index=True)
-        self._save_request_predictions(prediction_df=prediction_df)
-
-        return prediction_df
-    
-    def _generate_prediction_df(self, split: str, time_series: Requests_locations_time_series,
-                                slice_start_points_dict, data_df, slice_start_points_df, device):
-        request_locations_dataset = Requests_locations_dataset(request_time_series=time_series,
-                                                               slice_start_points_dict=slice_start_points_dict,
-                                                               split=split,
-                                                               sequence_length=self.num_intervals,
-                                                               prediction_length=self.num_intervals)
-
-        prediction_dict = self._generate_request_predictions(request_locations_dataset=request_locations_dataset,
-                                                             test_data_df=data_df,
-                                                             test_slice_start_points_df=slice_start_points_df,
-                                                             device=device)
-
-        prediction_df = pd.DataFrame(prediction_dict)
-        return prediction_df
-    
-    def _load_model(self, device: torch.device):
-        print("Loading request locations predictor ...")
-        requests_locations_forecaster = Requests_locations_module.load_from_checkpoint(checkpoint_path=self.checkpoint_path)
-        requests_locations_forecaster.to(device)
-        print("Request locations predictor has been loaded!")
-        
-        return requests_locations_forecaster
-    
-    def _populate_prediction_dict(self, start_row, prediction_dict):
-        prediction_dict["year"].append(start_row["year"])
-        prediction_dict["month"].append(start_row["month_index"]+1)
-        prediction_dict["day"].append(start_row["day_index"]+1)
-        prediction_dict["hour"].append(start_row["hour"])
-        local_interval_index = start_row["interval_index"] - ((start_row["hour"])*self.num_intervals)
-        prediction_dict["interval_index"].append(local_interval_index)
-
-        print(f"Generating predictions for {start_row["year"]}-{start_row["month_index"]+1}-{start_row["day_index"]+1}-{start_row["hour"]}-{local_interval_index}")
-    
-    def _generate_request_predictions(self, request_locations_dataset: Requests_locations_dataset,
-                                      test_data_df: pd.DataFrame, test_slice_start_points_df: pd.DataFrame,
-                                      device: torch.device):
-        prediction_dict = {"year": [],
-                           "month": [],
-                           "day": [],
-                           "hour": [],
-                           "interval_index": [],
-                           "prediction": []}
-        
         requests_number_forecaster = self._load_model(device=device)
+        prediction_rows: list[dict[str, object]] = []
 
-        print("Generating predictions for location distributionss ...")
-        for i, start_point in enumerate(test_slice_start_points_df["start_points"]):
-            start_row = test_data_df.iloc[start_point+request_locations_dataset.sequence_length]
-            self._populate_prediction_dict(start_row=start_row, prediction_dict=prediction_dict)
+        for split in self.splits:
+            request_number_dataset = self._build_dataset(time_series=time_series, split=split)
+            prediction_rows.extend(
+                self._generate_request_predictions(
+                    request_number_dataset=request_number_dataset,
+                    time_series=time_series,
+                    split=split,
+                    requests_number_forecaster=requests_number_forecaster,
+                    device=device,
+                )
+            )
 
-            seq_x, seq_y, pos_w, pos_d, pos_day, pos_month = request_locations_dataset.__getitem__(i=i)
-
-            seq_x = seq_x.unsqueeze(0)
-            seq_y = seq_y.unsqueeze(0)
-            pos_w = pos_w.unsqueeze(0)
-            pos_d = pos_d.unsqueeze(0)
-            pos_day = pos_day.unsqueeze(0)
-            pos_month = pos_month.unsqueeze(0)
-
-            true = seq_y.numpy()
-            true = np.squeeze(true, axis=-1)
-            shape = true.shape
-            scaled_true = requests_number_forecaster.scaler.inverse_transform(true.reshape(shape[0] * shape[1], -1))
-
-            pred = requests_number_forecaster.predict(seq_x=seq_x,
-                                                      pos_w=pos_w,
-                                                      pos_d=pos_d,
-                                                      pos_day=pos_day,
-                                                      pos_month=pos_month)
-            
-            pred = np.squeeze(pred, axis=0)
-
-            rounded_pred = np.round(pred)
-            sum_rounded = rounded_pred.sum(axis=1, keepdims=True)
-            sum_rounded[sum_rounded == 0] = 1
-            normalized_pred = rounded_pred / sum_rounded
-
-            prediction_dict["prediction"].append(normalized_pred)
-        
-        print("Predicted location distributions have been generated!")
-
-        return prediction_dict
-    
-    def _save_request_predictions(self, prediction_df: pd.DataFrame):
-        print("Saving location predictions ...")
-        prediction_df.to_pickle(os.path.join(self.data_folders.predicted_requests_folder_path, "request_locations.pkl"))
-        prediction_df.to_csv(os.path.join(self.data_folders.predicted_requests_folder_path, "request_locations.csv"))
-        print("Location predictions have been saved!")
-    
-    def _load_request_predictions(self):
-        print("Loading location predictions ...")
-        prediction_df = pd.read_pickle(os.path.join(self.data_folders.predicted_requests_folder_path, "request_locations.pkl"))
-        print("Location predictions have been loaded!")
+        prediction_df = pd.DataFrame(prediction_rows)
+        self._save_request_predictions(
+            prediction_df=prediction_df,
+            metadata=self._build_prediction_metadata(time_series=time_series),
+        )
         return prediction_df
-        
 
-if __name__ == '__main__':
-    """Performs execution delta of the process."""
-    pStart = datetime.datetime.now()
+    def _save_request_predictions(
+        self,
+        prediction_df: pd.DataFrame,
+        metadata: dict[str, object],
+    ) -> None:
+        print("Saving number predictions ...")
+        prediction_df.to_pickle(self._prediction_pickle_path())
+        prediction_df.to_csv(self._prediction_csv_path(), index=False)
+        with self._prediction_metadata_path().open("w", encoding="utf-8") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2, default=str)
+        print("Number predictions have been saved!")
+
+    def _load_request_predictions(self) -> pd.DataFrame:
+        print("Loading number predictions ...")
+        prediction_df = pd.read_pickle(self._prediction_pickle_path())
+        print("Number predictions have been loaded!")
+        return prediction_df
+
+
+class RequestLocationsPredictionManager:
+    def __init__(self, *args, **kwargs) -> None:
+        raise NotImplementedError(
+            "The location prediction handler still belongs to the old mobility project and "
+            "has not been ported into the current medical prediction pipeline."
+        )
+
+
+Request_Number_Prediction_Manager = RequestNumberPredictionManager
+Request_Locations_Prediction_Manager = RequestLocationsPredictionManager
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = build_training_parser()
+    parser.prog = "RequestPredictionHandler"
+    parser.description = "Generate medical request-count forecasts from a trained checkpoint."
+    parser.add_argument(
+        "--checkpoint_path",
+        type=str,
+        required=True,
+        help="Lightning checkpoint for the trained request-count forecaster.",
+    )
+    parser.add_argument(
+        "--predictions_dir",
+        type=str,
+        default=None,
+        help="Output folder for request_numbers.pkl/csv. Defaults to <dataset_dir>/predictions.",
+    )
+    parser.add_argument(
+        "--load_predictions",
+        action="store_true",
+        default=False,
+        help="Load previously saved predictions instead of regenerating them.",
+    )
+    parser.add_argument(
+        "--prediction_splits",
+        nargs="*",
+        default=list(SPLITS),
+        choices=SPLITS,
+        help="Dataset splits to generate forecasts for.",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    p_start = datetime.datetime.now()
     try:
-        numbers_checkpoint_path = "data/STF_LOG_DIR/TimeMixer/TimeMixerepoch=45.ckpt"
-        #numbers_checkpoint_path = "data/STF_LOG_DIR/iTransformer/iTransformerepoch=94.ckpt"
-        # numbers_checkpoint_path = "data/STF_LOG_DIR/TimesNet/TimesNetepoch=121.ckpt"
-        locations_checkpoint_path = "data/STF_LOG_DIR/STPGCN/STPGCNepoch=291.ckpt"
-        num_intervals_number_predictions = 12
-        num_intervals_locations_predictions = 12
-        label_length = 0
-        load_predictions_numbers = False
-        load_predictions_locations = False
+        parser = build_parser()
+        args = parser.parse_args()
 
-        data_folders = Data_folders()
+        dataset_config = _build_dataset_config_from_args(args=args)
+        model_config = TimeseriesModelConfig.from_namespace(args=args)
 
-        request_number_prediction_manager = Request_Number_Prediction_Manager(data_folders=data_folders,
-                                                                              num_intervals=num_intervals_number_predictions,
-                                                                              checkpoint_file_path=numbers_checkpoint_path,
-                                                                              load_predictions=load_predictions_numbers,
-                                                                              label_length=label_length)
-
-        request_locations_prediction_manager = Request_Locations_Prediction_Manager(data_folders=data_folders,
-                                                                                    num_intervals=num_intervals_locations_predictions,
-                                                                                    checkpoint_file_path=locations_checkpoint_path,
-                                                                                    load_predictions=load_predictions_locations)
-
-    except Exception as errorMainContext:
-        print("Fail End Process: ", errorMainContext)
+        RequestNumberPredictionManager(
+            dataset_config=dataset_config,
+            model_config=model_config,
+            checkpoint_file_path=args.checkpoint_path,
+            predictions_dir=args.predictions_dir,
+            load_predictions=args.load_predictions,
+            splits=args.prediction_splits,
+        )
+    except Exception as error_main_context:
+        print("Fail End Process: ", error_main_context)
         traceback.print_exc()
-    qStop = datetime.datetime.now()
-    print("Execution time: " + str(qStop-pStart))  
+    p_stop = datetime.datetime.now()
+    print("Execution time: " + str(p_stop - p_start))
