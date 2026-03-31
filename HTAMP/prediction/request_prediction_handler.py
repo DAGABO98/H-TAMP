@@ -17,12 +17,12 @@ from HTAMP.prediction.data_provider.requests_number_dataset import (
     RequestsNumberDataset,
     RequestsNumberTimeSeries,
 )
-from HTAMP.prediction.request_number_config import (
+from HTAMP.prediction.configs.request_number_config import (
     MedicalRequestDatasetConfig,
     TimeseriesModelConfig,
 )
-from HTAMP.prediction.request_number_module import RequestsNumberModule
-from HTAMP.prediction.request_number_predictor import build_parser as build_training_parser
+from HTAMP.prediction.module.request_number_module import RequestsNumberModule
+from HTAMP.prediction.module.request_number_predictor import build_parser as build_training_parser
 
 SPLITS = ("train", "val", "test")
 
