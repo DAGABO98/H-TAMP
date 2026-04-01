@@ -35,55 +35,33 @@ REQUEST_HANDLER_ATTRS: dict[str, str] = {
 VITAL_MEASUREMENT_COMPONENTS: dict[str, dict[str, list[str]]] = {
     "blood_pressure": {
         "systolic": [
-            "Systolic",
-            "Systolic BP",
-            "Blood Pressure Systolic",
             "Blood Pressure Systolic Value",
         ],
         "diastolic": [
-            "Diastolic",
-            "Diastolic BP",
-            "Blood Pressure Diastolic",
             "Blood Pressure Diastolic Value",
         ],
         "combined": [
             "Blood Pressure Value",
-            "Blood Pressure",
-            "BP",
-            "BP Value",
         ],
     },
     "heart_rate": {
         "value": [
-            "Heart Rate",
             "Heart Rate Value",
-            "HR",
-            "Pulse",
         ],
     },
     "respiratory_rate": {
         "value": [
-            "Respiratory Rate",
-            "Respiration Rate",
-            "Respiration",
-            "Resp Rate",
-            "RR",
+            "Respiration Value",
         ],
     },
     "temperature": {
         "value": [
-            "Temperature",
             "Temperature Value",
-            "Temp",
         ],
     },
     "oxygen_saturation": {
         "value": [
-            "Oxygen Saturation",
-            "Oxygen Saturation Value",
-            "SpO2",
-            "SP02",
-            "O2 Saturation",
+            "SP02 Value",
         ],
     },
 }
@@ -874,8 +852,3 @@ class RequestsNumberDataset(Dataset):
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
         return self.series.inverse_transform(data)
-
-
-Request_Number_Data_Manager = RequestNumberDataManager
-Requests_numbers_time_series = RequestsNumberTimeSeries
-Requests_numbers_dataset = RequestsNumberDataset

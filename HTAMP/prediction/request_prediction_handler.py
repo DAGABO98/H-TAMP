@@ -327,10 +327,6 @@ class RequestLocationsPredictionManager:
         )
 
 
-Request_Number_Prediction_Manager = RequestNumberPredictionManager
-Request_Locations_Prediction_Manager = RequestLocationsPredictionManager
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = build_training_parser()
     parser.prog = "RequestPredictionHandler"

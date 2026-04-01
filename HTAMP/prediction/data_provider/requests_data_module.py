@@ -42,6 +42,3 @@ class RequestsDataModule(L.LightningDataModule):
             dataloader_kwargs["prefetch_factor"] = self.prefetch_factor
 
         return DataLoader(**dataloader_kwargs)
-
-
-Requests_data_module = RequestsDataModule
