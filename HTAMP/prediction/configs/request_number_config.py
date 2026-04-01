@@ -34,6 +34,8 @@ class MedicalRequestDatasetConfig:
     val_ratio: float = 0.10
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
+    preprocess_data: bool = True
+    save_data: bool = True
     input_padding_value: float = -1.0
     target_padding_value: float = -1.0
 
@@ -54,7 +56,6 @@ class MedicalRequestDatasetConfig:
 class TimeseriesModelConfig:
     model_name: str = "TimesNet"
     run_name: str = "TimesNet_medical_request_intervals"
-    preprocess_data: bool = False
     wandb: bool = False
 
     task_name: str = "long_term_forecast"

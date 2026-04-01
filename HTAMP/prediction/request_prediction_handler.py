@@ -13,9 +13,9 @@ import torch
 from HTAMP.data_processing.data_helpers import DataHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.prediction.data_provider.requests_number_dataset import (
-    RequestNumberDataManager,
-    RequestsNumberDataset,
-    RequestsNumberTimeSeries,
+    RequestsDataManager,
+    RequestsDataset,
+    RequestsTimeSeries,
 )
 from HTAMP.prediction.configs.request_number_config import (
     MedicalRequestDatasetConfig,
@@ -115,18 +115,14 @@ class RequestNumberPredictionManager:
     def _prediction_metadata_path(self) -> Path:
         return self.predictions_dir / "request_numbers_metadata.json"
 
-    def _build_time_series(self) -> RequestsNumberTimeSeries:
-        request_data_manager = RequestNumberDataManager(
-            dataset_config=self.dataset_config,
-            preprocess=self.model_config.preprocess_data,
-            save_data=self.model_config.preprocess_data,
-        )
+    def _build_time_series(self) -> RequestsTimeSeries:
+        request_data_manager = RequestsDataManager(dataset_config=self.dataset_config)
 
         train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
         val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
         test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
 
-        time_series = RequestsNumberTimeSeries(
+        time_series = RequestsTimeSeries(
             train_data_df=train_data_df,
             val_data_df=val_data_df,
             test_data_df=test_data_df,
@@ -157,10 +153,10 @@ class RequestNumberPredictionManager:
 
     def _build_dataset(
         self,
-        time_series: RequestsNumberTimeSeries,
+        time_series: RequestsTimeSeries,
         split: str,
-    ) -> RequestsNumberDataset:
-        return RequestsNumberDataset(
+    ) -> RequestsDataset:
+        return RequestsDataset(
             request_time_series=time_series,
             split=split,
             sequence_length=self.model_config.seq_len,
@@ -181,7 +177,7 @@ class RequestNumberPredictionManager:
     def _build_prediction_record(
         self,
         split: str,
-        time_series: RequestsNumberTimeSeries,
+        time_series: RequestsTimeSeries,
         metadata_row: pd.Series,
         prediction_intervals,
         prediction_availability,
@@ -210,8 +206,8 @@ class RequestNumberPredictionManager:
 
     def _generate_request_predictions(
         self,
-        request_number_dataset: RequestsNumberDataset,
-        time_series: RequestsNumberTimeSeries,
+        request_number_dataset: RequestsDataset,
+        time_series: RequestsTimeSeries,
         split: str,
         requests_number_forecaster: RequestsNumberModule,
     ) -> list[dict[str, object]]:
@@ -263,7 +259,7 @@ class RequestNumberPredictionManager:
         print(f"Request-interval predictions have been generated for split '{split}'!")
         return prediction_records
 
-    def _build_prediction_metadata(self, time_series: RequestsNumberTimeSeries) -> dict[str, object]:
+    def _build_prediction_metadata(self, time_series: RequestsTimeSeries) -> dict[str, object]:
         return {
             "checkpoint_path": str(self.checkpoint_path),
             "dataset_dir": self.dataset_config.dataset_dir,

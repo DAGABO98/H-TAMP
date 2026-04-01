@@ -13,9 +13,9 @@ from HTAMP.data_processing.data_helpers import DataHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.prediction.data_provider.requests_data_module import RequestsDataModule
 from HTAMP.prediction.data_provider.requests_number_dataset import (
-    RequestNumberDataManager,
-    RequestsNumberDataset,
-    RequestsNumberTimeSeries,
+    RequestsDataManager,
+    RequestsDataset,
+    RequestsTimeSeries,
 )
 from HTAMP.prediction.configs.request_number_config import (
     MedicalRequestDatasetConfig,
@@ -29,18 +29,14 @@ class RequestsNumberPredictor:
         self,
         model_config: TimeseriesModelConfig,
         dataset_config: MedicalRequestDatasetConfig,
-    ) -> tuple[RequestsDataModule, RequestsNumberTimeSeries]:
-        request_data_manager = RequestNumberDataManager(
-            dataset_config=dataset_config,
-            preprocess=model_config.preprocess_data,
-            save_data=model_config.preprocess_data,
-        )
+    ) -> tuple[RequestsDataModule, RequestsTimeSeries]:
+        request_data_manager = RequestsDataManager(dataset_config=dataset_config)
 
         train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
         val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
         test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
 
-        time_series = RequestsNumberTimeSeries(
+        time_series = RequestsTimeSeries(
             train_data_df=train_data_df,
             val_data_df=val_data_df,
             test_data_df=test_data_df,
@@ -59,7 +55,7 @@ class RequestsNumberPredictor:
         )
 
         data_module = RequestsDataModule(
-            datasetCls=RequestsNumberDataset,
+            datasetCls=RequestsDataset,
             dataset_kwargs={
                 "request_time_series": time_series,
                 "sequence_length": model_config.seq_len,
@@ -76,7 +72,7 @@ class RequestsNumberPredictor:
     def create_model(
         self,
         model_config: TimeseriesModelConfig,
-        time_series: RequestsNumberTimeSeries,
+        time_series: RequestsTimeSeries,
     ) -> RequestsNumberModule:
         return RequestsNumberModule(
             model_config=model_config,
