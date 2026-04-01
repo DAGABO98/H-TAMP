@@ -29,31 +29,20 @@ class MedicalRequestDatasetConfig:
     dataset_dir: str = "data/prediction/request_numbers"
     start_date: str = "2024-06-24"
     end_date: str = "2025-06-29"
-    time_step_minutes: int = 5
     patient_id_col: str = "MRN"
     train_ratio: float = 0.80
     val_ratio: float = 0.10
-    test_ratio: float = 0.10
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
     input_padding_value: float = -1.0
     target_padding_value: float = -1.0
 
     def __post_init__(self) -> None:
-        if self.time_step_minutes <= 0:
-            raise ValueError("time_step_minutes must be greater than zero.")
-
-        if min(self.train_ratio, self.val_ratio, self.test_ratio) < 0.0:
-            raise ValueError("train_ratio, val_ratio, and test_ratio must be non-negative.")
+        if min(self.train_ratio, self.val_ratio) < 0.0:
+            raise ValueError("train_ratio and val_ratio must be non-negative.")
 
         if (self.train_ratio + self.val_ratio) <= 0.0:
             raise ValueError("train_ratio and val_ratio must sum to a positive value.")
-
-        total_ratio = self.train_ratio + self.val_ratio + self.test_ratio
-        if not self.test_iso_weeks and abs(total_ratio - 1.0) > 1e-6:
-            raise ValueError(
-                "train_ratio, val_ratio, and test_ratio must sum to 1.0 when test_iso_weeks is not provided."
-            )
 
         normalized_weeks = []
         for iso_year, iso_week in self.test_iso_weeks:
@@ -126,3 +115,4 @@ class TimeseriesModelConfig:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+    

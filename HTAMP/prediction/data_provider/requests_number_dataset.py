@@ -153,7 +153,6 @@ class RequestNumberDataManager:
             *self.time_cols,
             "interval_available",
             "time_diff_minutes",
-            *self.event_measurement_cols,
         ]
 
     def _build_request_handler(self) -> GlobalRequestHandler:
@@ -519,7 +518,6 @@ class RequestNumberDataManager:
             "end_date": self.dataset_config.end_date,
             "train_ratio": self.dataset_config.train_ratio,
             "val_ratio": self.dataset_config.val_ratio,
-            "test_ratio": self.dataset_config.test_ratio,
             "train_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("train", set()))],
             "val_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("val", set()))],
             "test_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("test", set()))],
@@ -667,7 +665,6 @@ class RequestsNumberTimeSeries:
             self.availability_target_indices,
             self.task_target_specs,
         ) = self._build_target_feature_schema()
-        self.feature_cols = list(self.input_feature_cols)
 
         self.samples: dict[str, dict[str, object]] = {
             "train": self._build_split_samples(

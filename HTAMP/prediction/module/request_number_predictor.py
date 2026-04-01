@@ -154,11 +154,9 @@ class RequestsNumberPredictor:
             dataset_dir=args.dataset_dir,
             start_date=args.start_date,
             end_date=args.end_date,
-            time_step_minutes=args.time_step_minutes,
             patient_id_col=args.patient_id_col,
             train_ratio=args.train_ratio,
             val_ratio=args.val_ratio,
-            test_ratio=args.test_ratio,
             use_saved_request_data=args.use_saved_request_data,
             input_padding_value=args.input_padding_value,
             target_padding_value=args.target_padding_value,
@@ -208,11 +206,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset_dir", type=str, default="data/prediction/request_intervals")
     parser.add_argument("--start_date", type=str, default="2024-06-24")
     parser.add_argument("--end_date", type=str, default="2025-06-29")
-    parser.add_argument("--time_step_minutes", type=int, default=60)
     parser.add_argument("--patient_id_col", type=str, default="MRN")
     parser.add_argument("--train_ratio", type=float, default=0.70)
     parser.add_argument("--val_ratio", type=float, default=0.15)
-    parser.add_argument("--test_ratio", type=float, default=0.15)
     parser.add_argument("--input_padding_value", type=float, default=-1.0)
     parser.add_argument("--target_padding_value", type=float, default=-1.0)
     parser.add_argument(
@@ -260,9 +256,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--top_k", type=int, default=5)
     parser.add_argument("--num_kernels", type=int, default=6)
-    parser.add_argument("--enc_in", type=int, default=0)
-    parser.add_argument("--dec_in", type=int, default=0)
-    parser.add_argument("--c_out", type=int, default=0)
     parser.add_argument("--d_model", type=int, default=512)
     parser.add_argument("--n_heads", type=int, default=8)
     parser.add_argument("--e_layers", type=int, default=2)
