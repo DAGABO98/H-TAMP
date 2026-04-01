@@ -504,8 +504,9 @@ class RequestNumberDataManager:
 
     def _build_metadata(self) -> dict[str, object]:
         return {
-            "dataset_representation": "multivariate_task_aligned_request_intervals",
-            "sample_axis_semantics": "per_task_request_index",
+            "dataset_representation": "time_aligned_multivariate_request_intervals",
+            "sample_axis_semantics": "unique_anchor_timestamp_per_patient_segment",
+            "sequence_axis_semantics": "per_task_history_depth",
             "patient_id_col": self.patient_id_col,
             "timestamp_col": TIMESTAMP_COLUMN,
             "task_names": list(TASK_NAMES),
@@ -852,29 +853,27 @@ class RequestsNumberTimeSeries:
             timestamps[future_offset] = pd.Timestamp(row[self.timestamp_col]).isoformat()
         return timestamps
 
+    def _segment_anchor_timestamps(
+        self,
+        segment_df: pd.DataFrame,
+    ) -> list[pd.Timestamp]:
+        raw_timestamps = pd.to_datetime(
+            segment_df[self.timestamp_col],
+            errors="coerce",
+        ).dropna().unique()
+        return [pd.Timestamp(timestamp_value) for timestamp_value in sorted(raw_timestamps)]
+
     def _slice_task_records(
         self,
         task_records: list[dict[str, object]],
-        anchor_step: int,
+        task_timestamps: pd.DatetimeIndex,
+        anchor_timestamp: pd.Timestamp,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-        observed_count = min(anchor_step + 1, len(task_records))
+        observed_count = int(task_timestamps.searchsorted(anchor_timestamp, side="right"))
         history_start = max(0, observed_count - self.sequence_length)
         history_records = task_records[history_start:observed_count]
         future_records = task_records[observed_count : observed_count + self.prediction_length]
         return history_records, future_records
-
-    def _resolve_anchor_timestamp(
-        self,
-        last_observed_timestamps_by_type: dict[str, Optional[str]],
-    ) -> pd.Timestamp:
-        observed_timestamps = [
-            pd.Timestamp(timestamp_value)
-            for timestamp_value in last_observed_timestamps_by_type.values()
-            if timestamp_value is not None
-        ]
-        if not observed_timestamps:
-            return pd.NaT
-        return max(observed_timestamps)
 
     def _fill_history_block(
         self,
@@ -967,19 +966,31 @@ class RequestsNumberTimeSeries:
             if segment_df.empty:
                 continue
 
-            task_records_by_type = {
-                task_name: task_df.to_dict(orient="records")
+            task_frames_by_type = {
+                task_name: task_df.sort_values(self.timestamp_col).reset_index(drop=True)
                 for task_name, task_df in segment_df.groupby("task_name", sort=False)
+            }
+            task_records_by_type = {
+                task_name: task_frames_by_type[task_name].to_dict(orient="records")
+                for task_name in task_frames_by_type
+            }
+            task_timestamps_by_type = {
+                task_name: pd.DatetimeIndex(task_frames_by_type[task_name][self.timestamp_col])
+                for task_name in task_frames_by_type
             }
             task_records_by_type = {
                 task_name: task_records_by_type.get(task_name, [])
                 for task_name in self.task_names
             }
-            max_task_count = max((len(task_records) for task_records in task_records_by_type.values()), default=0)
-            if max_task_count == 0:
+            task_timestamps_by_type = {
+                task_name: task_timestamps_by_type.get(task_name, pd.DatetimeIndex([]))
+                for task_name in self.task_names
+            }
+            anchor_timestamps = self._segment_anchor_timestamps(segment_df=segment_df)
+            if not anchor_timestamps:
                 continue
 
-            for anchor_step in range(max_task_count):
+            for anchor_step, anchor_timestamp in enumerate(anchor_timestamps):
                 sample_x = self._initialize_input_sample()
                 sample_y = self._initialize_target_sample()
 
@@ -990,7 +1001,8 @@ class RequestsNumberTimeSeries:
                 for task_name in self.task_names:
                     history_records, future_records = self._slice_task_records(
                         task_records=task_records_by_type[task_name],
-                        anchor_step=anchor_step,
+                        task_timestamps=task_timestamps_by_type[task_name],
+                        anchor_timestamp=anchor_timestamp,
                     )
 
                     history_timestamps, last_observed_timestamp = self._history_timestamp_payload(
@@ -1028,9 +1040,7 @@ class RequestsNumberTimeSeries:
                         "segment_id": int(segment_id),
                         "anchor_step": int(anchor_step),
                         "anchor_index": int(anchor_step),
-                        "anchor_timestamp": self._resolve_anchor_timestamp(
-                            last_observed_timestamps_by_type=last_observed_timestamps_by_type
-                        ),
+                        "anchor_timestamp": pd.Timestamp(anchor_timestamp),
                         "history_timestamps_by_type": json.dumps(history_timestamps_by_type),
                         "last_observed_timestamps_by_type": json.dumps(last_observed_timestamps_by_type),
                         "future_timestamps_by_type": json.dumps(future_timestamps_by_type),
