@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import argparse
+import datetime
 import json
 import re
 from pathlib import Path
+import traceback
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
 
+from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.planning.request_handler import GlobalRequestHandler
 from HTAMP.prediction.configs.request_number_config import MedicalRequestDatasetConfig
+from HTAMP.prediction.data_provider.requests_data_module import RequestsDataModule
 
 TASK_SPECS: dict[str, str] = {
     "medication": "Medication Scheduled DTTM",
@@ -105,24 +109,22 @@ EVENT_MEASUREMENT_COLUMNS = tuple(
 )
 
 
-class RequestNumberDataManager:
+class RequestsDataManager:
     def __init__(
         self,
-        dataset_config: MedicalRequestDatasetConfig,
-        preprocess: bool = False,
-        save_data: bool = False,
+        dataset_config: MedicalRequestDatasetConfig
     ) -> None:
         self.dataset_config = dataset_config
         self.dataset_dir = Path(self.dataset_config.dataset_dir)
         self.metadata: dict[str, object] = {}
         self._warned_missing_measurements: set[str] = set()
 
-        if preprocess:
+        if dataset_config.preprocess_data:
             self.dataset_dir.mkdir(parents=True, exist_ok=True)
             request_handler = self._build_request_handler()
             split_data = self._preprocess_number_requests_data(request_handler=request_handler)
             self._unpack_preprocessed_data(split_data=split_data)
-            if save_data:
+            if dataset_config.save_data:
                 self._save_dataframes()
         else:
             self._load_dataframes()
@@ -611,7 +613,7 @@ class RequestNumberDataManager:
         return self.test_number_of_requests_df, self.test_segments_df
 
 
-class RequestsNumberTimeSeries:
+class RequestsTimeSeries:
     def __init__(
         self,
         train_data_df: pd.DataFrame,
@@ -1154,10 +1156,10 @@ class RequestsNumberTimeSeries:
         return int(self.samples[split]["x"].shape[0])
 
 
-class RequestsNumberDataset(Dataset):
+class RequestsDataset(Dataset):
     def __init__(
         self,
-        request_time_series: RequestsNumberTimeSeries,
+        request_time_series: RequestsTimeSeries,
         slice_start_points_dict: Optional[dict[str, list[int]]] = None,
         split: str = "train",
         sequence_length: int = 5,
@@ -1197,3 +1199,118 @@ class RequestsNumberDataset(Dataset):
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
         return self.series.inverse_transform_target_deltas(data)
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="RequestsDataset",
+        description="Create a requests dataset for training and evaluation of forecasting models.",
+    )
+    parser.add_argument("--use_saved_request_data", action="store_true", default=False)
+    parser.add_argument("--preprocess_data", action="store_true", default=False)
+    parser.add_argument("--save_data", action="store_true", default=False)
+
+    parser.add_argument("--seq_len", type=int, default=5)
+    parser.add_argument("--label_len", type=int, default=0)
+    parser.add_argument("--pred_len", type=int, default=3)
+
+    parser.add_argument(
+        "--medications_orders_file",
+        type=str,
+        default="data/processed/medication_orders_annotated.csv",
+    )
+    parser.add_argument(
+        "--blood_pressure_orders_file",
+        type=str,
+        default="data/processed/blood_pressure_orders_annotated.csv",
+    )
+    parser.add_argument(
+        "--heart_rate_orders_file",
+        type=str,
+        default="data/processed/heart_rate_orders_annotated.csv",
+    )
+    parser.add_argument(
+        "--respiratory_rate_orders_file",
+        type=str,
+        default="data/processed/respiratory_rate_orders_annotated.csv",
+    )
+    parser.add_argument(
+        "--temperature_orders_file",
+        type=str,
+        default="data/processed/temperature_orders_annotated.csv",
+    )
+    parser.add_argument(
+        "--oxygen_saturation_orders_file",
+        type=str,
+        default="data/processed/oxygen_saturation_orders_annotated.csv",
+    )
+    return parser
+    
+if __name__ == '__main__':
+    """Performs execution delta of the process."""
+    # Unit tests
+    pStart = datetime.datetime.now()
+    try:
+        parser = build_parser()
+        args = parser.parse_args()
+        annotated_data_files = AnnotatedDataFiles(
+            annotated_visits=None,
+            annotated_admissions_discharges=None,
+            annotated_medications=args.medications_orders_file,
+            annotated_blood_pressure=args.blood_pressure_orders_file,
+            annotated_heart_rate=args.heart_rate_orders_file,
+            annotated_respiratory_rate=args.respiratory_rate_orders_file,
+            annotated_temperature=args.temperature_orders_file,
+            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
+        )
+        dataset_config = MedicalRequestDatasetConfig(annotated_data_files=annotated_data_files,
+                                                     use_saved_request_data=args.use_saved_request_data,
+                                                     preprocess_data=args.preprocess_data,
+                                                     save_data=args.save_data)
+        
+        request_data_manager = RequestsDataManager(dataset_config=dataset_config)
+
+        train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
+        val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
+        test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
+
+        time_series = RequestsTimeSeries(train_data_df=train_data_df,
+                                        val_data_df=val_data_df,
+                                        test_data_df=test_data_df,
+                                        train_segments_df=train_segments_df,
+                                        val_segments_df=val_segments_df,
+                                        test_segments_df=test_segments_df,
+                                        metadata=request_data_manager.metadata,
+                                        sequence_length=args.seq_len,
+                                        label_length=args.label_len,
+                                        prediction_length=args.pred_len)
+        
+
+        data_module = RequestsDataModule(
+            dataset_cls=RequestsDataset,
+            dataset_kwargs={
+                "request_time_series": time_series,
+                "split": "test",
+                "sequence_length": args.seq_len,
+                "label_length": args.label_len,
+                "prediction_length": args.pred_len,
+            },
+            batch_size=32,
+            workers=4,
+            collate_fun=None,
+        )
+
+        test_data_loader = data_module.test_dataloader()
+
+        for i, batch in enumerate(test_data_loader):
+            seq_x, seq_y, seq_x_mark, seq_y_mark = batch
+            print(i)
+            print(seq_x.size())
+            print(seq_y.size())
+            print(seq_x_mark.size())
+            print(seq_y_mark.size())
+
+    except Exception as errorMainContext:
+        print("Fail End Process: ", errorMainContext)
+        traceback.print_exc()
+    qStop = datetime.datetime.now()
+    print("Execution time: " + str(qStop-pStart)) 
