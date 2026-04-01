@@ -48,9 +48,15 @@ class RequestsNumberPredictor:
             val_segments_df=val_segments_df,
             test_segments_df=test_segments_df,
             metadata=request_data_manager.metadata,
+            sequence_length=model_config.seq_len,
+            label_length=model_config.label_len,
+            prediction_length=model_config.pred_len,
         )
 
-        model_config.sync_channel_dimensions(num_channels=len(time_series.feature_cols))
+        model_config.sync_channel_dimensions(
+            num_input_channels=len(time_series.input_feature_cols),
+            num_output_channels=len(time_series.target_cols),
+        )
 
         data_module = RequestsDataModule(
             datasetCls=RequestsNumberDataset,
@@ -76,7 +82,9 @@ class RequestsNumberPredictor:
             model_config=model_config,
             target_scaler_mean=time_series.target_scaler_mean.tolist(),
             target_scaler_scale=time_series.target_scaler_scale.tolist(),
-            target_channel_indices=time_series.target_channel_indices,
+            delta_target_indices=time_series.delta_target_indices,
+            availability_target_indices=time_series.availability_target_indices,
+            target_padding_value=time_series.target_padding_value,
         )
 
     def create_callbacks(
@@ -152,6 +160,8 @@ class RequestsNumberPredictor:
             val_ratio=args.val_ratio,
             test_ratio=args.test_ratio,
             use_saved_request_data=args.use_saved_request_data,
+            input_padding_value=args.input_padding_value,
+            target_padding_value=args.target_padding_value,
         )
         if args.test_iso_weeks:
             dataset_config_kwargs["test_iso_weeks"] = tuple(DataHelpers.parse_iso_week_args(args.test_iso_weeks))
@@ -186,16 +196,16 @@ class RequestsNumberPredictor:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="RequestsPredictor",
-        description="Train a medical request-count forecasting model.",
+        description="Train a medical request-interval forecasting model.",
     )
 
     parser.add_argument("--model_name", type=str, default="TimesNet")
-    parser.add_argument("--run_name", type=str, default="TimesNet_medical_requests")
+    parser.add_argument("--run_name", type=str, default="TimesNet_medical_request_intervals")
     parser.add_argument("--preprocess_data", action="store_true", default=False)
     parser.add_argument("--wandb", action="store_true", default=False)
 
     parser.add_argument("--request_dir", type=str, default="data/requests")
-    parser.add_argument("--dataset_dir", type=str, default="data/prediction/request_numbers")
+    parser.add_argument("--dataset_dir", type=str, default="data/prediction/request_intervals")
     parser.add_argument("--start_date", type=str, default="2024-06-24")
     parser.add_argument("--end_date", type=str, default="2025-06-29")
     parser.add_argument("--time_step_minutes", type=int, default=60)
@@ -203,6 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train_ratio", type=float, default=0.70)
     parser.add_argument("--val_ratio", type=float, default=0.15)
     parser.add_argument("--test_ratio", type=float, default=0.15)
+    parser.add_argument("--input_padding_value", type=float, default=-1.0)
+    parser.add_argument("--target_padding_value", type=float, default=-1.0)
     parser.add_argument(
         "--test_iso_weeks",
         nargs="*",
@@ -242,9 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="data/processed/oxygen_saturation_orders_annotated.csv",
     )
 
-    parser.add_argument("--seq_len", type=int, default=96)
-    parser.add_argument("--label_len", type=int, default=48)
-    parser.add_argument("--pred_len", type=int, default=96)
+    parser.add_argument("--seq_len", type=int, default=5)
+    parser.add_argument("--label_len", type=int, default=0)
+    parser.add_argument("--pred_len", type=int, default=3)
 
     parser.add_argument("--top_k", type=int, default=5)
     parser.add_argument("--num_kernels", type=int, default=6)

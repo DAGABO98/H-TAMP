@@ -49,6 +49,8 @@ def _build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestD
         val_ratio=args.val_ratio,
         test_ratio=args.test_ratio,
         use_saved_request_data=args.use_saved_request_data,
+        input_padding_value=args.input_padding_value,
+        target_padding_value=args.target_padding_value,
     )
     if args.test_iso_weeks:
         dataset_config_kwargs["test_iso_weeks"] = tuple(
@@ -134,27 +136,26 @@ class RequestNumberPredictionManager:
             val_segments_df=val_segments_df,
             test_segments_df=test_segments_df,
             metadata=request_data_manager.metadata,
+            sequence_length=self.model_config.seq_len,
+            label_length=self.model_config.label_len,
+            prediction_length=self.model_config.pred_len,
         )
-        self.model_config.sync_channel_dimensions(num_channels=len(time_series.feature_cols))
+        self.model_config.sync_channel_dimensions(
+            num_input_channels=len(time_series.input_feature_cols),
+            num_output_channels=len(time_series.target_cols),
+        )
         return time_series
 
     def _load_model(self, device: torch.device) -> RequestsNumberModule:
-        print("Loading request number predictor ...")
+        print("Loading request interval predictor ...")
         requests_number_forecaster = RequestsNumberModule.load_from_checkpoint(
             checkpoint_path=str(self.checkpoint_path),
             map_location=device,
         )
         requests_number_forecaster.to(device)
         requests_number_forecaster.eval()
-        print("Request number predictor has been loaded!")
+        print("Request interval predictor has been loaded!")
         return requests_number_forecaster
-
-    def _raw_split_df(self, time_series: RequestsNumberTimeSeries, split: str) -> pd.DataFrame:
-        return {
-            "train": time_series.train_data_df,
-            "val": time_series.val_data_df,
-            "test": time_series.test_data_df,
-        }[split]
 
     def _build_dataset(
         self,
@@ -169,45 +170,44 @@ class RequestNumberPredictionManager:
             prediction_length=self.model_config.pred_len,
         )
 
+    def _apply_target_padding(
+        self,
+        time_differences,
+        availability,
+        target_padding_value: float,
+    ):
+        padded = time_differences.copy()
+        padded[availability < 0.5] = target_padding_value
+        return padded
+
     def _build_prediction_record(
         self,
         split: str,
         time_series: RequestsNumberTimeSeries,
-        split_raw_df: pd.DataFrame,
-        start_point: int,
-        prediction,
-        true_value,
+        metadata_row: pd.Series,
+        prediction_intervals,
+        prediction_availability,
+        true_intervals,
+        true_availability,
     ) -> dict[str, object]:
-        target_start_idx = start_point + self.model_config.seq_len
-        target_end_idx = target_start_idx + self.model_config.pred_len - 1
-        input_start_idx = start_point
-        input_end_idx = target_start_idx - 1
-
-        input_start_row = split_raw_df.iloc[input_start_idx]
-        input_end_row = split_raw_df.iloc[input_end_idx]
-        target_start_row = split_raw_df.iloc[target_start_idx]
-        target_end_row = split_raw_df.iloc[target_end_idx]
-        horizon_slice = split_raw_df.iloc[target_start_idx : target_end_idx + 1]
-
-        target_timestamp = pd.Timestamp(target_start_row[time_series.timestamp_col])
-
+        anchor_step = int(
+            metadata_row["anchor_step"] if "anchor_step" in metadata_row else metadata_row["anchor_index"]
+        )
         return {
             "split": split,
-            "patient_id": str(target_start_row[time_series.patient_id_col]),
-            "input_start_timestamp": pd.Timestamp(input_start_row[time_series.timestamp_col]),
-            "input_end_timestamp": pd.Timestamp(input_end_row[time_series.timestamp_col]),
-            "forecast_start_timestamp": target_timestamp,
-            "forecast_end_timestamp": pd.Timestamp(target_end_row[time_series.timestamp_col]),
-            "forecast_start_year": int(target_timestamp.year),
-            "forecast_start_month": int(target_start_row["month"]),
-            "forecast_start_day": int(target_start_row["day"]),
-            "forecast_start_weekday": int(target_start_row["weekday"]),
-            "forecast_start_hour": int(target_start_row["hour"]),
-            "forecast_start_minute": int(target_start_row["minute"]),
-            "horizon_timestamps": horizon_slice[time_series.timestamp_col].astype(str).tolist(),
-            "target_columns": list(time_series.target_cols),
-            "prediction": prediction.tolist(),
-            "true_value": true_value.tolist(),
+            "patient_id": str(metadata_row["patient_id"]),
+            "segment_id": int(metadata_row["segment_id"]),
+            "anchor_step": anchor_step,
+            "anchor_timestamp": pd.Timestamp(metadata_row["anchor_timestamp"]),
+            "history_timestamps_by_type": json.loads(metadata_row["history_timestamps_by_type"]),
+            "last_observed_timestamps_by_type": json.loads(metadata_row["last_observed_timestamps_by_type"]),
+            "future_timestamps_by_type": json.loads(metadata_row["future_timestamps_by_type"]),
+            "task_columns": list(time_series.task_names),
+            "prediction": prediction_intervals.tolist(),
+            "prediction_available": prediction_availability.tolist(),
+            "true_value": true_intervals.tolist(),
+            "true_available": true_availability.tolist(),
+            "target_padding_value": time_series.target_padding_value,
         }
 
     def _generate_request_predictions(
@@ -216,48 +216,53 @@ class RequestNumberPredictionManager:
         time_series: RequestsNumberTimeSeries,
         split: str,
         requests_number_forecaster: RequestsNumberModule,
-        device: torch.device,
     ) -> list[dict[str, object]]:
-        split_raw_df = self._raw_split_df(time_series=time_series, split=split)
         prediction_records: list[dict[str, object]] = []
+        metadata_df = time_series.get_split_metadata(split=split).reset_index(drop=True)
 
-        print(f"Generating predictions for number of requests on split '{split}' ...")
-        for i, start_point in enumerate(request_number_dataset.slice_start_points):
+        print(f"Generating request-interval predictions on split '{split}' ...")
+        for i in range(len(request_number_dataset)):
+            metadata_row = metadata_df.iloc[i]
             seq_x, seq_y, seq_x_mark, seq_y_mark = request_number_dataset[i]
 
-            seq_x = seq_x.unsqueeze(0)
-            seq_y = seq_y.unsqueeze(0)
-            seq_x_mark = seq_x_mark.unsqueeze(0)
-            seq_y_mark = seq_y_mark.unsqueeze(0)
+            true_targets = seq_y.unsqueeze(0)
+            true_delta_scaled = true_targets[:, -self.model_config.pred_len :, time_series.delta_target_indices].cpu().numpy()
+            true_availability = true_targets[:, -self.model_config.pred_len :, time_series.availability_target_indices].cpu().numpy()[0]
+            true_intervals = time_series.inverse_transform_target_deltas(true_delta_scaled)[0]
+            true_intervals = self._apply_target_padding(
+                time_differences=true_intervals,
+                availability=true_availability,
+                target_padding_value=time_series.target_padding_value,
+            )
 
-            true_value = seq_y[
-                :,
-                -self.model_config.pred_len :,
-                time_series.target_channel_indices,
-            ].cpu().numpy()
-            true_value = time_series.inverse_transform(true_value)[0]
-
-            prediction = requests_number_forecaster.predict(
-                x=seq_x,
-                x_mark=seq_x_mark,
-                y_mark=seq_y_mark,
-            )[0]
+            prediction_output = requests_number_forecaster.predict(
+                x=seq_x.unsqueeze(0),
+                x_mark=seq_x_mark.unsqueeze(0),
+                y_mark=seq_y_mark.unsqueeze(0),
+            )
+            prediction_availability = prediction_output["availability"][0]
+            prediction_intervals = self._apply_target_padding(
+                time_differences=prediction_output["time_differences"][0],
+                availability=prediction_availability,
+                target_padding_value=time_series.target_padding_value,
+            )
 
             prediction_records.append(
                 self._build_prediction_record(
                     split=split,
                     time_series=time_series,
-                    split_raw_df=split_raw_df,
-                    start_point=start_point,
-                    prediction=prediction,
-                    true_value=true_value,
+                    metadata_row=metadata_row,
+                    prediction_intervals=prediction_intervals,
+                    prediction_availability=prediction_availability,
+                    true_intervals=true_intervals,
+                    true_availability=true_availability,
                 )
             )
 
             if (i + 1) % 100 == 0:
                 print(f"Generated {i + 1} windows for split '{split}'.")
 
-        print(f"Predicted number of requests has been generated for split '{split}'!")
+        print(f"Request-interval predictions have been generated for split '{split}'!")
         return prediction_records
 
     def _build_prediction_metadata(self, time_series: RequestsNumberTimeSeries) -> dict[str, object]:
@@ -269,9 +274,10 @@ class RequestNumberPredictionManager:
             "seq_len": self.model_config.seq_len,
             "label_len": self.model_config.label_len,
             "pred_len": self.model_config.pred_len,
-            "feature_columns": list(time_series.feature_cols),
+            "input_feature_columns": list(time_series.input_feature_cols),
             "target_columns": list(time_series.target_cols),
-            "auxiliary_feature_columns": list(time_series.auxiliary_feature_cols),
+            "task_columns": list(time_series.task_names),
+            "target_padding_value": time_series.target_padding_value,
             "metadata": time_series.metadata,
         }
 
@@ -289,7 +295,6 @@ class RequestNumberPredictionManager:
                     time_series=time_series,
                     split=split,
                     requests_number_forecaster=requests_number_forecaster,
-                    device=device,
                 )
             )
 
@@ -305,17 +310,17 @@ class RequestNumberPredictionManager:
         prediction_df: pd.DataFrame,
         metadata: dict[str, object],
     ) -> None:
-        print("Saving number predictions ...")
+        print("Saving request-interval predictions ...")
         prediction_df.to_pickle(self._prediction_pickle_path())
         prediction_df.to_csv(self._prediction_csv_path(), index=False)
         with self._prediction_metadata_path().open("w", encoding="utf-8") as metadata_file:
             json.dump(metadata, metadata_file, indent=2, default=str)
-        print("Number predictions have been saved!")
+        print("Request-interval predictions have been saved!")
 
     def _load_request_predictions(self) -> pd.DataFrame:
-        print("Loading number predictions ...")
+        print("Loading request-interval predictions ...")
         prediction_df = pd.read_pickle(self._prediction_pickle_path())
-        print("Number predictions have been loaded!")
+        print("Request-interval predictions have been loaded!")
         return prediction_df
 
 
@@ -327,15 +332,19 @@ class RequestLocationsPredictionManager:
         )
 
 
+Request_Number_Prediction_Manager = RequestNumberPredictionManager
+Request_Locations_Prediction_Manager = RequestLocationsPredictionManager
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = build_training_parser()
     parser.prog = "RequestPredictionHandler"
-    parser.description = "Generate medical request-count forecasts from a trained checkpoint."
+    parser.description = "Generate medical request-interval forecasts from a trained checkpoint."
     parser.add_argument(
         "--checkpoint_path",
         type=str,
         required=True,
-        help="Lightning checkpoint for the trained request-count forecaster.",
+        help="Lightning checkpoint for the trained request-interval forecaster.",
     )
     parser.add_argument(
         "--predictions_dir",

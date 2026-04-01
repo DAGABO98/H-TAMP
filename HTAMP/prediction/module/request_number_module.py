@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import lightning as L
 import numpy as np
 import torch
-import lightning as L
+import torch.nn.functional as F
 
 from HTAMP.prediction.configs.request_number_config import TimeseriesModelConfig
 from HTAMP.prediction.time_series_models.architectures.i_transformer import Model as ITransformerModel
@@ -26,7 +27,9 @@ class RequestsNumberModule(L.LightningModule):
         model_config: TimeseriesModelConfig | dict[str, Any],
         target_scaler_mean: list[float] | np.ndarray,
         target_scaler_scale: list[float] | np.ndarray,
-        target_channel_indices: list[int],
+        delta_target_indices: list[int],
+        availability_target_indices: list[int],
+        target_padding_value: float,
     ) -> None:
         super().__init__()
 
@@ -42,7 +45,7 @@ class RequestsNumberModule(L.LightningModule):
             raise ValueError(f"Unsupported model_name: {self.model_config.model_name}")
 
         self.forecaster = model_dict[self.model_config.model_name](self.model_config).float()
-        self.criterion = (
+        self.delta_criterion = (
             torch.nn.MSELoss()
             if self.model_config.loss == "MSE"
             else torch.nn.L1Loss()
@@ -50,17 +53,23 @@ class RequestsNumberModule(L.LightningModule):
 
         scaler_mean_tensor = torch.as_tensor(target_scaler_mean, dtype=torch.float32)
         scaler_scale_tensor = torch.as_tensor(target_scaler_scale, dtype=torch.float32)
-        target_channel_indices_tensor = torch.as_tensor(target_channel_indices, dtype=torch.long)
+        delta_target_indices_tensor = torch.as_tensor(delta_target_indices, dtype=torch.long)
+        availability_target_indices_tensor = torch.as_tensor(availability_target_indices, dtype=torch.long)
+
         self.register_buffer("target_scaler_mean", scaler_mean_tensor)
         self.register_buffer("target_scaler_scale", scaler_scale_tensor)
-        self.register_buffer("target_channel_indices", target_channel_indices_tensor)
+        self.register_buffer("delta_target_indices", delta_target_indices_tensor)
+        self.register_buffer("availability_target_indices", availability_target_indices_tensor)
+        self.target_padding_value = float(target_padding_value)
 
         self.save_hyperparameters(
             {
                 "model_config": self.model_config.to_dict(),
                 "target_scaler_mean": scaler_mean_tensor.detach().cpu().tolist(),
                 "target_scaler_scale": scaler_scale_tensor.detach().cpu().tolist(),
-                "target_channel_indices": target_channel_indices_tensor.detach().cpu().tolist(),
+                "delta_target_indices": delta_target_indices_tensor.detach().cpu().tolist(),
+                "availability_target_indices": availability_target_indices_tensor.detach().cpu().tolist(),
+                "target_padding_value": self.target_padding_value,
             }
         )
 
@@ -81,24 +90,68 @@ class RequestsNumberModule(L.LightningModule):
                 on_epoch=True,
             )
 
-    def _inverse_transform_tensor(self, data: torch.Tensor) -> torch.Tensor:
+    def _inverse_transform_delta_tensor(self, data: torch.Tensor) -> torch.Tensor:
         scale = self.target_scaler_scale.view(1, 1, -1)
         mean = self.target_scaler_mean.view(1, 1, -1)
         return data * scale + mean
 
-    def _select_target_channels(self, data: torch.Tensor) -> torch.Tensor:
-        return torch.index_select(data, dim=-1, index=self.target_channel_indices)
+    def _select_delta_targets(self, data: torch.Tensor) -> torch.Tensor:
+        return torch.index_select(data, dim=-1, index=self.delta_target_indices)
 
-    def _compute_stats(self, pred: torch.Tensor, true: torch.Tensor) -> dict[str, float]:
-        scaled_pred = self._inverse_transform_tensor(pred.detach()).cpu().numpy()
-        scaled_true = self._inverse_transform_tensor(true.detach()).cpu().numpy()
+    def _select_availability_targets(self, data: torch.Tensor) -> torch.Tensor:
+        return torch.index_select(data, dim=-1, index=self.availability_target_indices)
 
-        mae, mse, rmse = metric(scaled_pred, scaled_true)
+    def _compute_delta_loss(
+        self,
+        pred_delta: torch.Tensor,
+        true_delta: torch.Tensor,
+        true_availability: torch.Tensor,
+    ) -> torch.Tensor:
+        valid_mask = true_availability > 0.5
+        if valid_mask.any():
+            return self.delta_criterion(pred_delta[valid_mask], true_delta[valid_mask])
+        return pred_delta.sum() * 0.0
+
+    def _compute_stats(
+        self,
+        pred_delta: torch.Tensor,
+        true_delta: torch.Tensor,
+        pred_availability_logits: torch.Tensor,
+        true_availability: torch.Tensor,
+    ) -> dict[str, float]:
+        scaled_pred = self._inverse_transform_delta_tensor(pred_delta.detach()).cpu().numpy()
+        scaled_true = self._inverse_transform_delta_tensor(true_delta.detach()).cpu().numpy()
+        valid_mask = (true_availability.detach().cpu().numpy() > 0.5)
+
+        if valid_mask.any():
+            pred_flat = scaled_pred[valid_mask].reshape(-1, 1)
+            true_flat = scaled_true[valid_mask].reshape(-1, 1)
+            mae, mse, rmse = metric(pred_flat, true_flat)
+        else:
+            mae, mse, rmse = 0.0, 0.0, 0.0
+
+        availability_probs = torch.sigmoid(pred_availability_logits.detach())
+        availability_true = (true_availability > 0.5).float()
+        availability_accuracy = float(
+            ((availability_probs > 0.5).float() == availability_true).float().mean().item()
+        )
+
         return {
-            "mae": mae,
-            "mse": mse,
-            "rmse": rmse,
+            "delta_mae": float(mae),
+            "delta_mse": float(mse),
+            "delta_rmse": float(rmse),
+            "availability_accuracy": availability_accuracy,
         }
+
+    def _build_decoder_input(self, batch_y: torch.Tensor) -> torch.Tensor:
+        decoder_zeros = torch.zeros(
+            (batch_y.shape[0], self.model_config.pred_len, batch_y.shape[-1]),
+            device=batch_y.device,
+            dtype=torch.float32,
+        )
+        if self.model_config.label_len > 0:
+            return torch.cat([batch_y[:, : self.model_config.label_len, :], decoder_zeros], dim=1).float()
+        return decoder_zeros
 
     def _shared_step(
         self,
@@ -106,23 +159,36 @@ class RequestsNumberModule(L.LightningModule):
     ) -> dict[str, torch.Tensor | float]:
         batch_x, batch_y, batch_x_mark, batch_y_mark = batch
 
-        decoder_zeros = torch.zeros_like(batch_y[:, -self.model_config.pred_len :, :]).float()
-        decoder_input = torch.cat(
-            [batch_y[:, : self.model_config.label_len, :], decoder_zeros],
-            dim=1,
-        ).float()
-
+        decoder_input = self._build_decoder_input(batch_y=batch_y)
         outputs = self.forecaster(batch_x, batch_x_mark, decoder_input, batch_y_mark)
         predictions = outputs[:, -self.model_config.pred_len :, :]
         targets = batch_y[:, -self.model_config.pred_len :, :]
 
-        predictions = self._select_target_channels(predictions)
-        targets = self._select_target_channels(targets)
+        pred_delta = self._select_delta_targets(predictions)
+        true_delta = self._select_delta_targets(targets)
+        pred_availability_logits = self._select_availability_targets(predictions)
+        true_availability = self._select_availability_targets(targets)
 
-        loss = self.criterion(predictions, targets)
-        stats = self._compute_stats(pred=predictions, true=targets)
+        delta_loss = self._compute_delta_loss(
+            pred_delta=pred_delta,
+            true_delta=true_delta,
+            true_availability=true_availability,
+        )
+        availability_loss = F.binary_cross_entropy_with_logits(
+            pred_availability_logits,
+            true_availability,
+        )
+        loss = delta_loss + availability_loss
+
+        stats = self._compute_stats(
+            pred_delta=pred_delta,
+            true_delta=true_delta,
+            pred_availability_logits=pred_availability_logits,
+            true_availability=true_availability,
+        )
+        stats["delta_loss"] = delta_loss
+        stats["availability_loss"] = availability_loss
         stats["loss"] = loss
-
         return stats
 
     def training_step(
@@ -178,30 +244,25 @@ class RequestsNumberModule(L.LightningModule):
         x: torch.Tensor,
         x_mark: torch.Tensor,
         y_mark: torch.Tensor,
-    ) -> np.ndarray:
+    ) -> dict[str, np.ndarray]:
         x = x.to(self.device).float()
         x_mark = x_mark.to(self.device).float()
         y_mark = y_mark.to(self.device).float()
 
-        decoder_zeros = torch.zeros(
-            (x.shape[0], self.model_config.pred_len, x.shape[-1]),
+        decoder_input = torch.zeros(
+            (x.shape[0], self.model_config.label_len + self.model_config.pred_len, self.model_config.dec_in),
             device=self.device,
             dtype=torch.float32,
         )
-
-        if self.model_config.label_len > 0:
-            decoder_input = torch.cat(
-                [x[:, -self.model_config.label_len :, :], decoder_zeros],
-                dim=1,
-            ).float()
-        else:
-            decoder_input = decoder_zeros
 
         with torch.no_grad():
             outputs = self.forecaster(x, x_mark, decoder_input, y_mark)
 
         predictions = outputs[:, -self.model_config.pred_len :, :]
-        predictions = self._select_target_channels(predictions)
-        scaled_predictions = self._inverse_transform_tensor(predictions)
+        pred_delta = self._select_delta_targets(predictions)
+        pred_availability_logits = self._select_availability_targets(predictions)
 
-        return scaled_predictions.detach().cpu().numpy()
+        return {
+            "time_differences": self._inverse_transform_delta_tensor(pred_delta).detach().cpu().numpy(),
+            "availability": torch.sigmoid(pred_availability_logits).detach().cpu().numpy(),
+        }
