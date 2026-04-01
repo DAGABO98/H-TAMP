@@ -1336,16 +1336,12 @@ if __name__ == '__main__':
         test_data_loader = data_module.test_dataloader()
 
         for i, batch in enumerate(test_data_loader):
-            seq_x, seq_y, seq_x_mark, seq_y_mark = batch
+            seq_x, seq_y = batch
             print(i)
             print(seq_x.size())
             print(seq_y.size())
-            print(seq_x_mark.size())
-            print(seq_y_mark.size())
         print(seq_x)
         print(seq_y)
-        print(seq_x_mark)
-        print(seq_y_mark)
         print("Process completed successfully.")
 
     except Exception as errorMainContext:
