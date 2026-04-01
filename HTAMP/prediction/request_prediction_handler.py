@@ -133,15 +133,21 @@ class RequestPredictionManager:
             prediction_length=self.model_config.pred_len,
         )
 
-    def _apply_target_padding(
+    def _mask_unavailable_intervals(
         self,
         time_differences,
         availability,
-        target_padding_value: float,
-    ):
-        padded = time_differences.copy()
-        padded[availability < 0.5] = target_padding_value
-        return padded
+    ) -> list[list[float | None]]:
+        masked_intervals: list[list[float | None]] = []
+        for time_step_intervals, time_step_availability in zip(time_differences, availability):
+            masked_row: list[float | None] = []
+            for interval_value, availability_value in zip(time_step_intervals, time_step_availability):
+                if float(availability_value) < 0.5:
+                    masked_row.append(None)
+                else:
+                    masked_row.append(float(interval_value))
+            masked_intervals.append(masked_row)
+        return masked_intervals
 
     def _build_prediction_record(
         self,
@@ -166,11 +172,10 @@ class RequestPredictionManager:
             "last_observed_timestamps_by_type": json.loads(metadata_row["last_observed_timestamps_by_type"]),
             "future_timestamps_by_type": json.loads(metadata_row["future_timestamps_by_type"]),
             "task_columns": list(time_series.task_names),
-            "prediction": prediction_intervals.tolist(),
+            "prediction": prediction_intervals,
             "prediction_available": prediction_availability.tolist(),
-            "true_value": true_intervals.tolist(),
+            "true_value": true_intervals,
             "true_available": true_availability.tolist(),
-            "target_padding_value": time_series.target_padding_value,
         }
 
     def _generate_request_predictions(
@@ -192,18 +197,16 @@ class RequestPredictionManager:
             true_delta_scaled = true_targets[:, -self.model_config.pred_len :, time_series.delta_target_indices].cpu().numpy()
             true_availability = true_targets[:, -self.model_config.pred_len :, time_series.availability_target_indices].cpu().numpy()[0]
             true_intervals = time_series.inverse_transform_target_deltas(true_delta_scaled)[0]
-            true_intervals = self._apply_target_padding(
+            true_intervals = self._mask_unavailable_intervals(
                 time_differences=true_intervals,
                 availability=true_availability,
-                target_padding_value=time_series.target_padding_value,
             )
 
             prediction_output = requests_forecaster.predict(x=seq_x.unsqueeze(0))
             prediction_availability = prediction_output["availability"][0]
-            prediction_intervals = self._apply_target_padding(
+            prediction_intervals = self._mask_unavailable_intervals(
                 time_differences=prediction_output["time_differences"][0],
                 availability=prediction_availability,
-                target_padding_value=time_series.target_padding_value,
             )
 
             prediction_records.append(
@@ -236,7 +239,6 @@ class RequestPredictionManager:
             "input_feature_columns": list(time_series.input_feature_cols),
             "target_columns": list(time_series.target_cols),
             "task_columns": list(time_series.task_names),
-            "target_padding_value": time_series.target_padding_value,
             "metadata": time_series.metadata,
         }
 

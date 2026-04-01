@@ -28,8 +28,7 @@ class RequestsModule(L.LightningModule):
         target_scaler_mean: list[float] | np.ndarray,
         target_scaler_scale: list[float] | np.ndarray,
         delta_target_indices: list[int],
-        availability_target_indices: list[int],
-        target_padding_value: float,
+        availability_target_indices: list[int]
     ) -> None:
         super().__init__()
 
@@ -60,7 +59,6 @@ class RequestsModule(L.LightningModule):
         self.register_buffer("target_scaler_scale", scaler_scale_tensor)
         self.register_buffer("delta_target_indices", delta_target_indices_tensor)
         self.register_buffer("availability_target_indices", availability_target_indices_tensor)
-        self.target_padding_value = float(target_padding_value)
 
         self.save_hyperparameters(
             {
@@ -69,7 +67,6 @@ class RequestsModule(L.LightningModule):
                 "target_scaler_scale": scaler_scale_tensor.detach().cpu().tolist(),
                 "delta_target_indices": delta_target_indices_tensor.detach().cpu().tolist(),
                 "availability_target_indices": availability_target_indices_tensor.detach().cpu().tolist(),
-                "target_padding_value": self.target_padding_value,
             }
         )
 

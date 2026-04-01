@@ -104,7 +104,6 @@ class RequestsPredictor:
             target_scaler_scale=time_series.target_scaler_scale.tolist(),
             delta_target_indices=time_series.delta_target_indices,
             availability_target_indices=time_series.availability_target_indices,
-            target_padding_value=time_series.target_padding_value,
         )
 
     def create_callbacks(
