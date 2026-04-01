@@ -873,6 +873,23 @@ class RequestsTimeSeries:
         history_records = task_records[history_start:observed_count]
         future_records = task_records[observed_count : observed_count + self.prediction_length]
         return history_records, future_records
+    
+    def _build_segment_task_lookups(
+        self,
+        segment_df: pd.DataFrame,
+    ) -> tuple[dict[str, list[dict[str, object]]], dict[str, pd.DatetimeIndex]]:
+        task_records_by_type = {task_name: [] for task_name in self.task_names}
+        task_timestamps_by_type = {
+            task_name: pd.DatetimeIndex([])
+            for task_name in self.task_names
+        }
+
+        for task_name, task_df in segment_df.groupby("task_name", sort=False):
+            ordered_task_df = task_df.sort_values(self.timestamp_col).reset_index(drop=True)
+            task_records_by_type[task_name] = ordered_task_df.to_dict(orient="records")
+            task_timestamps_by_type[task_name] = pd.DatetimeIndex(ordered_task_df[self.timestamp_col])
+
+        return task_records_by_type, task_timestamps_by_type
 
     def _fill_history_block(
         self,
@@ -965,26 +982,9 @@ class RequestsTimeSeries:
             if segment_df.empty:
                 continue
 
-            task_frames_by_type = {
-                task_name: task_df.sort_values(self.timestamp_col).reset_index(drop=True)
-                for task_name, task_df in segment_df.groupby("task_name", sort=False)
-            }
-            task_records_by_type = {
-                task_name: task_frames_by_type[task_name].to_dict(orient="records")
-                for task_name in task_frames_by_type
-            }
-            task_timestamps_by_type = {
-                task_name: pd.DatetimeIndex(task_frames_by_type[task_name][self.timestamp_col])
-                for task_name in task_frames_by_type
-            }
-            task_records_by_type = {
-                task_name: task_records_by_type.get(task_name, [])
-                for task_name in self.task_names
-            }
-            task_timestamps_by_type = {
-                task_name: task_timestamps_by_type.get(task_name, pd.DatetimeIndex([]))
-                for task_name in self.task_names
-            }
+            task_records_by_type, task_timestamps_by_type = self._build_segment_task_lookups(
+                segment_df=segment_df
+            )
             anchor_timestamps = self._segment_anchor_timestamps(segment_df=segment_df)
             if not anchor_timestamps:
                 continue
@@ -1308,6 +1308,11 @@ if __name__ == '__main__':
             print(seq_y.size())
             print(seq_x_mark.size())
             print(seq_y_mark.size())
+        print(seq_x)
+        print(seq_y)
+        print(seq_x_mark)
+        print(seq_y_mark)
+        print("Process completed successfully.")
 
     except Exception as errorMainContext:
         print("Fail End Process: ", errorMainContext)

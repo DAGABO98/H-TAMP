@@ -10,8 +10,6 @@ from typing import Optional, Sequence
 import pandas as pd
 import torch
 
-from HTAMP.data_processing.data_helpers import DataHelpers
-from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.prediction.data_provider.requests_number_dataset import (
     RequestsDataManager,
     RequestsDataset,
@@ -22,41 +20,12 @@ from HTAMP.prediction.configs.request_number_config import (
     TimeseriesModelConfig,
 )
 from HTAMP.prediction.module.request_number_module import RequestsNumberModule
-from HTAMP.prediction.module.request_number_predictor import build_parser as build_training_parser
+from HTAMP.prediction.module.request_number_predictor import (
+    build_dataset_config_from_args,
+    build_parser as build_training_parser,
+)
 
 SPLITS = ("train", "val", "test")
-
-
-def _build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDatasetConfig:
-    dataset_config_kwargs = dict(
-        annotated_data_files=AnnotatedDataFiles(
-            annotated_visits="",
-            annotated_admissions_discharges="",
-            annotated_medications=args.medications_orders_file,
-            annotated_blood_pressure=args.blood_pressure_orders_file,
-            annotated_heart_rate=args.heart_rate_orders_file,
-            annotated_respiratory_rate=args.respiratory_rate_orders_file,
-            annotated_temperature=args.temperature_orders_file,
-            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
-        ),
-        request_dir=args.request_dir,
-        dataset_dir=args.dataset_dir,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        patient_id_col=args.patient_id_col,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
-        use_saved_request_data=args.use_saved_request_data,
-        input_padding_value=args.input_padding_value,
-        target_padding_value=args.target_padding_value,
-    )
-    if args.test_iso_weeks:
-        dataset_config_kwargs["test_iso_weeks"] = tuple(
-            DataHelpers.parse_iso_week_args(args.test_iso_weeks)
-        )
-
-    return MedicalRequestDatasetConfig(**dataset_config_kwargs)
-
 
 class RequestNumberPredictionManager:
     def __init__(
@@ -368,7 +337,7 @@ if __name__ == "__main__":
         parser = build_parser()
         args = parser.parse_args()
 
-        dataset_config = _build_dataset_config_from_args(args=args)
+        dataset_config = build_dataset_config_from_args(args=args)
         model_config = TimeseriesModelConfig.from_namespace(args=args)
 
         RequestNumberPredictionManager(

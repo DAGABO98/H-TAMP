@@ -23,6 +23,32 @@ from HTAMP.prediction.configs.request_number_config import (
 )
 from HTAMP.prediction.module.request_number_module import RequestsNumberModule
 
+def build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDatasetConfig:
+    dataset_config_kwargs = dict(
+        annotated_data_files=AnnotatedDataFiles(
+            annotated_visits="",
+            annotated_admissions_discharges="",
+            annotated_medications=args.medications_orders_file,
+            annotated_blood_pressure=args.blood_pressure_orders_file,
+            annotated_heart_rate=args.heart_rate_orders_file,
+            annotated_respiratory_rate=args.respiratory_rate_orders_file,
+            annotated_temperature=args.temperature_orders_file,
+            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
+        ),
+        request_dir=args.request_dir,
+        dataset_dir=args.dataset_dir,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        patient_id_col=args.patient_id_col,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+        use_saved_request_data=args.use_saved_request_data,
+        input_padding_value=args.input_padding_value,
+        target_padding_value=args.target_padding_value,
+    )
+    if args.test_iso_weeks:
+        dataset_config_kwargs["test_iso_weeks"] = tuple(DataHelpers.parse_iso_week_args(args.test_iso_weeks))
+    return MedicalRequestDatasetConfig(**dataset_config_kwargs)
 
 class RequestsNumberPredictor:
     def create_data_module_and_time_series(
@@ -135,32 +161,7 @@ class RequestsNumberPredictor:
 
     def compile_and_train(self, args: argparse.Namespace) -> None:
         model_config = TimeseriesModelConfig.from_namespace(args=args)
-        dataset_config_kwargs = dict(
-            annotated_data_files=AnnotatedDataFiles(
-                annotated_visits="",
-                annotated_admissions_discharges="",
-                annotated_medications=args.medications_orders_file,
-                annotated_blood_pressure=args.blood_pressure_orders_file,
-                annotated_heart_rate=args.heart_rate_orders_file,
-                annotated_respiratory_rate=args.respiratory_rate_orders_file,
-                annotated_temperature=args.temperature_orders_file,
-                annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
-            ),
-            request_dir=args.request_dir,
-            dataset_dir=args.dataset_dir,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            patient_id_col=args.patient_id_col,
-            train_ratio=args.train_ratio,
-            val_ratio=args.val_ratio,
-            use_saved_request_data=args.use_saved_request_data,
-            input_padding_value=args.input_padding_value,
-            target_padding_value=args.target_padding_value,
-        )
-        if args.test_iso_weeks:
-            dataset_config_kwargs["test_iso_weeks"] = tuple(DataHelpers.parse_iso_week_args(args.test_iso_weeks))
-
-        dataset_config = MedicalRequestDatasetConfig(**dataset_config_kwargs)
+        dataset_config = build_dataset_config_from_args(args=args)
 
         log_dir = os.getenv("STF_LOG_DIR", "./data/STF_LOG_DIR")
         os.makedirs(log_dir, exist_ok=True)
