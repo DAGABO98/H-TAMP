@@ -78,10 +78,31 @@ TIMESTAMP_COLUMN = "timestamp"
 TIME_COLUMNS = ["month", "day", "weekday", "hour", "minute"]
 SEGMENT_COLUMNS = ["patient_id", "start_idx", "end_idx", "num_rows"]
 SPLITS = ("train", "val", "test")
+TASK_NAMES = tuple(TASK_SPECS.keys())
+TASK_TO_INDEX = {task_name: index for index, task_name in enumerate(TASK_NAMES)}
 
 
 def _normalize_column_name(column_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(column_name).lower())
+
+
+def _event_measurement_column(task_name: str, component: str) -> str:
+    return f"{task_name}_{component}"
+
+
+TASK_EVENT_MEASUREMENT_COLUMNS: dict[str, list[str]] = {
+    task_name: [
+        _event_measurement_column(task_name=task_name, component=component)
+        for component in VITAL_OUTPUT_COMPONENTS.get(task_name, [])
+    ]
+    for task_name in TASK_NAMES
+}
+
+EVENT_MEASUREMENT_COLUMNS = tuple(
+    feature_name
+    for task_name in TASK_NAMES
+    for feature_name in TASK_EVENT_MEASUREMENT_COLUMNS.get(task_name, [])
+)
 
 
 class RequestNumberDataManager:
@@ -111,25 +132,29 @@ class RequestNumberDataManager:
         return self.dataset_config.patient_id_col
 
     @property
-    def target_cols(self) -> list[str]:
-        return list(TASK_SPECS.keys())
-
-    @property
-    def auxiliary_feature_cols(self) -> list[str]:
-        feature_cols: list[str] = []
-        for task_name, components in VITAL_OUTPUT_COMPONENTS.items():
-            for component in components:
-                min_col, max_col = self._measurement_feature_names(task_name=task_name, component=component)
-                feature_cols.extend([min_col, max_col])
-        return feature_cols
-
-    @property
-    def feature_cols(self) -> list[str]:
-        return [*self.target_cols, *self.auxiliary_feature_cols]
+    def task_names(self) -> list[str]:
+        return list(TASK_NAMES)
 
     @property
     def time_cols(self) -> list[str]:
         return TIME_COLUMNS.copy()
+
+    @property
+    def event_measurement_cols(self) -> list[str]:
+        return list(EVENT_MEASUREMENT_COLUMNS)
+
+    @property
+    def event_cols(self) -> list[str]:
+        return [
+            self.patient_id_col,
+            TIMESTAMP_COLUMN,
+            "task_name",
+            "task_index",
+            *self.time_cols,
+            "interval_available",
+            "time_diff_minutes",
+            *self.event_measurement_cols,
+        ]
 
     def _build_request_handler(self) -> GlobalRequestHandler:
         return GlobalRequestHandler(
@@ -140,18 +165,17 @@ class RequestNumberDataManager:
             use_saved_data=self.dataset_config.use_saved_request_data,
         )
 
-    def _freq(self) -> str:
-        return f"{self.dataset_config.time_step_minutes}min"
-
     def _task_frames(self, request_handler: GlobalRequestHandler) -> dict[str, pd.DataFrame]:
         return {
             task_name: getattr(request_handler, handler_attr)
             for task_name, handler_attr in REQUEST_HANDLER_ATTRS.items()
         }
 
-    def _empty_indexed_frame(self, columns: list[str]) -> pd.DataFrame:
-        empty_index = pd.MultiIndex.from_arrays([[], []], names=[self.patient_id_col, TIMESTAMP_COLUMN])
-        return pd.DataFrame(index=empty_index, columns=columns)
+    def _empty_events_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=self.event_cols)
+
+    def _empty_segments_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=SEGMENT_COLUMNS)
 
     def _match_first_column(self, columns: list[str], candidates: list[str]) -> Optional[str]:
         normalized_columns = {_normalize_column_name(column): column for column in columns}
@@ -175,17 +199,13 @@ class RequestNumberDataManager:
         diastolic = pd.to_numeric(extracted["diastolic"], errors="coerce")
         return systolic, diastolic
 
-    def _measurement_feature_names(self, task_name: str, component: str) -> tuple[str, str]:
-        prefix = task_name if component == "value" else f"{task_name}_{component}"
-        return f"{prefix}_min_value", f"{prefix}_max_value"
-
     def _warn_missing_measurements(self, task_name: str) -> None:
         if task_name in self._warned_missing_measurements:
             return
         self._warned_missing_measurements.add(task_name)
         print(
             f"Warning: no measurement value column was detected for '{task_name}'. "
-            "Its min/max auxiliary features will be missing."
+            "The request-interval features for that task will use padding values."
         )
 
     def _extract_measurement_components(
@@ -230,155 +250,68 @@ class RequestNumberDataManager:
         task_df = df.copy()
         task_df = task_df.dropna(subset=[self.patient_id_col, time_col])
         task_df[self.patient_id_col] = task_df[self.patient_id_col].astype(str)
-        task_df[TIMESTAMP_COLUMN] = pd.to_datetime(task_df[time_col], errors="coerce").dt.floor(self._freq())
+        task_df[TIMESTAMP_COLUMN] = pd.to_datetime(task_df[time_col], errors="coerce")
         task_df = task_df.dropna(subset=[TIMESTAMP_COLUMN])
+        task_df = task_df.sort_values([self.patient_id_col, TIMESTAMP_COLUMN]).reset_index(drop=True)
         return task_df
 
-    def _build_task_counts(
+    def _build_task_events(
         self,
         df: pd.DataFrame,
         task_name: str,
         time_col: str,
     ) -> pd.DataFrame:
         if df.empty:
-            return self._empty_indexed_frame(columns=[task_name])
-
-        task_df = self._base_task_df(df=df[[self.patient_id_col, time_col]].copy(), time_col=time_col)
-        return (
-            task_df.groupby([self.patient_id_col, TIMESTAMP_COLUMN])
-            .size()
-            .rename(task_name)
-            .to_frame()
-        )
-
-    def _build_task_measurement_features(
-        self,
-        df: pd.DataFrame,
-        task_name: str,
-        time_col: str,
-    ) -> pd.DataFrame:
-        feature_columns = [
-            feature_name
-            for component in VITAL_OUTPUT_COMPONENTS.get(task_name, [])
-            for feature_name in self._measurement_feature_names(task_name=task_name, component=component)
-        ]
-        if not feature_columns:
-            return self._empty_indexed_frame(columns=[])
-        if df.empty:
-            return self._empty_indexed_frame(columns=feature_columns)
+            return self._empty_events_frame()
 
         task_df = self._base_task_df(df=df, time_col=time_col)
         if task_df.empty:
-            return self._empty_indexed_frame(columns=feature_columns)
+            return self._empty_events_frame()
 
-        component_series = self._extract_measurement_components(task_name=task_name, task_df=task_df)
-        grouped_index = (
-            task_df.groupby([self.patient_id_col, TIMESTAMP_COLUMN])
-            .size()
-            .rename("__rows__")
-            .to_frame()
-            .drop(columns="__rows__")
-        )
+        event_df = task_df[[self.patient_id_col, TIMESTAMP_COLUMN]].copy()
+        event_df["task_name"] = task_name
+        event_df["task_index"] = TASK_TO_INDEX[task_name]
+        event_df["month"] = event_df[TIMESTAMP_COLUMN].dt.month.astype(np.int64)
+        event_df["day"] = event_df[TIMESTAMP_COLUMN].dt.day.astype(np.int64)
+        event_df["weekday"] = event_df[TIMESTAMP_COLUMN].dt.weekday.astype(np.int64)
+        event_df["hour"] = event_df[TIMESTAMP_COLUMN].dt.hour.astype(np.int64)
+        event_df["minute"] = event_df[TIMESTAMP_COLUMN].dt.minute.astype(np.int64)
+        event_df["interval_available"] = 0.0
+        event_df["time_diff_minutes"] = np.nan
 
-        for component in VITAL_OUTPUT_COMPONENTS.get(task_name, []):
-            min_col, max_col = self._measurement_feature_names(task_name=task_name, component=component)
-            if component not in component_series:
-                grouped_index[min_col] = np.nan
-                grouped_index[max_col] = np.nan
-                continue
+        for measurement_col in self.event_measurement_cols:
+            event_df[measurement_col] = np.nan
 
-            stats = (
-                task_df.assign(__value__=component_series[component])
-                .groupby([self.patient_id_col, TIMESTAMP_COLUMN])["__value__"]
-                .agg(["min", "max"])
-                .rename(columns={"min": min_col, "max": max_col})
-            )
-            grouped_index = grouped_index.join(stats, how="left")
+        for component_name, component_series in self._extract_measurement_components(
+            task_name=task_name,
+            task_df=task_df,
+        ).items():
+            event_df[_event_measurement_column(task_name=task_name, component=component_name)] = component_series.astype(float)
 
-        return grouped_index[feature_columns]
+        return event_df[self.event_cols]
 
-    def _build_multivariate_counts(self, request_handler: GlobalRequestHandler) -> pd.DataFrame:
+    def _build_events_df(self, request_handler: GlobalRequestHandler) -> pd.DataFrame:
         task_frames = self._task_frames(request_handler=request_handler)
-        indexed_frames: list[pd.DataFrame] = []
-
-        for task_name, time_col in TASK_SPECS.items():
-            indexed_frames.append(
-                self._build_task_counts(
-                    df=task_frames[task_name],
-                    task_name=task_name,
-                    time_col=time_col,
-                )
+        event_frames = [
+            self._build_task_events(
+                df=task_frames[task_name],
+                task_name=task_name,
+                time_col=TASK_SPECS[task_name],
             )
-            indexed_frames.append(
-                self._build_task_measurement_features(
-                    df=task_frames[task_name],
-                    task_name=task_name,
-                    time_col=time_col,
-                )
-            )
+            for task_name in TASK_NAMES
+        ]
 
-        counts_df = pd.concat(indexed_frames, axis=1).reset_index()
-        if counts_df.empty:
+        events_df = pd.concat(event_frames, axis=0, ignore_index=True)
+        if events_df.empty:
             raise ValueError(
                 "No medical requests were found for the configured date range. "
                 "Please check the annotated files and date filters."
             )
 
-        for target_col in self.target_cols:
-            if target_col not in counts_df.columns:
-                counts_df[target_col] = 0
-        for aux_col in self.auxiliary_feature_cols:
-            if aux_col not in counts_df.columns:
-                counts_df[aux_col] = np.nan
-
-        counts_df[self.target_cols] = counts_df[self.target_cols].fillna(0).astype(np.int64)
-        counts_df[self.auxiliary_feature_cols] = counts_df[self.auxiliary_feature_cols].astype(float)
-        counts_df = counts_df.sort_values([self.patient_id_col, TIMESTAMP_COLUMN]).reset_index(drop=True)
-
-        ordered_columns = [self.patient_id_col, TIMESTAMP_COLUMN, *self.feature_cols]
-        return counts_df[ordered_columns]
-
-    def _add_time_features(self, patient_df: pd.DataFrame, patient_id: str) -> pd.DataFrame:
-        enriched_df = patient_df.copy()
-        enriched_df[self.patient_id_col] = patient_id
-        enriched_df["month"] = enriched_df[TIMESTAMP_COLUMN].dt.month.astype(np.int64)
-        enriched_df["day"] = enriched_df[TIMESTAMP_COLUMN].dt.day.astype(np.int64)
-        enriched_df["weekday"] = enriched_df[TIMESTAMP_COLUMN].dt.weekday.astype(np.int64)
-        enriched_df["hour"] = enriched_df[TIMESTAMP_COLUMN].dt.hour.astype(np.int64)
-        enriched_df["minute"] = enriched_df[TIMESTAMP_COLUMN].dt.minute.astype(np.int64)
-
-        return enriched_df[
-            [
-                self.patient_id_col,
-                TIMESTAMP_COLUMN,
-                *self.time_cols,
-                *self.feature_cols,
-            ]
-        ]
-
-    def _build_patient_time_series(self, counts_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-        patient_series: dict[str, pd.DataFrame] = {}
-
-        for patient_id, patient_counts_df in counts_df.groupby(self.patient_id_col, sort=False):
-            patient_counts_df = patient_counts_df.sort_values(TIMESTAMP_COLUMN).reset_index(drop=True)
-            start_time = patient_counts_df[TIMESTAMP_COLUMN].min()
-            end_time = patient_counts_df[TIMESTAMP_COLUMN].max()
-
-            reindexed_df = (
-                patient_counts_df.set_index(TIMESTAMP_COLUMN)[self.feature_cols]
-                .reindex(pd.date_range(start=start_time, end=end_time, freq=self._freq()))
-                .reset_index()
-                .rename(columns={"index": TIMESTAMP_COLUMN})
-            )
-            reindexed_df[self.target_cols] = reindexed_df[self.target_cols].fillna(0).astype(np.int64)
-            reindexed_df[self.auxiliary_feature_cols] = reindexed_df[self.auxiliary_feature_cols].astype(float)
-
-            patient_series[patient_id] = self._add_time_features(
-                patient_df=reindexed_df,
-                patient_id=patient_id,
-            )
-
-        return patient_series
+        events_df = events_df.sort_values(
+            [self.patient_id_col, TIMESTAMP_COLUMN, "task_index"]
+        ).reset_index(drop=True)
+        return events_df[self.event_cols]
 
     def _derive_iso_week_fields(self, timestamp_series: pd.Series) -> pd.DataFrame:
         iso_calendar = pd.to_datetime(timestamp_series).dt.isocalendar()
@@ -391,17 +324,17 @@ class RequestNumberDataManager:
 
     def _validation_ratio_over_non_test_weeks(self) -> float:
         remaining_ratio = self.dataset_config.train_ratio + self.dataset_config.val_ratio
-        if remaining_ratio <= 0:
+        if remaining_ratio <= 0.0:
             return 0.0
         return float(self.dataset_config.val_ratio / remaining_ratio)
 
     def _resolve_week_split_sets(
         self,
-        patient_series: dict[str, pd.DataFrame],
+        patient_events: dict[str, pd.DataFrame],
     ) -> dict[str, set[tuple[int, int]]]:
         unique_weeks: set[tuple[int, int]] = set()
 
-        for patient_df in patient_series.values():
+        for patient_df in patient_events.values():
             iso_fields = self._derive_iso_week_fields(patient_df[TIMESTAMP_COLUMN])
             unique_weeks.update(zip(iso_fields["iso_year"], iso_fields["iso_week"]))
 
@@ -470,29 +403,51 @@ class RequestNumberDataManager:
 
         return split_rows
 
-    def _empty_split_frame(self) -> pd.DataFrame:
-        return pd.DataFrame(
-            columns=[
-                self.patient_id_col,
-                TIMESTAMP_COLUMN,
-                *self.time_cols,
-                *self.feature_cols,
-            ]
-        )
+    def _add_interval_features(
+        self,
+        split_df: pd.DataFrame,
+        segments_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        if split_df.empty or segments_df.empty:
+            return split_df
 
-    def _empty_segments_frame(self) -> pd.DataFrame:
-        return pd.DataFrame(columns=SEGMENT_COLUMNS)
+        enriched_df = split_df.copy(deep=True)
+        enriched_df["interval_available"] = 0.0
+        enriched_df["time_diff_minutes"] = np.nan
+
+        for segment in segments_df.itertuples(index=False):
+            start_idx = int(segment.start_idx)
+            end_idx = int(segment.end_idx)
+            segment_df = enriched_df.iloc[start_idx:end_idx].copy()
+            segment_df["time_diff_minutes"] = (
+                segment_df.groupby("task_name")[TIMESTAMP_COLUMN]
+                .diff()
+                .dt.total_seconds()
+                .div(60.0)
+            )
+            segment_df["interval_available"] = segment_df["time_diff_minutes"].notna().astype(float)
+
+            enriched_df.loc[start_idx:end_idx - 1, "time_diff_minutes"] = segment_df["time_diff_minutes"].to_numpy()
+            enriched_df.loc[start_idx:end_idx - 1, "interval_available"] = segment_df["interval_available"].to_numpy()
+
+        enriched_df["interval_available"] = enriched_df["interval_available"].fillna(0.0).astype(float)
+        enriched_df["time_diff_minutes"] = pd.to_numeric(enriched_df["time_diff_minutes"], errors="coerce")
+        return enriched_df
 
     def _build_split_frames(
         self,
-        patient_series: dict[str, pd.DataFrame],
+        events_df: pd.DataFrame,
     ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-        split_week_sets = self._resolve_week_split_sets(patient_series=patient_series)
+        patient_events = {
+            patient_id: patient_df.sort_values(TIMESTAMP_COLUMN).reset_index(drop=True)
+            for patient_id, patient_df in events_df.groupby(self.patient_id_col, sort=False)
+        }
+        split_week_sets = self._resolve_week_split_sets(patient_events=patient_events)
         split_frame_parts: dict[str, list[pd.DataFrame]] = {split: [] for split in SPLITS}
         split_segments: dict[str, list[dict[str, object]]] = {split: [] for split in SPLITS}
         split_offsets = {split: 0 for split in SPLITS}
 
-        for patient_id, patient_df in patient_series.items():
+        for patient_id, patient_df in patient_events.items():
             patient_split_frames = self._split_patient_series_by_weeks(
                 patient_df=patient_df,
                 split_week_sets=split_week_sets,
@@ -502,6 +457,10 @@ class RequestNumberDataManager:
                 for split_df in split_dfs:
                     if split_df.empty:
                         continue
+
+                    split_df = split_df.sort_values(
+                        [TIMESTAMP_COLUMN, "task_index"]
+                    ).reset_index(drop=True)
 
                     start_idx = split_offsets[split_name]
                     end_idx = start_idx + len(split_df)
@@ -521,7 +480,7 @@ class RequestNumberDataManager:
             split_name: (
                 pd.concat(frame_parts, ignore_index=True)
                 if frame_parts
-                else self._empty_split_frame()
+                else self._empty_events_frame()
             )
             for split_name, frame_parts in split_frame_parts.items()
         }
@@ -534,19 +493,27 @@ class RequestNumberDataManager:
             for split_name, segment_rows in split_segments.items()
         }
 
-        self.split_week_sets = split_week_sets
+        for split_name in SPLITS:
+            split_frames[split_name] = self._add_interval_features(
+                split_df=split_frames[split_name],
+                segments_df=split_segments_frames[split_name],
+            )
 
+        self.split_week_sets = split_week_sets
         return split_frames, split_segments_frames
 
     def _build_metadata(self) -> dict[str, object]:
         return {
+            "dataset_representation": "multivariate_task_aligned_request_intervals",
+            "sample_axis_semantics": "per_task_request_index",
             "patient_id_col": self.patient_id_col,
             "timestamp_col": TIMESTAMP_COLUMN,
-            "task_columns": self.target_cols,
-            "auxiliary_feature_columns": self.auxiliary_feature_cols,
-            "feature_columns": self.feature_cols,
+            "task_names": list(TASK_NAMES),
+            "task_to_index": TASK_TO_INDEX,
             "time_columns": self.time_cols,
-            "time_step_minutes": self.dataset_config.time_step_minutes,
+            "event_measurement_columns": self.event_measurement_cols,
+            "input_padding_value": self.dataset_config.input_padding_value,
+            "target_padding_value": self.dataset_config.target_padding_value,
             "start_date": self.dataset_config.start_date,
             "end_date": self.dataset_config.end_date,
             "train_ratio": self.dataset_config.train_ratio,
@@ -566,9 +533,8 @@ class RequestNumberDataManager:
         tuple[pd.DataFrame, pd.DataFrame],
         dict[str, object],
     ]:
-        counts_df = self._build_multivariate_counts(request_handler=request_handler)
-        patient_series = self._build_patient_time_series(counts_df=counts_df)
-        split_frames, split_segment_frames = self._build_split_frames(patient_series=patient_series)
+        events_df = self._build_events_df(request_handler=request_handler)
+        split_frames, split_segment_frames = self._build_split_frames(events_df=events_df)
         metadata = self._build_metadata()
 
         return (
@@ -588,7 +554,6 @@ class RequestNumberDataManager:
         ],
     ) -> None:
         train_data, val_data, test_data, metadata = split_data
-
         self.train_number_of_requests_df, self.train_segments_df = train_data
         self.val_number_of_requests_df, self.val_segments_df = val_data
         self.test_number_of_requests_df, self.test_segments_df = test_data
@@ -611,7 +576,6 @@ class RequestNumberDataManager:
         self._save_split("train", self.train_number_of_requests_df, self.train_segments_df)
         self._save_split("val", self.val_number_of_requests_df, self.val_segments_df)
         self._save_split("test", self.test_number_of_requests_df, self.test_segments_df)
-
         with self._metadata_path().open("w", encoding="utf-8") as metadata_file:
             json.dump(self.metadata, metadata_file, indent=2)
 
@@ -623,6 +587,7 @@ class RequestNumberDataManager:
         if not data_df.empty:
             data_df[TIMESTAMP_COLUMN] = pd.to_datetime(data_df[TIMESTAMP_COLUMN], errors="coerce")
             data_df[patient_id_col] = data_df[patient_id_col].astype(str)
+            data_df["task_name"] = data_df["task_name"].astype(str)
 
         if not segments_df.empty:
             segments_df["patient_id"] = segments_df["patient_id"].astype(str)
@@ -657,7 +622,17 @@ class RequestsNumberTimeSeries:
         val_segments_df: pd.DataFrame,
         test_segments_df: pd.DataFrame,
         metadata: dict[str, object],
+        sequence_length: int,
+        label_length: int,
+        prediction_length: int,
     ) -> None:
+        if sequence_length <= 0:
+            raise ValueError("sequence_length must be greater than zero.")
+        if label_length < 0:
+            raise ValueError("label_length must be non-negative.")
+        if prediction_length <= 0:
+            raise ValueError("prediction_length must be greater than zero.")
+
         self.train_data_df = train_data_df
         self.val_data_df = val_data_df
         self.test_data_df = test_data_df
@@ -666,123 +641,510 @@ class RequestsNumberTimeSeries:
         self.test_segments_df = test_segments_df
         self.metadata = metadata
 
+        self.sequence_length = sequence_length
+        self.label_length = label_length
+        self.prediction_length = prediction_length
+        self.target_sequence_length = self.label_length + self.prediction_length
+
         self.patient_id_col = str(metadata["patient_id_col"])
         self.timestamp_col = str(metadata["timestamp_col"])
+        self.task_names = list(metadata["task_names"])
         self.time_cols = list(metadata["time_columns"])
-        self.target_cols = list(metadata["task_columns"])
-        self.auxiliary_feature_cols = list(metadata.get("auxiliary_feature_columns", []))
-        self.feature_cols = list(metadata.get("feature_columns", self.target_cols))
-        self.target_channel_indices = [self.feature_cols.index(column) for column in self.target_cols]
+        self.event_measurement_cols = list(metadata["event_measurement_columns"])
+        self.input_padding_value = float(metadata.get("input_padding_value", -1.0))
+        self.target_padding_value = float(metadata.get("target_padding_value", -1.0))
 
-        self.feature_scaler = StandardScaler()
-        self.feature_fill_values = self._compute_feature_fill_values(train_df=self.train_data_df)
-        scaled_train_data, scaled_val_data, scaled_test_data = self.apply_feature_scaling_df(
-            train_df=self.train_data_df,
-            val_df=self.val_data_df,
-            test_df=self.test_data_df,
-        )
+        (
+            self.input_feature_cols,
+            self.binary_input_feature_indices,
+            self.continuous_input_feature_indices,
+            self.task_input_specs,
+        ) = self._build_input_feature_schema()
+        (
+            self.target_cols,
+            self.delta_target_indices,
+            self.availability_target_indices,
+            self.task_target_specs,
+        ) = self._build_target_feature_schema()
+        self.feature_cols = list(self.input_feature_cols)
 
-        self.target_scaler_mean = self.feature_scaler.mean_[self.target_channel_indices]
-        self.target_scaler_scale = self.feature_scaler.scale_[self.target_channel_indices]
-
-        self.scaled_train_data_df = self.apply_temporal_scaling_df(df=scaled_train_data)
-        self.scaled_val_data_df = self.apply_temporal_scaling_df(df=scaled_val_data)
-        self.scaled_test_data_df = self.apply_temporal_scaling_df(df=scaled_test_data)
-
-    def _compute_feature_fill_values(self, train_df: pd.DataFrame) -> pd.Series:
-        if train_df.empty:
-            return pd.Series(0.0, index=self.feature_cols, dtype=float)
-
-        fill_values = train_df[self.feature_cols].mean(numeric_only=True)
-        fill_values = fill_values.reindex(self.feature_cols).fillna(0.0).astype(float)
-        return fill_values
-
-    def _fill_missing_feature_values(self, df: pd.DataFrame) -> pd.DataFrame:
-        filled_df = df.copy(deep=True)
-        if not filled_df.empty:
-            filled_df[self.feature_cols] = filled_df[self.feature_cols].fillna(self.feature_fill_values.to_dict())
-        return filled_df
-
-    def apply_feature_scaling_df(
-        self,
-        train_df: pd.DataFrame,
-        val_df: pd.DataFrame,
-        test_df: pd.DataFrame,
-    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        train_scaled = self._fill_missing_feature_values(train_df)
-        val_scaled = self._fill_missing_feature_values(val_df)
-        test_scaled = self._fill_missing_feature_values(test_df)
-
-        fit_frame = train_scaled[self.feature_cols]
-        if fit_frame.empty:
-            fit_frame = pd.DataFrame(np.zeros((1, len(self.feature_cols))), columns=self.feature_cols)
-
-        self.feature_scaler.fit(fit_frame)
-
-        if not train_scaled.empty:
-            train_scaled[self.feature_cols] = self.feature_scaler.transform(train_scaled[self.feature_cols])
-        if not val_scaled.empty:
-            val_scaled[self.feature_cols] = self.feature_scaler.transform(val_scaled[self.feature_cols])
-        if not test_scaled.empty:
-            test_scaled[self.feature_cols] = self.feature_scaler.transform(test_scaled[self.feature_cols])
-
-        return train_scaled, val_scaled, test_scaled
-
-    def apply_temporal_scaling_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        scaled_df = df.copy(deep=True)
-        time_bounds = {
-            "month": (1.0, 12.0),
-            "day": (1.0, 31.0),
-            "weekday": (0.0, 6.0),
-            "hour": (0.0, 23.0),
-            "minute": (0.0, 59.0),
+        self.samples: dict[str, dict[str, object]] = {
+            "train": self._build_split_samples(
+                split="train",
+                events_df=self.train_data_df,
+                segments_df=self.train_segments_df,
+            ),
+            "val": self._build_split_samples(
+                split="val",
+                events_df=self.val_data_df,
+                segments_df=self.val_segments_df,
+            ),
+            "test": self._build_split_samples(
+                split="test",
+                events_df=self.test_data_df,
+                segments_df=self.test_segments_df,
+            ),
         }
 
-        for column in self.time_cols:
-            min_value, max_value = time_bounds[column]
-            denominator = max(max_value - min_value, 1.0)
-            scaled_df[column] = ((scaled_df[column] - min_value) / denominator) - 0.5
+        self.input_scaler_mean, self.input_scaler_scale = self._fit_input_scaler(
+            train_x=self.samples["train"]["x"]
+        )
+        self.target_scaler_mean, self.target_scaler_scale = self._fit_target_scaler(
+            train_y=self.samples["train"]["y"]
+        )
+        self._apply_scaling_to_all_splits()
 
-        return scaled_df
+    def _build_input_feature_schema(
+        self,
+    ) -> tuple[list[str], list[int], list[int], dict[str, dict[str, object]]]:
+        input_feature_cols: list[str] = []
+        binary_input_feature_indices: list[int] = []
+        continuous_input_feature_indices: list[int] = []
+        task_input_specs: dict[str, dict[str, object]] = {}
+        cursor = 0
 
-    def get_segments(self, split: str) -> pd.DataFrame:
-        assert split in SPLITS
+        for task_name in self.task_names:
+            task_spec: dict[str, object] = {}
+
+            task_spec["request_available_index"] = cursor
+            input_feature_cols.append(f"{task_name}__request_available")
+            binary_input_feature_indices.append(cursor)
+            cursor += 1
+
+            task_spec["interval_available_index"] = cursor
+            input_feature_cols.append(f"{task_name}__interval_available")
+            binary_input_feature_indices.append(cursor)
+            cursor += 1
+
+            task_spec["time_diff_index"] = cursor
+            input_feature_cols.append(f"{task_name}__time_diff_minutes")
+            continuous_input_feature_indices.append(cursor)
+            cursor += 1
+
+            measurement_indices: dict[str, int] = {}
+            for measurement_col in TASK_EVENT_MEASUREMENT_COLUMNS.get(task_name, []):
+                measurement_indices[measurement_col] = cursor
+                feature_name = measurement_col.removeprefix(f"{task_name}_")
+                input_feature_cols.append(f"{task_name}__{feature_name}")
+                continuous_input_feature_indices.append(cursor)
+                cursor += 1
+            task_spec["measurement_indices"] = measurement_indices
+
+            time_feature_indices: dict[str, int] = {}
+            for time_col in self.time_cols:
+                time_feature_indices[time_col] = cursor
+                input_feature_cols.append(f"{task_name}__{time_col}")
+                continuous_input_feature_indices.append(cursor)
+                cursor += 1
+            task_spec["time_feature_indices"] = time_feature_indices
+
+            task_input_specs[task_name] = task_spec
+
+        return (
+            input_feature_cols,
+            binary_input_feature_indices,
+            continuous_input_feature_indices,
+            task_input_specs,
+        )
+
+    def _build_target_feature_schema(
+        self,
+    ) -> tuple[list[str], list[int], list[int], dict[str, dict[str, int]]]:
+        target_cols: list[str] = []
+        delta_target_indices: list[int] = []
+        availability_target_indices: list[int] = []
+        task_target_specs: dict[str, dict[str, int]] = {}
+        cursor = 0
+
+        for task_name in self.task_names:
+            delta_index = cursor
+            target_cols.append(f"{task_name}__next_time_diff_minutes")
+            delta_target_indices.append(delta_index)
+            cursor += 1
+
+            availability_index = cursor
+            target_cols.append(f"{task_name}__next_interval_available")
+            availability_target_indices.append(availability_index)
+            cursor += 1
+
+            task_target_specs[task_name] = {
+                "delta_index": delta_index,
+                "availability_index": availability_index,
+            }
+
+        return target_cols, delta_target_indices, availability_target_indices, task_target_specs
+
+    def _metadata_columns(self) -> list[str]:
+        return [
+            "split",
+            "patient_id",
+            "segment_id",
+            "anchor_step",
+            "anchor_index",
+            "anchor_timestamp",
+            "history_timestamps_by_type",
+            "last_observed_timestamps_by_type",
+            "future_timestamps_by_type",
+        ]
+
+    def _empty_split_samples(self) -> dict[str, object]:
         return {
-            "train": self.train_segments_df,
-            "val": self.val_segments_df,
-            "test": self.test_segments_df,
-        }[split]
+            "x": np.zeros(
+                (0, self.sequence_length, len(self.input_feature_cols)),
+                dtype=np.float32,
+            ),
+            "y": np.zeros(
+                (0, self.target_sequence_length, len(self.target_cols)),
+                dtype=np.float32,
+            ),
+            "x_mark": np.zeros(
+                (0, self.sequence_length, len(self.time_cols)),
+                dtype=np.float32,
+            ),
+            "y_mark": np.zeros(
+                (0, self.target_sequence_length, len(self.time_cols)),
+                dtype=np.float32,
+            ),
+            "metadata": pd.DataFrame(columns=self._metadata_columns()),
+        }
 
-    def get_slice(self, split: str, start: int, stop: int) -> pd.DataFrame:
-        assert split in SPLITS
+    def _initialize_input_sample(self) -> np.ndarray:
+        sample = np.full(
+            (self.sequence_length, len(self.input_feature_cols)),
+            self.input_padding_value,
+            dtype=np.float32,
+        )
+        if self.binary_input_feature_indices:
+            sample[:, self.binary_input_feature_indices] = 0.0
+        return sample
+
+    def _initialize_target_sample(self) -> np.ndarray:
+        sample = np.full(
+            (self.target_sequence_length, len(self.target_cols)),
+            self.target_padding_value,
+            dtype=np.float32,
+        )
+        if self.availability_target_indices:
+            sample[:, self.availability_target_indices] = 0.0
+        return sample
+
+    def _history_timestamp_payload(
+        self,
+        history_records: list[dict[str, object]],
+    ) -> tuple[list[Optional[str]], Optional[str]]:
+        timestamps: list[Optional[str]] = [None] * self.sequence_length
+        if not history_records:
+            return timestamps, None
+
+        pad_count = self.sequence_length - len(history_records)
+        for history_offset, row in enumerate(history_records):
+            timestamp = pd.Timestamp(row[self.timestamp_col]).isoformat()
+            timestamps[pad_count + history_offset] = timestamp
+
+        return timestamps, timestamps[-1]
+
+    def _future_timestamp_payload(
+        self,
+        future_records: list[dict[str, object]],
+    ) -> list[Optional[str]]:
+        timestamps: list[Optional[str]] = [None] * self.prediction_length
+        for future_offset, row in enumerate(future_records[: self.prediction_length]):
+            timestamps[future_offset] = pd.Timestamp(row[self.timestamp_col]).isoformat()
+        return timestamps
+
+    def _slice_task_records(
+        self,
+        task_records: list[dict[str, object]],
+        anchor_step: int,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        observed_count = min(anchor_step + 1, len(task_records))
+        history_start = max(0, observed_count - self.sequence_length)
+        history_records = task_records[history_start:observed_count]
+        future_records = task_records[observed_count : observed_count + self.prediction_length]
+        return history_records, future_records
+
+    def _resolve_anchor_timestamp(
+        self,
+        last_observed_timestamps_by_type: dict[str, Optional[str]],
+    ) -> pd.Timestamp:
+        observed_timestamps = [
+            pd.Timestamp(timestamp_value)
+            for timestamp_value in last_observed_timestamps_by_type.values()
+            if timestamp_value is not None
+        ]
+        if not observed_timestamps:
+            return pd.NaT
+        return max(observed_timestamps)
+
+    def _fill_history_block(
+        self,
+        sample_x: np.ndarray,
+        task_name: str,
+        history_records: list[dict[str, object]],
+    ) -> None:
+        if not history_records:
+            return
+
+        task_spec = self.task_input_specs[task_name]
+        pad_count = self.sequence_length - len(history_records)
+
+        for history_offset, row in enumerate(history_records):
+            slot = pad_count + history_offset
+
+            sample_x[slot, task_spec["request_available_index"]] = 1.0
+            sample_x[slot, task_spec["interval_available_index"]] = float(row["interval_available"])
+
+            if float(row["interval_available"]) > 0.5 and pd.notna(row["time_diff_minutes"]):
+                sample_x[slot, task_spec["time_diff_index"]] = float(row["time_diff_minutes"])
+
+            for measurement_col, feature_index in task_spec["measurement_indices"].items():
+                measurement_value = row.get(measurement_col)
+                if pd.notna(measurement_value):
+                    sample_x[slot, feature_index] = float(measurement_value)
+
+            for time_col, feature_index in task_spec["time_feature_indices"].items():
+                sample_x[slot, feature_index] = float(row[time_col])
+
+    def _fill_decoder_context(
+        self,
+        sample_y: np.ndarray,
+        task_name: str,
+        history_records: list[dict[str, object]],
+    ) -> None:
+        if self.label_length == 0 or not history_records:
+            return
+
+        task_spec = self.task_target_specs[task_name]
+        decoder_context_records = history_records[max(0, len(history_records) - self.label_length) :]
+        pad_count = self.label_length - len(decoder_context_records)
+
+        for context_offset, row in enumerate(decoder_context_records):
+            y_slot = pad_count + context_offset
+            if float(row["interval_available"]) > 0.5 and pd.notna(row["time_diff_minutes"]):
+                sample_y[y_slot, task_spec["delta_index"]] = float(row["time_diff_minutes"])
+                sample_y[y_slot, task_spec["availability_index"]] = 1.0
+
+    def _fill_future_targets(
+        self,
+        sample_y: np.ndarray,
+        task_name: str,
+        history_records: list[dict[str, object]],
+        future_records: list[dict[str, object]],
+    ) -> None:
+        task_spec = self.task_target_specs[task_name]
+        previous_timestamp: Optional[pd.Timestamp] = None
+
+        if history_records:
+            last_history_row = history_records[-1]
+            previous_timestamp = pd.Timestamp(last_history_row[self.timestamp_col])
+
+        for future_offset, row in enumerate(future_records[: self.prediction_length]):
+            current_timestamp = pd.Timestamp(row[self.timestamp_col])
+            y_slot = self.label_length + future_offset
+
+            if previous_timestamp is not None:
+                interval_minutes = (current_timestamp - previous_timestamp).total_seconds() / 60.0
+                sample_y[y_slot, task_spec["delta_index"]] = float(interval_minutes)
+                sample_y[y_slot, task_spec["availability_index"]] = 1.0
+
+            previous_timestamp = current_timestamp
+
+    def _build_split_samples(
+        self,
+        split: str,
+        events_df: pd.DataFrame,
+        segments_df: pd.DataFrame,
+    ) -> dict[str, object]:
+        if events_df.empty or segments_df.empty:
+            return self._empty_split_samples()
+
+        x_samples: list[np.ndarray] = []
+        y_samples: list[np.ndarray] = []
+        metadata_rows: list[dict[str, object]] = []
+
+        for segment_id, segment in enumerate(segments_df.itertuples(index=False)):
+            segment_df = events_df.iloc[int(segment.start_idx) : int(segment.end_idx)].reset_index(drop=True)
+            if segment_df.empty:
+                continue
+
+            task_records_by_type = {
+                task_name: task_df.to_dict(orient="records")
+                for task_name, task_df in segment_df.groupby("task_name", sort=False)
+            }
+            task_records_by_type = {
+                task_name: task_records_by_type.get(task_name, [])
+                for task_name in self.task_names
+            }
+            max_task_count = max((len(task_records) for task_records in task_records_by_type.values()), default=0)
+            if max_task_count == 0:
+                continue
+
+            for anchor_step in range(max_task_count):
+                sample_x = self._initialize_input_sample()
+                sample_y = self._initialize_target_sample()
+
+                history_timestamps_by_type: dict[str, list[Optional[str]]] = {}
+                last_observed_timestamps_by_type: dict[str, Optional[str]] = {}
+                future_timestamps_by_type: dict[str, list[Optional[str]]] = {}
+
+                for task_name in self.task_names:
+                    history_records, future_records = self._slice_task_records(
+                        task_records=task_records_by_type[task_name],
+                        anchor_step=anchor_step,
+                    )
+
+                    history_timestamps, last_observed_timestamp = self._history_timestamp_payload(
+                        history_records=history_records,
+                    )
+                    future_timestamps = self._future_timestamp_payload(
+                        future_records=future_records,
+                    )
+
+                    history_timestamps_by_type[task_name] = history_timestamps
+                    last_observed_timestamps_by_type[task_name] = last_observed_timestamp
+                    future_timestamps_by_type[task_name] = future_timestamps
+
+                    self._fill_history_block(
+                        sample_x=sample_x,
+                        task_name=task_name,
+                        history_records=history_records,
+                    )
+                    self._fill_decoder_context(
+                        sample_y=sample_y,
+                        task_name=task_name,
+                        history_records=history_records,
+                    )
+                    self._fill_future_targets(
+                        sample_y=sample_y,
+                        task_name=task_name,
+                        history_records=history_records,
+                        future_records=future_records,
+                    )
+
+                metadata_rows.append(
+                    {
+                        "split": split,
+                        "patient_id": str(segment.patient_id),
+                        "segment_id": int(segment_id),
+                        "anchor_step": int(anchor_step),
+                        "anchor_index": int(anchor_step),
+                        "anchor_timestamp": self._resolve_anchor_timestamp(
+                            last_observed_timestamps_by_type=last_observed_timestamps_by_type
+                        ),
+                        "history_timestamps_by_type": json.dumps(history_timestamps_by_type),
+                        "last_observed_timestamps_by_type": json.dumps(last_observed_timestamps_by_type),
+                        "future_timestamps_by_type": json.dumps(future_timestamps_by_type),
+                    }
+                )
+                x_samples.append(sample_x)
+                y_samples.append(sample_y)
+
+        if not x_samples:
+            return self._empty_split_samples()
+
+        x_array = np.stack(x_samples, axis=0).astype(np.float32)
+        y_array = np.stack(y_samples, axis=0).astype(np.float32)
+        x_mark_array = np.zeros(
+            (len(x_samples), self.sequence_length, len(self.time_cols)),
+            dtype=np.float32,
+        )
+        y_mark_array = np.zeros(
+            (len(x_samples), self.target_sequence_length, len(self.time_cols)),
+            dtype=np.float32,
+        )
+
         return {
-            "train": self.train_data,
-            "val": self.val_data,
-            "test": self.test_data,
-        }[split].iloc[start:stop]
+            "x": x_array,
+            "y": y_array,
+            "x_mark": x_mark_array,
+            "y_mark": y_mark_array,
+            "metadata": pd.DataFrame(metadata_rows, columns=self._metadata_columns()),
+        }
 
-    def inverse_transform(self, data: np.ndarray) -> np.ndarray:
-        array = np.asarray(data, dtype=np.float64)
-        return array * self.target_scaler_scale + self.target_scaler_mean
+    def _fit_input_scaler(self, train_x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        means = np.zeros(len(self.continuous_input_feature_indices), dtype=np.float32)
+        scales = np.ones(len(self.continuous_input_feature_indices), dtype=np.float32)
 
-    @property
-    def train_data(self) -> pd.DataFrame:
-        return self.scaled_train_data_df
+        for position, feature_index in enumerate(self.continuous_input_feature_indices):
+            valid_mask = train_x[:, :, feature_index] != self.input_padding_value
+            valid_values = train_x[:, :, feature_index][valid_mask]
+            if valid_values.size == 0:
+                continue
 
-    @property
-    def val_data(self) -> pd.DataFrame:
-        return self.scaled_val_data_df
+            means[position] = float(valid_values.mean())
+            std_value = float(valid_values.std())
+            scales[position] = 1.0 if std_value < 1e-6 else std_value
 
-    @property
-    def test_data(self) -> pd.DataFrame:
-        return self.scaled_test_data_df
+        return means, scales
+
+    def _fit_target_scaler(self, train_y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        means = np.zeros(len(self.delta_target_indices), dtype=np.float32)
+        scales = np.ones(len(self.delta_target_indices), dtype=np.float32)
+
+        for position, (delta_index, availability_index) in enumerate(
+            zip(self.delta_target_indices, self.availability_target_indices)
+        ):
+            valid_mask = train_y[:, :, availability_index] > 0.5
+            valid_values = train_y[:, :, delta_index][valid_mask]
+            if valid_values.size == 0:
+                continue
+
+            means[position] = float(valid_values.mean())
+            std_value = float(valid_values.std())
+            scales[position] = 1.0 if std_value < 1e-6 else std_value
+
+        return means, scales
+
+    def _apply_input_scaling(self, x_array: np.ndarray) -> np.ndarray:
+        scaled_array = x_array.copy()
+        for position, feature_index in enumerate(self.continuous_input_feature_indices):
+            valid_mask = scaled_array[:, :, feature_index] != self.input_padding_value
+            if not valid_mask.any():
+                continue
+
+            scaled_array[:, :, feature_index][valid_mask] = (
+                scaled_array[:, :, feature_index][valid_mask] - self.input_scaler_mean[position]
+            ) / self.input_scaler_scale[position]
+        return scaled_array
+
+    def _apply_target_scaling(self, y_array: np.ndarray) -> np.ndarray:
+        scaled_array = y_array.copy()
+        for position, (delta_index, availability_index) in enumerate(
+            zip(self.delta_target_indices, self.availability_target_indices)
+        ):
+            valid_mask = scaled_array[:, :, availability_index] > 0.5
+            if not valid_mask.any():
+                continue
+
+            scaled_array[:, :, delta_index][valid_mask] = (
+                scaled_array[:, :, delta_index][valid_mask] - self.target_scaler_mean[position]
+            ) / self.target_scaler_scale[position]
+        return scaled_array
+
+    def _apply_scaling_to_all_splits(self) -> None:
+        for split_name in SPLITS:
+            self.samples[split_name]["x"] = self._apply_input_scaling(
+                x_array=self.samples[split_name]["x"]
+            )
+            self.samples[split_name]["y"] = self._apply_target_scaling(
+                y_array=self.samples[split_name]["y"]
+            )
+
+    def get_split_arrays(self, split: str) -> dict[str, object]:
+        assert split in SPLITS
+        return self.samples[split]
+
+    def get_split_metadata(self, split: str) -> pd.DataFrame:
+        assert split in SPLITS
+        return self.samples[split]["metadata"]
+
+    def inverse_transform_target_deltas(self, data: np.ndarray) -> np.ndarray:
+        array = np.asarray(data, dtype=np.float32)
+        return array * self.target_scaler_scale.reshape(1, 1, -1) + self.target_scaler_mean.reshape(1, 1, -1)
 
     def length(self, split: str) -> int:
-        return {
-            "train": len(self.train_data),
-            "val": len(self.val_data),
-            "test": len(self.test_data),
-        }[split]
+        assert split in SPLITS
+        return int(self.samples[split]["x"].shape[0])
 
 
 class RequestsNumberDataset(Dataset):
@@ -791,64 +1153,40 @@ class RequestsNumberDataset(Dataset):
         request_time_series: RequestsNumberTimeSeries,
         slice_start_points_dict: Optional[dict[str, list[int]]] = None,
         split: str = "train",
-        sequence_length: int = 60,
-        label_length: int = 10,
-        prediction_length: int = 60,
+        sequence_length: int = 5,
+        label_length: int = 0,
+        prediction_length: int = 3,
     ) -> None:
         assert split in SPLITS
+        if sequence_length != request_time_series.sequence_length:
+            raise ValueError("Dataset sequence_length must match the precomputed time-series sequence_length.")
+        if label_length != request_time_series.label_length:
+            raise ValueError("Dataset label_length must match the precomputed time-series label_length.")
+        if prediction_length != request_time_series.prediction_length:
+            raise ValueError("Dataset prediction_length must match the precomputed time-series prediction_length.")
+        if slice_start_points_dict is not None:
+            raise ValueError("slice_start_points_dict is no longer supported for the event-based dataset.")
+
         self.split = split
         self.series = request_time_series
         self.sequence_length = sequence_length
         self.label_length = label_length
         self.prediction_length = prediction_length
-
-        if slice_start_points_dict is not None:
-            self._slice_start_points = slice_start_points_dict[split]
-        else:
-            self._slice_start_points = self._build_slice_start_points()
-
-    def _build_slice_start_points(self) -> list[int]:
-        start_points: list[int] = []
-        total_window = self.sequence_length + self.prediction_length
-        split_segments_df = self.series.get_segments(split=self.split)
-
-        for segment in split_segments_df.itertuples(index=False):
-            max_start = int(segment.end_idx) - total_window
-            if max_start < int(segment.start_idx):
-                continue
-            start_points.extend(range(int(segment.start_idx), max_start + 1))
-
-        return start_points
+        self._split_arrays = self.series.get_split_arrays(split=split)
 
     def __len__(self) -> int:
-        return len(self._slice_start_points)
+        return int(self._split_arrays["x"].shape[0])
 
     @property
     def slice_start_points(self) -> list[int]:
-        return list(self._slice_start_points)
-
-    def _torch(self, *dfs: pd.DataFrame) -> tuple[torch.Tensor, ...]:
-        return tuple(torch.from_numpy(df.to_numpy(dtype=np.float32)).float() for df in dfs)
+        return list(range(len(self)))
 
     def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        start = self._slice_start_points[i]
-        stop = start + self.sequence_length + self.prediction_length
-
-        series_slice = self.series.get_slice(
-            split=self.split,
-            start=start,
-            stop=stop,
-        )
-
-        x_slice = series_slice.iloc[: self.sequence_length]
-        y_slice = series_slice.iloc[self.sequence_length - self.label_length :]
-
-        seq_x = x_slice[self.series.feature_cols]
-        seq_x_mark = x_slice[self.series.time_cols]
-        seq_y = y_slice[self.series.feature_cols]
-        seq_y_mark = y_slice[self.series.time_cols]
-
-        return self._torch(seq_x, seq_y, seq_x_mark, seq_y_mark)
+        seq_x = torch.from_numpy(self._split_arrays["x"][i]).float()
+        seq_y = torch.from_numpy(self._split_arrays["y"][i]).float()
+        seq_x_mark = torch.from_numpy(self._split_arrays["x_mark"][i]).float()
+        seq_y_mark = torch.from_numpy(self._split_arrays["y_mark"][i]).float()
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
-        return self.series.inverse_transform(data)
+        return self.series.inverse_transform_target_deltas(data)
