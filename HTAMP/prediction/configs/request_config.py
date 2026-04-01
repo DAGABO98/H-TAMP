@@ -26,7 +26,7 @@ def _default_test_iso_weeks() -> tuple[tuple[int, int], ...]:
 class MedicalRequestDatasetConfig:
     annotated_data_files: AnnotatedDataFiles
     request_dir: str = "data/requests"
-    dataset_dir: str = "data/prediction/request_numbers"
+    dataset_dir: str = "data/prediction/requests_dataset"
     start_date: str = "2024-06-24"
     end_date: str = "2025-06-29"
     patient_id_col: str = "MRN"

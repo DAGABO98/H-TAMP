@@ -15,8 +15,8 @@ from torch.utils.data import Dataset
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.planning.request_handler import GlobalRequestHandler
-from HTAMP.prediction.configs.request_number_config import MedicalRequestDatasetConfig
-from HTAMP.prediction.data_provider.requests_data_module import RequestsDataModule
+from HTAMP.prediction.configs.request_config import MedicalRequestDatasetConfig
+from HTAMP.prediction.data_provider.data_module import DataModule
 
 TASK_SPECS: dict[str, str] = {
     "medication": "Medication Scheduled DTTM",
@@ -122,7 +122,7 @@ class RequestsDataManager:
         if dataset_config.preprocess_data:
             self.dataset_dir.mkdir(parents=True, exist_ok=True)
             request_handler = self._build_request_handler()
-            split_data = self._preprocess_number_requests_data(request_handler=request_handler)
+            split_data = self._preprocess_requests_data(request_handler=request_handler)
             self._unpack_preprocessed_data(split_data=split_data)
             if dataset_config.save_data:
                 self._save_dataframes()
@@ -525,7 +525,7 @@ class RequestsDataManager:
             "test_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("test", set()))],
         }
 
-    def _preprocess_number_requests_data(
+    def _preprocess_requests_data(
         self,
         request_handler: GlobalRequestHandler,
     ) -> tuple[
@@ -555,9 +555,9 @@ class RequestsDataManager:
         ],
     ) -> None:
         train_data, val_data, test_data, metadata = split_data
-        self.train_number_of_requests_df, self.train_segments_df = train_data
-        self.val_number_of_requests_df, self.val_segments_df = val_data
-        self.test_number_of_requests_df, self.test_segments_df = test_data
+        self.train_requests_df, self.train_segments_df = train_data
+        self.val_requests_df, self.val_segments_df = val_data
+        self.test_requests_df, self.test_segments_df = test_data
         self.metadata = metadata
 
     def _metadata_path(self) -> Path:
@@ -574,9 +574,9 @@ class RequestsDataManager:
 
     def _save_dataframes(self) -> None:
         self.dataset_dir.mkdir(parents=True, exist_ok=True)
-        self._save_split("train", self.train_number_of_requests_df, self.train_segments_df)
-        self._save_split("val", self.val_number_of_requests_df, self.val_segments_df)
-        self._save_split("test", self.test_number_of_requests_df, self.test_segments_df)
+        self._save_split("train", self.train_requests_df, self.train_segments_df)
+        self._save_split("val", self.val_requests_df, self.val_segments_df)
+        self._save_split("test", self.test_requests_df, self.test_segments_df)
         with self._metadata_path().open("w", encoding="utf-8") as metadata_file:
             json.dump(self.metadata, metadata_file, indent=2)
 
@@ -599,18 +599,18 @@ class RequestsDataManager:
         with self._metadata_path().open("r", encoding="utf-8") as metadata_file:
             self.metadata = json.load(metadata_file)
 
-        self.train_number_of_requests_df, self.train_segments_df = self._load_split("train")
-        self.val_number_of_requests_df, self.val_segments_df = self._load_split("val")
-        self.test_number_of_requests_df, self.test_segments_df = self._load_split("test")
+        self.train_requests_df, self.train_segments_df = self._load_split("train")
+        self.val_requests_df, self.val_segments_df = self._load_split("val")
+        self.test_requests_df, self.test_segments_df = self._load_split("test")
 
-    def get_requests_numbers_training_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
-        return self.train_number_of_requests_df, self.train_segments_df
+    def get_requests_training_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        return self.train_requests_df, self.train_segments_df
 
-    def get_requests_numbers_validation_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
-        return self.val_number_of_requests_df, self.val_segments_df
+    def get_requests_validation_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        return self.val_requests_df, self.val_segments_df
 
-    def get_requests_numbers_testing_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
-        return self.test_number_of_requests_df, self.test_segments_df
+    def get_requests_testing_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        return self.test_requests_df, self.test_segments_df
 
 
 class RequestsTimeSeries:
@@ -661,6 +661,7 @@ class RequestsTimeSeries:
             self.continuous_input_feature_indices,
             self.task_input_specs,
         ) = self._build_input_feature_schema()
+
         (
             self.target_cols,
             self.delta_target_indices,
@@ -1269,9 +1270,9 @@ if __name__ == '__main__':
         
         request_data_manager = RequestsDataManager(dataset_config=dataset_config)
 
-        train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
-        val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
-        test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
+        train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
+        val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
+        test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
 
         time_series = RequestsTimeSeries(train_data_df=train_data_df,
                                         val_data_df=val_data_df,
@@ -1285,7 +1286,7 @@ if __name__ == '__main__':
                                         prediction_length=args.pred_len)
         
 
-        data_module = RequestsDataModule(
+        data_module = DataModule(
             dataset_cls=RequestsDataset,
             dataset_kwargs={
                 "request_time_series": time_series,

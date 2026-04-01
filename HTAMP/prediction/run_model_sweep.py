@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from HTAMP.prediction.module.request_number_predictor import build_parser as build_predictor_parser
+from HTAMP.prediction.module.request_predictor import build_parser as build_predictor_parser
 
 AVAILABLE_MODELS = ("TimesNet", "TimeMixer", "iTransformer", "PatchTST")
 DRIVER_ONLY_ARGS = {"models", "summary_path", "fail_fast", "model_overrides_file"}
@@ -23,9 +23,9 @@ PREDICTOR_ARG_NAMES = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = build_predictor_parser()
-    parser.prog = "RequestNumberModelSweep"
+    parser.prog = "RequestModelSweep"
     parser.description = (
-        "Run the request-number predictor across multiple time-series models "
+        "Run the request predictor across multiple time-series models "
         "and write a summary CSV for comparison."
     )
     parser.add_argument(
@@ -33,12 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=list(AVAILABLE_MODELS),
         choices=AVAILABLE_MODELS,
-        help="Models to train. Defaults to all supported request-number models.",
+        help="Models to train. Defaults to all supported request models.",
     )
     parser.add_argument(
         "--summary_path",
         type=str,
-        default="data/prediction/request_number_model_sweep_summary.csv",
+        default="data/prediction/request_model_sweep_summary.csv",
         help="CSV file where per-model run status and duration will be saved.",
     )
     parser.add_argument(
@@ -214,7 +214,7 @@ def _run_single_model(
     command = [
         sys.executable,
         "-m",
-        "HTAMP.prediction.request_number_predictor",
+        "HTAMP.prediction.request_predictor",
         *_serialize_predictor_args(
             effective_args=effective_args,
             model_name=model_name,

@@ -10,24 +10,24 @@ from typing import Optional, Sequence
 import pandas as pd
 import torch
 
-from HTAMP.prediction.data_provider.requests_number_dataset import (
+from HTAMP.prediction.data_provider.requests_dataset import (
     RequestsDataManager,
     RequestsDataset,
     RequestsTimeSeries,
 )
-from HTAMP.prediction.configs.request_number_config import (
+from HTAMP.prediction.configs.request_config import (
     MedicalRequestDatasetConfig,
     TimeseriesModelConfig,
 )
-from HTAMP.prediction.module.request_number_module import RequestsNumberModule
-from HTAMP.prediction.module.request_number_predictor import (
+from HTAMP.prediction.module.request_module import RequestsModule
+from HTAMP.prediction.module.request_predictor import (
     build_dataset_config_from_args,
     build_parser as build_training_parser,
 )
 
 SPLITS = ("train", "val", "test")
 
-class RequestNumberPredictionManager:
+class RequestPredictionManager:
     def __init__(
         self,
         dataset_config: MedicalRequestDatasetConfig,
@@ -76,20 +76,20 @@ class RequestNumberPredictionManager:
         return tuple(dict.fromkeys(normalized_splits))
 
     def _prediction_pickle_path(self) -> Path:
-        return self.predictions_dir / "request_numbers.pkl"
+        return self.predictions_dir / "requests.pkl"
 
     def _prediction_csv_path(self) -> Path:
-        return self.predictions_dir / "request_numbers.csv"
+        return self.predictions_dir / "requests.csv"
 
     def _prediction_metadata_path(self) -> Path:
-        return self.predictions_dir / "request_numbers_metadata.json"
+        return self.predictions_dir / "requests_metadata.json"
 
     def _build_time_series(self) -> RequestsTimeSeries:
         request_data_manager = RequestsDataManager(dataset_config=self.dataset_config)
 
-        train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
-        val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
-        test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
+        train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
+        val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
+        test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
 
         time_series = RequestsTimeSeries(
             train_data_df=train_data_df,
@@ -109,16 +109,16 @@ class RequestNumberPredictionManager:
         )
         return time_series
 
-    def _load_model(self, device: torch.device) -> RequestsNumberModule:
+    def _load_model(self, device: torch.device) -> RequestsModule:
         print("Loading request interval predictor ...")
-        requests_number_forecaster = RequestsNumberModule.load_from_checkpoint(
+        requests_forecaster = RequestsModule.load_from_checkpoint(
             checkpoint_path=str(self.checkpoint_path),
             map_location=device,
         )
-        requests_number_forecaster.to(device)
-        requests_number_forecaster.eval()
+        requests_forecaster.to(device)
+        requests_forecaster.eval()
         print("Request interval predictor has been loaded!")
-        return requests_number_forecaster
+        return requests_forecaster
 
     def _build_dataset(
         self,
@@ -175,18 +175,18 @@ class RequestNumberPredictionManager:
 
     def _generate_request_predictions(
         self,
-        request_number_dataset: RequestsDataset,
+        requests_dataset: RequestsDataset,
         time_series: RequestsTimeSeries,
         split: str,
-        requests_number_forecaster: RequestsNumberModule,
+        requests_forecaster: RequestsModule,
     ) -> list[dict[str, object]]:
         prediction_records: list[dict[str, object]] = []
         metadata_df = time_series.get_split_metadata(split=split).reset_index(drop=True)
 
         print(f"Generating request-interval predictions on split '{split}' ...")
-        for i in range(len(request_number_dataset)):
+        for i in range(len(requests_dataset)):
             metadata_row = metadata_df.iloc[i]
-            seq_x, seq_y, seq_x_mark, seq_y_mark = request_number_dataset[i]
+            seq_x, seq_y, seq_x_mark, seq_y_mark = requests_dataset[i]
 
             true_targets = seq_y.unsqueeze(0)
             true_delta_scaled = true_targets[:, -self.model_config.pred_len :, time_series.delta_target_indices].cpu().numpy()
@@ -198,7 +198,7 @@ class RequestNumberPredictionManager:
                 target_padding_value=time_series.target_padding_value,
             )
 
-            prediction_output = requests_number_forecaster.predict(
+            prediction_output = requests_forecaster.predict(
                 x=seq_x.unsqueeze(0),
                 x_mark=seq_x_mark.unsqueeze(0),
                 y_mark=seq_y_mark.unsqueeze(0),
@@ -247,17 +247,17 @@ class RequestNumberPredictionManager:
     def _initialize_prediction_df(self) -> pd.DataFrame:
         time_series = self._build_time_series()
         device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-        requests_number_forecaster = self._load_model(device=device)
+        requests_forecaster = self._load_model(device=device)
         prediction_rows: list[dict[str, object]] = []
 
         for split in self.splits:
-            request_number_dataset = self._build_dataset(time_series=time_series, split=split)
+            requests_dataset = self._build_dataset(time_series=time_series, split=split)
             prediction_rows.extend(
                 self._generate_request_predictions(
-                    request_number_dataset=request_number_dataset,
+                    requests_dataset=requests_dataset,
                     time_series=time_series,
                     split=split,
-                    requests_number_forecaster=requests_number_forecaster,
+                    requests_forecaster=requests_forecaster,
                 )
             )
 
@@ -295,10 +295,6 @@ class RequestLocationsPredictionManager:
         )
 
 
-Request_Number_Prediction_Manager = RequestNumberPredictionManager
-Request_Locations_Prediction_Manager = RequestLocationsPredictionManager
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = build_training_parser()
     parser.prog = "RequestPredictionHandler"
@@ -313,7 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--predictions_dir",
         type=str,
         default=None,
-        help="Output folder for request_numbers.pkl/csv. Defaults to <dataset_dir>/predictions.",
+        help="Output folder for requests.pkl/csv. Defaults to <dataset_dir>/predictions.",
     )
     parser.add_argument(
         "--load_predictions",
@@ -340,7 +336,7 @@ if __name__ == "__main__":
         dataset_config = build_dataset_config_from_args(args=args)
         model_config = TimeseriesModelConfig.from_namespace(args=args)
 
-        RequestNumberPredictionManager(
+        RequestPredictionManager(
             dataset_config=dataset_config,
             model_config=model_config,
             checkpoint_file_path=args.checkpoint_path,

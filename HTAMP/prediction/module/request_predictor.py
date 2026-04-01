@@ -11,17 +11,17 @@ from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, Mode
 
 from HTAMP.data_processing.data_helpers import DataHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
-from HTAMP.prediction.data_provider.requests_data_module import RequestsDataModule
-from HTAMP.prediction.data_provider.requests_number_dataset import (
+from HTAMP.prediction.data_provider.data_module import DataModule
+from HTAMP.prediction.data_provider.requests_dataset import (
     RequestsDataManager,
     RequestsDataset,
     RequestsTimeSeries,
 )
-from HTAMP.prediction.configs.request_number_config import (
+from HTAMP.prediction.configs.request_config import (
     MedicalRequestDatasetConfig,
     TimeseriesModelConfig,
 )
-from HTAMP.prediction.module.request_number_module import RequestsNumberModule
+from HTAMP.prediction.module.request_module import RequestsModule
 
 def build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDatasetConfig:
     dataset_config_kwargs = dict(
@@ -50,17 +50,17 @@ def build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDa
         dataset_config_kwargs["test_iso_weeks"] = tuple(DataHelpers.parse_iso_week_args(args.test_iso_weeks))
     return MedicalRequestDatasetConfig(**dataset_config_kwargs)
 
-class RequestsNumberPredictor:
+class RequestsPredictor:
     def create_data_module_and_time_series(
         self,
         model_config: TimeseriesModelConfig,
         dataset_config: MedicalRequestDatasetConfig,
-    ) -> tuple[RequestsDataModule, RequestsTimeSeries]:
+    ) -> tuple[DataModule, RequestsTimeSeries]:
         request_data_manager = RequestsDataManager(dataset_config=dataset_config)
 
-        train_data_df, train_segments_df = request_data_manager.get_requests_numbers_training_data()
-        val_data_df, val_segments_df = request_data_manager.get_requests_numbers_validation_data()
-        test_data_df, test_segments_df = request_data_manager.get_requests_numbers_testing_data()
+        train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
+        val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
+        test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
 
         time_series = RequestsTimeSeries(
             train_data_df=train_data_df,
@@ -80,7 +80,7 @@ class RequestsNumberPredictor:
             num_output_channels=len(time_series.target_cols),
         )
 
-        data_module = RequestsDataModule(
+        data_module = DataModule(
             datasetCls=RequestsDataset,
             dataset_kwargs={
                 "request_time_series": time_series,
@@ -99,8 +99,8 @@ class RequestsNumberPredictor:
         self,
         model_config: TimeseriesModelConfig,
         time_series: RequestsTimeSeries,
-    ) -> RequestsNumberModule:
-        return RequestsNumberModule(
+    ) -> RequestsModule:
+        return RequestsModule(
             model_config=model_config,
             target_scaler_mean=time_series.target_scaler_mean.tolist(),
             target_scaler_scale=time_series.target_scaler_scale.tolist(),
@@ -292,7 +292,7 @@ if __name__ == "__main__":
     try:
         parser = build_parser()
         parsed_args = parser.parse_args()
-        request_predictor = RequestsNumberPredictor()
+        request_predictor = RequestsPredictor()
         request_predictor.compile_and_train(args=parsed_args)
     except Exception as error_main_context:
         print("Fail End Process: ", error_main_context)

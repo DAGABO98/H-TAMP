@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from HTAMP.prediction.configs.request_number_config import TimeseriesModelConfig
+from HTAMP.prediction.configs.request_config import TimeseriesModelConfig
 from HTAMP.prediction.time_series_models.architectures.i_transformer import Model as ITransformerModel
 from HTAMP.prediction.time_series_models.architectures.patch_tst import Model as PatchTSTModel
 from HTAMP.prediction.time_series_models.architectures.time_mixer import Model as TimeMixerModel
@@ -21,7 +21,7 @@ def _coerce_model_config(model_config: TimeseriesModelConfig | dict[str, Any]) -
     return TimeseriesModelConfig(**model_config)
 
 
-class RequestsNumberModule(L.LightningModule):
+class RequestsModule(L.LightningModule):
     def __init__(
         self,
         model_config: TimeseriesModelConfig | dict[str, Any],

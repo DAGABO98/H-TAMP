@@ -1,7 +1,7 @@
 import lightning as L
 from torch.utils.data import DataLoader
 
-class RequestsDataModule(L.LightningDataModule):
+class DataModule(L.LightningDataModule):
     def __init__(
         self,
         dataset_cls,
