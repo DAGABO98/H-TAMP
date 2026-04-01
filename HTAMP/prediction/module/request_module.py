@@ -155,12 +155,12 @@ class RequestsModule(L.LightningModule):
 
     def _shared_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
     ) -> dict[str, torch.Tensor | float]:
-        batch_x, batch_y, batch_x_mark, batch_y_mark = batch
+        batch_x, batch_y = batch
 
         decoder_input = self._build_decoder_input(batch_y=batch_y)
-        outputs = self.forecaster(batch_x, batch_x_mark, decoder_input, batch_y_mark)
+        outputs = self.forecaster(batch_x, None, decoder_input, None)
         predictions = outputs[:, -self.model_config.pred_len :, :]
         targets = batch_y[:, -self.model_config.pred_len :, :]
 
@@ -193,7 +193,7 @@ class RequestsModule(L.LightningModule):
 
     def training_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor | float]:
         return self._shared_step(batch=batch)
@@ -201,7 +201,7 @@ class RequestsModule(L.LightningModule):
     def on_train_batch_end(
         self,
         outputs: dict[str, torch.Tensor | float],
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor | float]:
         self._log_stats(section="train", outs=outputs)
@@ -209,7 +209,7 @@ class RequestsModule(L.LightningModule):
 
     def validation_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor | float]:
         return self._shared_step(batch=batch)
@@ -217,7 +217,7 @@ class RequestsModule(L.LightningModule):
     def on_validation_batch_end(
         self,
         outputs: dict[str, torch.Tensor | float],
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor | float]:
         self._log_stats(section="val", outs=outputs)
@@ -225,7 +225,7 @@ class RequestsModule(L.LightningModule):
 
     def test_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor | float]:
         return self._shared_step(batch=batch)
@@ -233,7 +233,7 @@ class RequestsModule(L.LightningModule):
     def on_test_batch_end(
         self,
         outputs: dict[str, torch.Tensor | float],
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor]:
         self._log_stats(section="test", outs=outputs)
@@ -242,12 +242,8 @@ class RequestsModule(L.LightningModule):
     def predict(
         self,
         x: torch.Tensor,
-        x_mark: torch.Tensor,
-        y_mark: torch.Tensor,
     ) -> dict[str, np.ndarray]:
         x = x.to(self.device).float()
-        x_mark = x_mark.to(self.device).float()
-        y_mark = y_mark.to(self.device).float()
 
         decoder_input = torch.zeros(
             (x.shape[0], self.model_config.label_len + self.model_config.pred_len, self.model_config.dec_in),
@@ -256,7 +252,7 @@ class RequestsModule(L.LightningModule):
         )
 
         with torch.no_grad():
-            outputs = self.forecaster(x, x_mark, decoder_input, y_mark)
+            outputs = self.forecaster(x, None, decoder_input, None)
 
         predictions = outputs[:, -self.model_config.pred_len :, :]
         pred_delta = self._select_delta_targets(predictions)

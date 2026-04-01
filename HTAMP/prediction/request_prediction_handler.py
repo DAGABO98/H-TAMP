@@ -186,7 +186,7 @@ class RequestPredictionManager:
         print(f"Generating request-interval predictions on split '{split}' ...")
         for i in range(len(requests_dataset)):
             metadata_row = metadata_df.iloc[i]
-            seq_x, seq_y, seq_x_mark, seq_y_mark = requests_dataset[i]
+            seq_x, seq_y = requests_dataset[i]
 
             true_targets = seq_y.unsqueeze(0)
             true_delta_scaled = true_targets[:, -self.model_config.pred_len :, time_series.delta_target_indices].cpu().numpy()
@@ -198,11 +198,7 @@ class RequestPredictionManager:
                 target_padding_value=time_series.target_padding_value,
             )
 
-            prediction_output = requests_forecaster.predict(
-                x=seq_x.unsqueeze(0),
-                x_mark=seq_x_mark.unsqueeze(0),
-                y_mark=seq_y_mark.unsqueeze(0),
-            )
+            prediction_output = requests_forecaster.predict(x=seq_x.unsqueeze(0))
             prediction_availability = prediction_output["availability"][0]
             prediction_intervals = self._apply_target_padding(
                 time_differences=prediction_output["time_differences"][0],

@@ -79,7 +79,19 @@ VITAL_OUTPUT_COMPONENTS: dict[str, list[str]] = {
 }
 
 TIMESTAMP_COLUMN = "timestamp"
-TIME_COLUMNS = ["month", "day", "weekday", "hour", "minute"]
+TIME_MARK_COLUMNS = ["month", "day", "weekday", "hour", "minute"]
+TIME_FEATURE_SPECS = (
+    ("month", 12.0, 1.0),
+    ("day", 31.0, 1.0),
+    ("weekday", 7.0, 0.0),
+    ("hour", 24.0, 0.0),
+    ("minute", 60.0, 0.0),
+)
+TIME_COLUMNS = [
+    f"{component_name}_{trig_component}"
+    for component_name, _, _ in TIME_FEATURE_SPECS
+    for trig_component in ("sin", "cos")
+]
 SEGMENT_COLUMNS = ["patient_id", "start_idx", "end_idx", "num_rows"]
 SPLITS = ("train", "val", "test")
 TASK_NAMES = tuple(TASK_SPECS.keys())
@@ -92,6 +104,43 @@ def _normalize_column_name(column_name: str) -> str:
 
 def _event_measurement_column(task_name: str, component: str) -> str:
     return f"{task_name}_{component}"
+
+def _build_cyclical_time_features(timestamp_series: pd.Series) -> pd.DataFrame:
+    timestamp_series = pd.to_datetime(timestamp_series, errors="coerce")
+    time_components = {
+        "month": timestamp_series.dt.month.astype(float),
+        "day": timestamp_series.dt.day.astype(float),
+        "weekday": timestamp_series.dt.weekday.astype(float),
+        "hour": timestamp_series.dt.hour.astype(float),
+        "minute": timestamp_series.dt.minute.astype(float),
+    }
+    feature_values: dict[str, np.ndarray] = {}
+
+    for component_name, period, offset in TIME_FEATURE_SPECS:
+        normalized_values = time_components[component_name] - offset
+        radians = 2.0 * np.pi * normalized_values / period
+        feature_values[f"{component_name}_sin"] = np.sin(radians).astype(np.float32)
+        feature_values[f"{component_name}_cos"] = np.cos(radians).astype(np.float32)
+
+    return pd.DataFrame(feature_values, index=timestamp_series.index)
+
+
+def _ensure_cyclical_time_columns(
+    df: pd.DataFrame,
+    timestamp_col: str = TIMESTAMP_COLUMN,
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    missing_time_cols = [time_col for time_col in TIME_COLUMNS if time_col not in df.columns]
+    if not missing_time_cols:
+        return df
+
+    cyclical_time_df = _build_cyclical_time_features(df[timestamp_col])
+    enriched_df = df.copy()
+    for time_col in missing_time_cols:
+        enriched_df[time_col] = cyclical_time_df[time_col].astype(np.float32)
+    return enriched_df
 
 
 TASK_EVENT_MEASUREMENT_COLUMNS: dict[str, list[str]] = {
@@ -272,11 +321,10 @@ class RequestsDataManager:
         event_df = task_df[[self.patient_id_col, TIMESTAMP_COLUMN]].copy()
         event_df["task_name"] = task_name
         event_df["task_index"] = TASK_TO_INDEX[task_name]
-        event_df["month"] = event_df[TIMESTAMP_COLUMN].dt.month.astype(np.int64)
-        event_df["day"] = event_df[TIMESTAMP_COLUMN].dt.day.astype(np.int64)
-        event_df["weekday"] = event_df[TIMESTAMP_COLUMN].dt.weekday.astype(np.int64)
-        event_df["hour"] = event_df[TIMESTAMP_COLUMN].dt.hour.astype(np.int64)
-        event_df["minute"] = event_df[TIMESTAMP_COLUMN].dt.minute.astype(np.int64)
+        event_df = pd.concat(
+            [event_df, _build_cyclical_time_features(event_df[TIMESTAMP_COLUMN])],
+            axis=1,
+        )
         event_df["interval_available"] = 0.0
         event_df["time_diff_minutes"] = np.nan
 
@@ -589,6 +637,7 @@ class RequestsDataManager:
             data_df[TIMESTAMP_COLUMN] = pd.to_datetime(data_df[TIMESTAMP_COLUMN], errors="coerce")
             data_df[patient_id_col] = data_df[patient_id_col].astype(str)
             data_df["task_name"] = data_df["task_name"].astype(str)
+            data_df = _ensure_cyclical_time_columns(data_df, timestamp_col=TIMESTAMP_COLUMN)
 
         if not segments_df.empty:
             segments_df["patient_id"] = segments_df["patient_id"].astype(str)
@@ -598,6 +647,10 @@ class RequestsDataManager:
     def _load_dataframes(self) -> None:
         with self._metadata_path().open("r", encoding="utf-8") as metadata_file:
             self.metadata = json.load(metadata_file)
+
+        loaded_time_cols = list(self.metadata.get("time_columns", []))
+        if not loaded_time_cols or loaded_time_cols == TIME_MARK_COLUMNS:
+            self.metadata["time_columns"] = TIME_COLUMNS.copy()
 
         self.train_requests_df, self.train_segments_df = self._load_split("train")
         self.val_requests_df, self.val_segments_df = self._load_split("val")
@@ -650,7 +703,8 @@ class RequestsTimeSeries:
         self.patient_id_col = str(metadata["patient_id_col"])
         self.timestamp_col = str(metadata["timestamp_col"])
         self.task_names = list(metadata["task_names"])
-        self.time_cols = list(metadata["time_columns"])
+        loaded_time_cols = list(metadata.get("time_columns", TIME_COLUMNS))
+        self.time_cols = TIME_COLUMNS.copy() if loaded_time_cols == TIME_MARK_COLUMNS else loaded_time_cols
         self.event_measurement_cols = list(metadata["event_measurement_columns"])
         self.input_padding_value = float(metadata.get("input_padding_value", -1.0))
         self.target_padding_value = float(metadata.get("target_padding_value", -1.0))
@@ -735,7 +789,6 @@ class RequestsTimeSeries:
             for time_col in self.time_cols:
                 time_feature_indices[time_col] = cursor
                 input_feature_cols.append(f"{task_name}__{time_col}")
-                continuous_input_feature_indices.append(cursor)
                 cursor += 1
             task_spec["time_feature_indices"] = time_feature_indices
 
@@ -796,14 +849,6 @@ class RequestsTimeSeries:
             ),
             "y": np.zeros(
                 (0, self.target_sequence_length, len(self.target_cols)),
-                dtype=np.float32,
-            ),
-            "x_mark": np.zeros(
-                (0, self.sequence_length, len(self.time_cols)),
-                dtype=np.float32,
-            ),
-            "y_mark": np.zeros(
-                (0, self.target_sequence_length, len(self.time_cols)),
                 dtype=np.float32,
             ),
             "metadata": pd.DataFrame(columns=self._metadata_columns()),
@@ -1054,20 +1099,10 @@ class RequestsTimeSeries:
 
         x_array = np.stack(x_samples, axis=0).astype(np.float32)
         y_array = np.stack(y_samples, axis=0).astype(np.float32)
-        x_mark_array = np.zeros(
-            (len(x_samples), self.sequence_length, len(self.time_cols)),
-            dtype=np.float32,
-        )
-        y_mark_array = np.zeros(
-            (len(x_samples), self.target_sequence_length, len(self.time_cols)),
-            dtype=np.float32,
-        )
 
         return {
             "x": x_array,
             "y": y_array,
-            "x_mark": x_mark_array,
-            "y_mark": y_mark_array,
             "metadata": pd.DataFrame(metadata_rows, columns=self._metadata_columns()),
         }
 
@@ -1191,12 +1226,10 @@ class RequestsDataset(Dataset):
     def slice_start_points(self) -> list[int]:
         return list(range(len(self)))
 
-    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor]:
         seq_x = torch.from_numpy(self._split_arrays["x"][i]).float()
         seq_y = torch.from_numpy(self._split_arrays["y"][i]).float()
-        seq_x_mark = torch.from_numpy(self._split_arrays["x_mark"][i]).float()
-        seq_y_mark = torch.from_numpy(self._split_arrays["y_mark"][i]).float()
-        return seq_x, seq_y, seq_x_mark, seq_y_mark
+        return seq_x, seq_y
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
         return self.series.inverse_transform_target_deltas(data)
