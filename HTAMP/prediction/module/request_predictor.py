@@ -43,8 +43,6 @@ def build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDa
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
         use_saved_request_data=args.use_saved_request_data,
-        input_padding_value=args.input_padding_value,
-        target_padding_value=args.target_padding_value,
     )
     if args.test_iso_weeks:
         dataset_config_kwargs["test_iso_weeks"] = tuple(DataHelpers.parse_iso_week_args(args.test_iso_weeks))
@@ -206,8 +204,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patient_id_col", type=str, default="MRN")
     parser.add_argument("--train_ratio", type=float, default=0.70)
     parser.add_argument("--val_ratio", type=float, default=0.15)
-    parser.add_argument("--input_padding_value", type=float, default=-1.0)
-    parser.add_argument("--target_padding_value", type=float, default=-1.0)
     parser.add_argument(
         "--test_iso_weeks",
         nargs="*",

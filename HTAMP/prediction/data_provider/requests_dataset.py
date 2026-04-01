@@ -562,8 +562,6 @@ class RequestsDataManager:
             "task_to_index": TASK_TO_INDEX,
             "time_columns": self.time_cols,
             "event_measurement_columns": self.event_measurement_cols,
-            "input_padding_value": self.dataset_config.input_padding_value,
-            "target_padding_value": self.dataset_config.target_padding_value,
             "start_date": self.dataset_config.start_date,
             "end_date": self.dataset_config.end_date,
             "train_ratio": self.dataset_config.train_ratio,
@@ -706,8 +704,6 @@ class RequestsTimeSeries:
         loaded_time_cols = list(metadata.get("time_columns", TIME_COLUMNS))
         self.time_cols = TIME_COLUMNS.copy() if loaded_time_cols == TIME_MARK_COLUMNS else loaded_time_cols
         self.event_measurement_cols = list(metadata["event_measurement_columns"])
-        self.input_padding_value = float(metadata.get("input_padding_value", -1.0))
-        self.target_padding_value = float(metadata.get("target_padding_value", -1.0))
 
         (
             self.input_feature_cols,
@@ -855,23 +851,21 @@ class RequestsTimeSeries:
         }
 
     def _initialize_input_sample(self) -> np.ndarray:
-        sample = np.full(
+        sample = np.zeros(
             (self.sequence_length, len(self.input_feature_cols)),
-            self.input_padding_value,
             dtype=np.float32,
         )
-        if self.binary_input_feature_indices:
-            sample[:, self.binary_input_feature_indices] = 0.0
+        if self.continuous_input_feature_indices:
+            sample[:, self.continuous_input_feature_indices] = np.nan
         return sample
 
     def _initialize_target_sample(self) -> np.ndarray:
-        sample = np.full(
+        sample = np.zeros(
             (self.target_sequence_length, len(self.target_cols)),
-            self.target_padding_value,
             dtype=np.float32,
         )
-        if self.availability_target_indices:
-            sample[:, self.availability_target_indices] = 0.0
+        if self.delta_target_indices:
+            sample[:, self.delta_target_indices] = np.nan
         return sample
 
     def _history_timestamp_payload(
@@ -1111,7 +1105,7 @@ class RequestsTimeSeries:
         scales = np.ones(len(self.continuous_input_feature_indices), dtype=np.float32)
 
         for position, feature_index in enumerate(self.continuous_input_feature_indices):
-            valid_mask = train_x[:, :, feature_index] != self.input_padding_value
+            valid_mask = np.isfinite(train_x[:, :, feature_index])
             valid_values = train_x[:, :, feature_index][valid_mask]
             if valid_values.size == 0:
                 continue
@@ -1129,7 +1123,9 @@ class RequestsTimeSeries:
         for position, (delta_index, availability_index) in enumerate(
             zip(self.delta_target_indices, self.availability_target_indices)
         ):
-            valid_mask = train_y[:, :, availability_index] > 0.5
+            valid_mask = (train_y[:, :, availability_index] > 0.5) & np.isfinite(
+                train_y[:, :, delta_index]
+            )
             valid_values = train_y[:, :, delta_index][valid_mask]
             if valid_values.size == 0:
                 continue
@@ -1143,13 +1139,15 @@ class RequestsTimeSeries:
     def _apply_input_scaling(self, x_array: np.ndarray) -> np.ndarray:
         scaled_array = x_array.copy()
         for position, feature_index in enumerate(self.continuous_input_feature_indices):
-            valid_mask = scaled_array[:, :, feature_index] != self.input_padding_value
+            valid_mask = np.isfinite(scaled_array[:, :, feature_index])
             if not valid_mask.any():
+                scaled_array[:, :, feature_index] = 0.0
                 continue
 
             scaled_array[:, :, feature_index][valid_mask] = (
                 scaled_array[:, :, feature_index][valid_mask] - self.input_scaler_mean[position]
             ) / self.input_scaler_scale[position]
+            scaled_array[:, :, feature_index][~valid_mask] = 0.0
         return scaled_array
 
     def _apply_target_scaling(self, y_array: np.ndarray) -> np.ndarray:
@@ -1157,13 +1155,17 @@ class RequestsTimeSeries:
         for position, (delta_index, availability_index) in enumerate(
             zip(self.delta_target_indices, self.availability_target_indices)
         ):
-            valid_mask = scaled_array[:, :, availability_index] > 0.5
+            valid_mask = (scaled_array[:, :, availability_index] > 0.5) & np.isfinite(
+                scaled_array[:, :, delta_index]
+            )
             if not valid_mask.any():
+                scaled_array[:, :, delta_index] = 0.0
                 continue
 
             scaled_array[:, :, delta_index][valid_mask] = (
                 scaled_array[:, :, delta_index][valid_mask] - self.target_scaler_mean[position]
             ) / self.target_scaler_scale[position]
+            scaled_array[:, :, delta_index][~valid_mask] = 0.0
         return scaled_array
 
     def _apply_scaling_to_all_splits(self) -> None:

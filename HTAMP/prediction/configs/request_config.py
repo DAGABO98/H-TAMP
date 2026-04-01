@@ -36,8 +36,6 @@ class MedicalRequestDatasetConfig:
     use_saved_request_data: bool = False
     preprocess_data: bool = True
     save_data: bool = True
-    input_padding_value: float = -1.0
-    target_padding_value: float = -1.0
 
     def __post_init__(self) -> None:
         if min(self.train_ratio, self.val_ratio) < 0.0:
