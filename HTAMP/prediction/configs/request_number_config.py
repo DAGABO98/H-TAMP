@@ -29,11 +29,11 @@ class MedicalRequestDatasetConfig:
     dataset_dir: str = "data/prediction/request_numbers"
     start_date: str = "2024-06-24"
     end_date: str = "2025-06-29"
-    time_step_minutes: int = 60
+    time_step_minutes: int = 5
     patient_id_col: str = "MRN"
-    train_ratio: float = 0.70
-    val_ratio: float = 0.15
-    test_ratio: float = 0.15
+    train_ratio: float = 0.80
+    val_ratio: float = 0.10
+    test_ratio: float = 0.10
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
 
