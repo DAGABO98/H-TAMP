@@ -36,6 +36,8 @@ class MedicalRequestDatasetConfig:
     test_ratio: float = 0.10
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
+    input_padding_value: float = -1.0
+    target_padding_value: float = -1.0
 
     def __post_init__(self) -> None:
         if self.time_step_minutes <= 0:
@@ -62,14 +64,14 @@ class MedicalRequestDatasetConfig:
 @dataclass
 class TimeseriesModelConfig:
     model_name: str = "TimesNet"
-    run_name: str = "TimesNet_medical_requests"
+    run_name: str = "TimesNet_medical_request_intervals"
     preprocess_data: bool = False
     wandb: bool = False
 
     task_name: str = "long_term_forecast"
-    seq_len: int = 96
-    label_len: int = 48
-    pred_len: int = 96
+    seq_len: int = 5
+    label_len: int = 0
+    pred_len: int = 3
 
     enc_in: int = 0
     dec_in: int = 0
@@ -117,10 +119,10 @@ class TimeseriesModelConfig:
         }
         return cls(**values)
 
-    def sync_channel_dimensions(self, num_channels: int) -> None:
-        self.enc_in = num_channels
-        self.dec_in = num_channels
-        self.c_out = num_channels
+    def sync_channel_dimensions(self, num_input_channels: int, num_output_channels: int) -> None:
+        self.enc_in = num_input_channels
+        self.dec_in = num_output_channels
+        self.c_out = num_output_channels
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
