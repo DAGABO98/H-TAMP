@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 class RequestsDataModule(L.LightningDataModule):
     def __init__(
         self,
-        datasetCls,
+        dataset_cls,
         dataset_kwargs: dict,
         batch_size: int,
         workers: int,
@@ -12,11 +12,10 @@ class RequestsDataModule(L.LightningDataModule):
         prefetch_factor=None
     ):
         super().__init__()
-        self.datasetCls = datasetCls
+        self.dataset_cls = dataset_cls
         self.batch_size = batch_size
-        if "split" in dataset_kwargs.keys():
-            del dataset_kwargs["split"]
-        self.dataset_kwargs = dataset_kwargs
+        self.dataset_kwargs = dict(dataset_kwargs)
+        self.dataset_kwargs.pop("split", None)
         self.workers = workers
         self.collate_fn = collate_fun
         self.prefetch_factor = prefetch_factor
@@ -32,7 +31,7 @@ class RequestsDataModule(L.LightningDataModule):
 
     def _make_dloader(self, split, shuffle=False):
         dataloader_kwargs = {
-            "dataset": self.datasetCls(**self.dataset_kwargs, split=split),
+            "dataset": self.dataset_cls(**self.dataset_kwargs, split=split),
             "shuffle": shuffle,
             "batch_size": self.batch_size,
             "num_workers": self.workers,
