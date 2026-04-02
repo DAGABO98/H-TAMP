@@ -9,8 +9,6 @@ from pathlib import Path
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 
-from HTAMP.data_processing.data_helpers import DataHelpers
-from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.prediction.data_provider.data_module import DataModule
 from HTAMP.prediction.data_provider.requests_dataset import (
     RequestsDataManager,
@@ -19,34 +17,10 @@ from HTAMP.prediction.data_provider.requests_dataset import (
 )
 from HTAMP.prediction.configs.request_config import (
     MedicalRequestDatasetConfig,
+    RequestTrainingConfig,
     TimeseriesModelConfig,
 )
 from HTAMP.prediction.module.request_module import RequestsModule
-
-def build_dataset_config_from_args(args: argparse.Namespace) -> MedicalRequestDatasetConfig:
-    dataset_config_kwargs = dict(
-        annotated_data_files=AnnotatedDataFiles(
-            annotated_visits="",
-            annotated_admissions_discharges="",
-            annotated_medications=args.medications_orders_file,
-            annotated_blood_pressure=args.blood_pressure_orders_file,
-            annotated_heart_rate=args.heart_rate_orders_file,
-            annotated_respiratory_rate=args.respiratory_rate_orders_file,
-            annotated_temperature=args.temperature_orders_file,
-            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
-        ),
-        request_dir=args.request_dir,
-        dataset_dir=args.dataset_dir,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        patient_id_col=args.patient_id_col,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
-        use_saved_request_data=args.use_saved_request_data,
-    )
-    if args.test_iso_weeks:
-        dataset_config_kwargs["test_iso_weeks"] = tuple(DataHelpers.parse_iso_week_args(args.test_iso_weeks))
-    return MedicalRequestDatasetConfig(**dataset_config_kwargs)
 
 class RequestsPredictor:
     def create_data_module_and_time_series(
@@ -79,7 +53,7 @@ class RequestsPredictor:
         )
 
         data_module = DataModule(
-            datasetCls=RequestsDataset,
+            dataset_cls=RequestsDataset,
             dataset_kwargs={
                 "request_time_series": time_series,
                 "sequence_length": model_config.seq_len,
@@ -127,8 +101,13 @@ class RequestsPredictor:
             LearningRateMonitor(),
         ]
 
-    def _create_logger(self, args: argparse.Namespace, log_dir: str):
-        if not args.wandb:
+    def _create_logger(
+        self,
+        model_config: TimeseriesModelConfig,
+        config_payload: dict[str, object],
+        log_dir: str,
+    ):
+        if not model_config.wandb:
             return None
 
         import wandb
@@ -136,15 +115,15 @@ class RequestsPredictor:
 
         experiment = wandb.init(
             project="medical_request_timeseries",
-            config=vars(args),
+            config=config_payload,
             dir=log_dir,
             reinit=True,
         )
-        wandb.run.name = args.run_name
+        wandb.run.name = model_config.run_name
         wandb.run.save()
 
         logger = WandbLogger(experiment=experiment, save_dir=log_dir)
-        logger.log_hyperparams(vars(args))
+        logger.log_hyperparams(config_payload)
         return logger
 
     def _resolve_strategy(self, model_config: TimeseriesModelConfig) -> str | None:
@@ -156,14 +135,18 @@ class RequestsPredictor:
 
         return "auto"
 
-    def compile_and_train(self, args: argparse.Namespace) -> None:
-        model_config = TimeseriesModelConfig.from_namespace(args=args)
-        dataset_config = build_dataset_config_from_args(args=args)
+    def compile_and_train(self, training_config: RequestTrainingConfig) -> None:
+        dataset_config = training_config.dataset_config
+        model_config = training_config.model_config
 
         log_dir = os.getenv("STF_LOG_DIR", "./data/STF_LOG_DIR")
         os.makedirs(log_dir, exist_ok=True)
 
-        logger = self._create_logger(args=args, log_dir=log_dir)
+        logger = self._create_logger(
+            model_config=model_config,
+            config_payload=training_config.to_dict(),
+            log_dir=log_dir,
+        )
         data_module, time_series = self.create_data_module_and_time_series(
             model_config=model_config,
             dataset_config=dataset_config,
@@ -188,97 +171,14 @@ class RequestsPredictor:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="RequestsPredictor",
-        description="Train a medical request-interval forecasting model.",
+        description="Train a medical request-interval forecasting model from a JSON config file.",
     )
-
-    parser.add_argument("--model_name", type=str, default="TimesNet")
-    parser.add_argument("--run_name", type=str, default="TimesNet_medical_request_intervals")
-    parser.add_argument("--preprocess_data", action="store_true", default=False)
-    parser.add_argument("--wandb", action="store_true", default=False)
-
-    parser.add_argument("--request_dir", type=str, default="data/requests")
-    parser.add_argument("--dataset_dir", type=str, default="data/prediction/request_intervals")
-    parser.add_argument("--start_date", type=str, default="2024-06-24")
-    parser.add_argument("--end_date", type=str, default="2025-06-29")
-    parser.add_argument("--patient_id_col", type=str, default="MRN")
-    parser.add_argument("--train_ratio", type=float, default=0.70)
-    parser.add_argument("--val_ratio", type=float, default=0.15)
     parser.add_argument(
-        "--test_iso_weeks",
-        nargs="*",
-        default=None,
-        help="Optional explicit test ISO weeks such as 2024W40 2025W05. Defaults to the weeks used in assignment/run_test.py.",
-    )
-    parser.add_argument("--use_saved_request_data", action="store_true", default=False)
-
-    parser.add_argument(
-        "--medications_orders_file",
+        "--config_path",
         type=str,
-        default="data/processed/medication_orders_annotated.csv",
+        required=True,
+        help="Path to a JSON file containing 'dataset_config' and 'model_config'.",
     )
-    parser.add_argument(
-        "--blood_pressure_orders_file",
-        type=str,
-        default="data/processed/blood_pressure_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--heart_rate_orders_file",
-        type=str,
-        default="data/processed/heart_rate_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--respiratory_rate_orders_file",
-        type=str,
-        default="data/processed/respiratory_rate_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--temperature_orders_file",
-        type=str,
-        default="data/processed/temperature_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--oxygen_saturation_orders_file",
-        type=str,
-        default="data/processed/oxygen_saturation_orders_annotated.csv",
-    )
-
-    parser.add_argument("--seq_len", type=int, default=5)
-    parser.add_argument("--label_len", type=int, default=0)
-    parser.add_argument("--pred_len", type=int, default=3)
-
-    parser.add_argument("--top_k", type=int, default=5)
-    parser.add_argument("--num_kernels", type=int, default=6)
-    parser.add_argument("--d_model", type=int, default=512)
-    parser.add_argument("--n_heads", type=int, default=8)
-    parser.add_argument("--e_layers", type=int, default=2)
-    parser.add_argument("--d_layers", type=int, default=1)
-    parser.add_argument("--d_ff", type=int, default=2048)
-    parser.add_argument("--moving_avg", type=int, default=25)
-    parser.add_argument("--factor", type=int, default=1)
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--activation", type=str, default="gelu")
-    parser.add_argument("--output_attention", action="store_true", default=False)
-    parser.add_argument("--channel_independence", type=int, default=0)
-    parser.add_argument("--decomp_method", type=str, default="moving_avg")
-    parser.add_argument("--use_norm", type=int, default=1)
-    parser.add_argument("--down_sampling_layers", type=int, default=0)
-    parser.add_argument("--down_sampling_window", type=int, default=1)
-    parser.add_argument("--down_sampling_method", type=str, default=None)
-    parser.add_argument("--embed", type=str, default="timeF")
-    parser.add_argument("--freq", type=str, default="h")
-    parser.add_argument("--task_name", type=str, default="long_term_forecast")
-    parser.add_argument("--num_class", type=int, default=0)
-
-    parser.add_argument("--num_workers", type=int, default=0)
-    parser.add_argument("--max_epochs", type=int, default=300)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--patience", type=int, default=40)
-    parser.add_argument("--learning_rate", type=float, default=0.0001)
-    parser.add_argument("--loss", type=str, default="MSE")
-    parser.add_argument("--accelerator", type=str, default="auto")
-    parser.add_argument("--devices", type=int, default=1)
-    parser.add_argument("--strategy", type=str, default=None)
-
     return parser
 
 
@@ -287,8 +187,9 @@ if __name__ == "__main__":
     try:
         parser = build_parser()
         parsed_args = parser.parse_args()
+        training_config = RequestTrainingConfig.from_json_file(parsed_args.config_path)
         request_predictor = RequestsPredictor()
-        request_predictor.compile_and_train(args=parsed_args)
+        request_predictor.compile_and_train(training_config=training_config)
     except Exception as error_main_context:
         print("Fail End Process: ", error_main_context)
         traceback.print_exc()

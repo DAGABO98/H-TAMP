@@ -18,7 +18,7 @@ from HTAMP.prediction.time_series_models.utils.metrics import metric
 def _coerce_model_config(model_config: TimeseriesModelConfig | dict[str, Any]) -> TimeseriesModelConfig:
     if isinstance(model_config, TimeseriesModelConfig):
         return model_config
-    return TimeseriesModelConfig(**model_config)
+    return TimeseriesModelConfig.from_dict(model_config)
 
 
 class RequestsModule(L.LightningModule):

@@ -1,59 +1,48 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import datetime
 import json
 import subprocess
 import sys
+import tempfile
 import time
+from dataclasses import fields
 from pathlib import Path
+from typing import Any, Mapping
 
-from HTAMP.prediction.module.request_predictor import build_parser as build_predictor_parser
+from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
+from HTAMP.prediction.configs.request_config import (
+    MedicalRequestDatasetConfig,
+    RequestModelSweepConfig,
+    RequestTrainingConfig,
+    SUPPORTED_REQUEST_MODELS,
+    TimeseriesModelConfig,
+)
 
-AVAILABLE_MODELS = ("TimesNet", "TimeMixer", "iTransformer", "PatchTST")
-DRIVER_ONLY_ARGS = {"models", "summary_path", "fail_fast", "model_overrides_file"}
-DEFAULT_PREDICTOR_RUN_NAME = "TimesNet_medical_requests"
-PREDICTOR_ARG_NAMES = {
-    action.dest
-    for action in build_predictor_parser()._actions
-    if action.dest != "help"
+AVAILABLE_MODELS = SUPPORTED_REQUEST_MODELS
+DEFAULT_PREDICTOR_RUN_NAME = "TimesNet_medical_request_intervals"
+CONFIG_SECTION_FIELDS = {
+    "dataset_config": {field.name for field in fields(MedicalRequestDatasetConfig)},
+    "model_config": {field.name for field in fields(TimeseriesModelConfig)},
 }
+ANNOTATED_DATA_FILE_FIELDS = {field.name for field in fields(AnnotatedDataFiles)}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = build_predictor_parser()
-    parser.prog = "RequestModelSweep"
-    parser.description = (
-        "Run the request predictor across multiple time-series models "
-        "and write a summary CSV for comparison."
+    parser = argparse.ArgumentParser(
+        prog="RequestModelSweep",
+        description="Run the request predictor across multiple time-series models from a JSON config file.",
     )
     parser.add_argument(
-        "--models",
-        nargs="*",
-        default=list(AVAILABLE_MODELS),
-        choices=AVAILABLE_MODELS,
-        help="Models to train. Defaults to all supported request models.",
-    )
-    parser.add_argument(
-        "--summary_path",
+        "--config_path",
         type=str,
-        default="data/prediction/request_model_sweep_summary.csv",
-        help="CSV file where per-model run status and duration will be saved.",
-    )
-    parser.add_argument(
-        "--fail_fast",
-        action="store_true",
-        default=False,
-        help="Stop the sweep immediately if one model run fails.",
-    )
-    parser.add_argument(
-        "--model_overrides_file",
-        type=str,
-        default=None,
+        required=True,
         help=(
-            "Optional JSON file with per-model predictor argument overrides. "
-            "Expected shape: {'defaults': {...}, 'TimesNet': {...}, 'PatchTST': {...}}."
+            "Path to a JSON file containing 'predictor_config', optional 'model_overrides', "
+            "and model sweep settings."
         ),
     )
     return parser
@@ -76,107 +65,137 @@ def _resolve_summary_path(summary_path: str) -> Path:
 
 def _derive_run_name(base_run_name: str, model_name: str) -> str:
     if base_run_name == DEFAULT_PREDICTOR_RUN_NAME:
-        return f"{model_name}_medical_requests"
+        return f"{model_name}_medical_request_intervals"
     return f"{base_run_name}_{model_name}"
 
 
-def _validate_override_mapping(scope_name: str, overrides: dict[str, object]) -> dict[str, object]:
-    invalid_keys = sorted(
-        key
-        for key in overrides
-        if key not in PREDICTOR_ARG_NAMES or key in {"model_name", "run_name"}
-    )
-    if invalid_keys:
+def _deep_merge_dicts(base: Mapping[str, Any], updates: Mapping[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(dict(base))
+    for key, value in updates.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(base=merged[key], updates=value)
+            continue
+        merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _validate_override_mapping(
+    scope_name: str,
+    overrides: Mapping[str, Any],
+) -> dict[str, dict[str, object]]:
+    invalid_sections = sorted(section_name for section_name in overrides if section_name not in CONFIG_SECTION_FIELDS)
+    if invalid_sections:
         raise ValueError(
-            f"Invalid override keys for '{scope_name}': {invalid_keys}. "
-            "Use predictor argument names and do not override model_name or run_name."
+            f"Invalid override sections for '{scope_name}': {invalid_sections}. "
+            "Use 'dataset_config' and/or 'model_config'."
         )
-    return dict(overrides)
 
+    validated_overrides: dict[str, dict[str, object]] = {}
+    for section_name, section_overrides in overrides.items():
+        if not isinstance(section_overrides, Mapping):
+            raise ValueError(f"Override section '{scope_name}.{section_name}' must be a JSON object.")
 
-def _load_model_overrides(model_overrides_file: str | None) -> dict[str, dict[str, object]]:
-    if model_overrides_file is None:
-        return {}
-
-    overrides_path = _resolve_repo_relative_path(path_str=model_overrides_file)
-    with overrides_path.open("r", encoding="utf-8") as overrides_file:
-        raw_overrides = json.load(overrides_file)
-
-    if not isinstance(raw_overrides, dict):
-        raise ValueError("model_overrides_file must contain a JSON object at the top level.")
-
-    loaded_overrides: dict[str, dict[str, object]] = {}
-    for scope_name, scope_overrides in raw_overrides.items():
-        if scope_name != "defaults" and scope_name not in AVAILABLE_MODELS:
+        invalid_fields = sorted(field_name for field_name in section_overrides if field_name not in CONFIG_SECTION_FIELDS[section_name])
+        if invalid_fields:
             raise ValueError(
-                f"Unknown override scope '{scope_name}'. "
-                f"Expected 'defaults' or one of {AVAILABLE_MODELS}."
+                f"Invalid override fields for '{scope_name}.{section_name}': {invalid_fields}."
             )
-        if not isinstance(scope_overrides, dict):
-            raise ValueError(f"Override scope '{scope_name}' must map to a JSON object.")
 
-        loaded_overrides[scope_name] = _validate_override_mapping(
-            scope_name=scope_name,
-            overrides=scope_overrides,
+        if section_name == "model_config":
+            protected_fields = sorted(
+                field_name for field_name in section_overrides if field_name in {"model_name", "run_name"}
+            )
+            if protected_fields:
+                raise ValueError(
+                    f"Do not override {protected_fields} inside '{scope_name}.{section_name}'. "
+                    "The sweep driver manages those values per model."
+                )
+
+        if section_name == "dataset_config" and "annotated_data_files" in section_overrides:
+            annotated_data_files = section_overrides["annotated_data_files"]
+            if not isinstance(annotated_data_files, Mapping):
+                raise ValueError(
+                    f"'{scope_name}.{section_name}.annotated_data_files' must be a JSON object."
+                )
+
+            invalid_annotated_fields = sorted(
+                field_name for field_name in annotated_data_files if field_name not in ANNOTATED_DATA_FILE_FIELDS
+            )
+            if invalid_annotated_fields:
+                raise ValueError(
+                    f"Invalid annotated_data_files overrides for '{scope_name}.{section_name}': "
+                    f"{invalid_annotated_fields}."
+                )
+
+        validated_overrides[section_name] = dict(section_overrides)
+
+    return validated_overrides
+
+
+def _validate_models(models: tuple[str, ...]) -> tuple[str, ...]:
+    invalid_models = sorted(model_name for model_name in models if model_name not in AVAILABLE_MODELS)
+    if invalid_models:
+        raise ValueError(f"Unsupported model(s) in sweep config: {invalid_models}.")
+    return models
+
+
+def _validate_model_override_scopes(
+    model_overrides: Mapping[str, Any],
+    models: tuple[str, ...],
+) -> None:
+    allowed_scopes = {"defaults"} | set(models)
+    invalid_scopes = sorted(scope_name for scope_name in model_overrides if scope_name not in allowed_scopes)
+    if invalid_scopes:
+        raise ValueError(
+            f"Invalid model override scope(s): {invalid_scopes}. "
+            f"Expected 'defaults' or one of {models}."
         )
 
-    return loaded_overrides
 
-
-def _build_effective_predictor_args(
-    args: argparse.Namespace,
+def _build_effective_training_config(
+    sweep_config: RequestModelSweepConfig,
     model_name: str,
     preprocess_data: bool,
-    model_overrides: dict[str, dict[str, object]],
-) -> tuple[dict[str, object], dict[str, object]]:
-    effective_args = {
-        key: value
-        for key, value in vars(args).items()
-        if key not in DRIVER_ONLY_ARGS and key not in {"model_name", "run_name"}
-    }
-    applied_overrides: dict[str, object] = {}
+) -> tuple[RequestTrainingConfig, dict[str, Any]]:
+    effective_training_config = RequestTrainingConfig.from_dict(sweep_config.predictor_config)
+    applied_overrides: dict[str, Any] = {}
 
     for scope_name in ("defaults", model_name):
-        scope_overrides = model_overrides.get(scope_name, {})
-        effective_args.update(scope_overrides)
-        applied_overrides.update(scope_overrides)
-
-    effective_args["preprocess_data"] = preprocess_data
-    if "preprocess_data" in applied_overrides:
-        applied_overrides["preprocess_data"] = preprocess_data
-
-    return effective_args, applied_overrides
-
-
-def _serialize_predictor_args(
-    effective_args: dict[str, object],
-    model_name: str,
-    base_run_name: str,
-) -> list[str]:
-    command_args: list[str] = []
-
-    for key, value in effective_args.items():
-        option = f"--{key}"
-        if value is None:
+        scope_overrides = sweep_config.model_overrides.get(scope_name, {})
+        if not scope_overrides:
             continue
 
-        if isinstance(value, bool):
-            if value:
-                command_args.append(option)
-            continue
+        validated_overrides = _validate_override_mapping(scope_name=scope_name, overrides=scope_overrides)
+        effective_training_config = effective_training_config.with_overrides(validated_overrides)
+        applied_overrides = _deep_merge_dicts(base=applied_overrides, updates=validated_overrides)
 
-        if isinstance(value, (list, tuple)):
-            if not value:
-                continue
-            command_args.append(option)
-            command_args.extend(str(item) for item in value)
-            continue
+    effective_training_config.model_config.model_name = model_name
+    effective_training_config.model_config.run_name = _derive_run_name(
+        base_run_name=sweep_config.predictor_config.model_config.run_name,
+        model_name=model_name,
+    )
+    effective_training_config.dataset_config.preprocess_data = preprocess_data
 
-        command_args.extend([option, str(value)])
+    if preprocess_data != sweep_config.predictor_config.dataset_config.preprocess_data:
+        applied_overrides = _deep_merge_dicts(
+            base=applied_overrides,
+            updates={"dataset_config": {"preprocess_data": preprocess_data}},
+        )
 
-    command_args.extend(["--model_name", model_name])
-    command_args.extend(["--run_name", _derive_run_name(base_run_name=base_run_name, model_name=model_name)])
-    return command_args
+    return effective_training_config, applied_overrides
+
+
+def _write_temp_training_config(training_config: RequestTrainingConfig, model_name: str) -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".json",
+        prefix=f"{model_name.lower()}_",
+        dir=_repo_root(),
+        delete=False,
+    ) as config_file:
+        json.dump(training_config.to_dict(), config_file, indent=2)
+        return Path(config_file.name)
 
 
 def _write_summary(summary_path: Path, summary_rows: list[dict[str, object]]) -> None:
@@ -198,39 +217,43 @@ def _write_summary(summary_path: Path, summary_rows: list[dict[str, object]]) ->
 
 
 def _run_single_model(
-    args: argparse.Namespace,
+    sweep_config: RequestModelSweepConfig,
     model_name: str,
     preprocess_data: bool,
-    model_overrides: dict[str, dict[str, object]],
 ) -> dict[str, object]:
     start_time = datetime.datetime.now()
-    run_name = _derive_run_name(base_run_name=args.run_name, model_name=model_name)
-    effective_args, applied_overrides = _build_effective_predictor_args(
-        args=args,
+    effective_training_config, applied_overrides = _build_effective_training_config(
+        sweep_config=sweep_config,
         model_name=model_name,
         preprocess_data=preprocess_data,
-        model_overrides=model_overrides,
+    )
+    run_name = effective_training_config.model_config.run_name
+    temp_config_path = _write_temp_training_config(
+        training_config=effective_training_config,
+        model_name=model_name,
     )
     command = [
         sys.executable,
         "-m",
-        "HTAMP.prediction.request_predictor",
-        *_serialize_predictor_args(
-            effective_args=effective_args,
-            model_name=model_name,
-            base_run_name=args.run_name,
-        ),
+        "HTAMP.prediction.module.request_predictor",
+        "--config_path",
+        str(temp_config_path),
     ]
 
     if applied_overrides:
         print(f"Applying overrides for {model_name}: {json.dumps(applied_overrides, sort_keys=True)}")
     print(f"Starting model sweep run for {model_name} with run name '{run_name}'")
+
     wall_clock_start = time.perf_counter()
-    completed = subprocess.run(
-        command,
-        cwd=_repo_root(),
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=_repo_root(),
+            check=False,
+        )
+    finally:
+        temp_config_path.unlink(missing_ok=True)
+
     duration_seconds = time.perf_counter() - wall_clock_start
     end_time = datetime.datetime.now()
     status = "success" if completed.returncode == 0 else "failed"
@@ -255,25 +278,29 @@ def _run_single_model(
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    summary_path = _resolve_summary_path(summary_path=args.summary_path)
-    model_overrides = _load_model_overrides(model_overrides_file=args.model_overrides_file)
+    sweep_config = RequestModelSweepConfig.from_json_file(args.config_path)
+    sweep_config.models = _validate_models(models=sweep_config.models)
+    _validate_model_override_scopes(
+        model_overrides=sweep_config.model_overrides,
+        models=sweep_config.models,
+    )
+    summary_path = _resolve_summary_path(summary_path=sweep_config.summary_path)
     summary_rows: list[dict[str, object]] = []
 
-    preprocess_data = bool(args.preprocess_data)
-    for model_name in args.models:
+    preprocess_data = bool(sweep_config.predictor_config.dataset_config.preprocess_data)
+    for model_name in sweep_config.models:
         result = _run_single_model(
-            args=args,
+            sweep_config=sweep_config,
             model_name=model_name,
             preprocess_data=preprocess_data,
-            model_overrides=model_overrides,
         )
         summary_rows.append(result)
         _write_summary(summary_path=summary_path, summary_rows=summary_rows)
 
         preprocess_data = False
 
-        if result["status"] != "success" and args.fail_fast:
-            print(f"Stopping early because {model_name} failed and --fail_fast was set.")
+        if result["status"] != "success" and sweep_config.fail_fast:
+            print(f"Stopping early because {model_name} failed and fail_fast was set in the config.")
             return int(result["returncode"])
 
     failed_runs = [row for row in summary_rows if row["status"] != "success"]

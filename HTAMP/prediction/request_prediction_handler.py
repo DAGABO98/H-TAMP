@@ -17,13 +17,10 @@ from HTAMP.prediction.data_provider.requests_dataset import (
 )
 from HTAMP.prediction.configs.request_config import (
     MedicalRequestDatasetConfig,
+    RequestPredictionJobConfig,
     TimeseriesModelConfig,
 )
 from HTAMP.prediction.module.request_module import RequestsModule
-from HTAMP.prediction.module.request_predictor import (
-    build_dataset_config_from_args,
-    build_parser as build_training_parser,
-)
 
 SPLITS = ("train", "val", "test")
 
@@ -294,33 +291,18 @@ class RequestLocationsPredictionManager:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = build_training_parser()
-    parser.prog = "RequestPredictionHandler"
-    parser.description = "Generate medical request-interval forecasts from a trained checkpoint."
+    parser = argparse.ArgumentParser(
+        prog="RequestPredictionHandler",
+        description="Generate medical request-interval forecasts from a JSON config file.",
+    )
     parser.add_argument(
-        "--checkpoint_path",
+        "--config_path",
         type=str,
         required=True,
-        help="Lightning checkpoint for the trained request-interval forecaster.",
-    )
-    parser.add_argument(
-        "--predictions_dir",
-        type=str,
-        default=None,
-        help="Output folder for requests.pkl/csv. Defaults to <dataset_dir>/predictions.",
-    )
-    parser.add_argument(
-        "--load_predictions",
-        action="store_true",
-        default=False,
-        help="Load previously saved predictions instead of regenerating them.",
-    )
-    parser.add_argument(
-        "--prediction_splits",
-        nargs="*",
-        default=list(SPLITS),
-        choices=SPLITS,
-        help="Dataset splits to generate forecasts for.",
+        help=(
+            "Path to a JSON file containing 'dataset_config', 'model_config', "
+            "'checkpoint_path', and optional prediction output settings."
+        ),
     )
     return parser
 
@@ -330,17 +312,15 @@ if __name__ == "__main__":
     try:
         parser = build_parser()
         args = parser.parse_args()
-
-        dataset_config = build_dataset_config_from_args(args=args)
-        model_config = TimeseriesModelConfig.from_namespace(args=args)
+        prediction_job_config = RequestPredictionJobConfig.from_json_file(args.config_path)
 
         RequestPredictionManager(
-            dataset_config=dataset_config,
-            model_config=model_config,
-            checkpoint_file_path=args.checkpoint_path,
-            predictions_dir=args.predictions_dir,
-            load_predictions=args.load_predictions,
-            splits=args.prediction_splits,
+            dataset_config=prediction_job_config.dataset_config,
+            model_config=prediction_job_config.model_config,
+            checkpoint_file_path=prediction_job_config.checkpoint_path,
+            predictions_dir=prediction_job_config.predictions_dir,
+            load_predictions=prediction_job_config.load_predictions,
+            splits=prediction_job_config.prediction_splits,
         )
     except Exception as error_main_context:
         print("Fail End Process: ", error_main_context)
