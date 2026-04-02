@@ -11,12 +11,12 @@
       "annotated_oxygen_saturation": "data/processed/oxygen_saturation_orders_annotated.csv"
     },
     "request_dir": "data/requests",
-    "dataset_dir": "data/prediction/request_intervals",
+    "dataset_dir": "data/prediction/requests_dataset",
     "start_date": "2024-06-24",
     "end_date": "2025-06-29",
     "patient_id_col": "MRN",
-    "train_ratio": 0.7,
-    "val_ratio": 0.15,
+    "train_ratio": 0.8,
+    "val_ratio": 0.10,
     "test_iso_weeks": [
       "2024W27",
       "2024W36",
@@ -26,7 +26,7 @@
       "2025W14"
     ],
     "use_saved_request_data": true,
-    "preprocess_data": false,
+    "preprocess_data": true,
     "save_data": true
   },
   "model_config": {
@@ -69,7 +69,7 @@
     "strategy": null
   },
   "checkpoint_path": "path/to/request_model.ckpt",
-  "predictions_dir": "data/prediction/request_intervals/predictions",
+  "predictions_dir": "data/prediction/requests_dataset/predictions",
   "load_predictions": false,
   "prediction_splits": [
     "train",
