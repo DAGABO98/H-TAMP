@@ -160,9 +160,9 @@ class TimeseriesModelConfig:
     wandb: bool = False
 
     task_name: str = "long_term_forecast"
-    seq_len: int = 5
+    seq_len: int = 8
     label_len: int = 0
-    pred_len: int = 3
+    pred_len: int = 4
 
     enc_in: int = 0
     dec_in: int = 0
