@@ -52,6 +52,19 @@ def _coerce_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
     return value
 
 
+def _normalize_json_like(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_json_like(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_json_like(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_json_like(item) for item in value]
+    return value
+
+
 def _parse_iso_week_value(value: str) -> tuple[int, int]:
     cleaned = value.strip().replace("W", "-").replace(",", "-").replace("_", "-")
     parts = [part for part in cleaned.split("-") if part]
@@ -103,11 +116,11 @@ class MedicalRequestDatasetConfig:
     start_date: str = "2024-06-24"
     end_date: str = "2025-06-29"
     patient_id_col: str = "MRN"
-    train_ratio: float = 0.80
-    val_ratio: float = 0.10
+    train_ratio: float = 0.70
+    val_ratio: float = 0.15
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
-    preprocess_data: bool = True
+    preprocess_data: bool = False
     save_data: bool = True
 
     def __post_init__(self) -> None:
@@ -312,6 +325,9 @@ class RequestModelSweepConfig:
     summary_path: str = "data/prediction/request_model_sweep_summary.csv"
     fail_fast: bool = False
     model_overrides: dict[str, dict[str, dict[str, object]]] = field(default_factory=dict)
+    search_space: dict[str, dict[str, object]] = field(default_factory=dict)
+    max_parallel_runs: int = 1
+    gpu_ids: tuple[int, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         self.predictor_config = RequestTrainingConfig.from_dict(self.predictor_config)
@@ -327,6 +343,21 @@ class RequestModelSweepConfig:
             }
             for scope_name, scope_updates in self.model_overrides.items()
         }
+        self.search_space = {
+            scope_name: dict(
+                _coerce_mapping(value=_normalize_json_like(scope_updates), field_name=scope_name)
+            )
+            for scope_name, scope_updates in dict(
+                _coerce_mapping(value=self.search_space, field_name="search_space")
+            ).items()
+        }
+        if self.max_parallel_runs < 1:
+            raise ValueError("max_parallel_runs must be at least 1.")
+        if isinstance(self.gpu_ids, int):
+            self.gpu_ids = (self.gpu_ids,)
+        self.gpu_ids = tuple(int(gpu_id) for gpu_id in self.gpu_ids)
+        if any(gpu_id < 0 for gpu_id in self.gpu_ids):
+            raise ValueError("gpu_ids must contain non-negative integers.")
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any] | "RequestModelSweepConfig") -> "RequestModelSweepConfig":
@@ -340,6 +371,9 @@ class RequestModelSweepConfig:
             summary_path=str(config_payload.get("summary_path", "data/prediction/request_model_sweep_summary.csv")),
             fail_fast=bool(config_payload.get("fail_fast", False)),
             model_overrides=dict(config_payload.get("model_overrides", {})),
+            search_space=dict(config_payload.get("search_space", {})),
+            max_parallel_runs=int(config_payload.get("max_parallel_runs", 1)),
+            gpu_ids=tuple(config_payload.get("gpu_ids", ())),
         )
 
     @classmethod
