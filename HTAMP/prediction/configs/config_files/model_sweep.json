@@ -37,17 +37,19 @@
       "task_name": "long_term_forecast",
       "seq_len": 8,
       "label_len": 0,
-      "pred_len": 4,
-      "d_model": 512,
-      "n_heads": 8,
+      "pred_len": 3,
+      "d_model": 256,
+      "n_heads": 4,
       "e_layers": 2,
       "d_layers": 1,
-      "d_ff": 2048,
-      "top_k": 5,
-      "num_kernels": 6,
-      "moving_avg": 25,
+      "d_ff": 1024,
+      "top_k": 2,
+      "num_kernels": 4,
+      "moving_avg": 5,
       "factor": 1,
       "dropout": 0.1,
+      "patch_len": 4,
+      "stride": 2,
       "activation": "gelu",
       "output_attention": false,
       "channel_independence": 0,
@@ -83,19 +85,45 @@
   "model_overrides": {
     "defaults": {
       "model_config": {
-        "max_epochs": 100
+        "max_epochs": 100,
+        "patience": 20
+      }
+    },
+    "TimesNet": {
+      "model_config": {
+        "d_model": 256,
+        "e_layers": 2,
+        "d_ff": 1024,
+        "top_k": 2,
+        "num_kernels": 4
+      }
+    },
+    "TimeMixer": {
+      "model_config": {
+        "d_model": 128,
+        "e_layers": 2,
+        "d_ff": 512,
+        "moving_avg": 8,
+        "channel_independence": 0
+      }
+    },
+    "iTransformer": {
+      "model_config": {
+        "d_model": 256,
+        "n_heads": 4,
+        "e_layers": 2,
+        "d_ff": 1024,
+        "factor": 1
       }
     },
     "PatchTST": {
       "model_config": {
-        "d_model": 256
-      }
-    },
-    "TimeMixer": {
-      "dataset_config": {
-        "annotated_data_files": {
-          "annotated_medications": "data/processed/medication_orders_annotated.csv"
-        }
+        "d_model": 256,
+        "n_heads": 4,
+        "e_layers": 2,
+        "d_ff": 1024,
+        "patch_len": 4,
+        "stride": 2
       }
     }
   },
@@ -104,7 +132,7 @@
       "model_config": {
         "learning_rate": [
           0.0001,
-          0.0005
+          0.0003
         ],
         "batch_size": [
           16,
@@ -114,25 +142,49 @@
     },
     "TimesNet": {
       "model_config": {
-        "d_model": [
-          256,
-          512
+        "top_k": [
+          1,
+          2
+        ],
+        "num_kernels": [
+          4,
+          6
         ]
       }
     },
     "TimeMixer": {
       "model_config": {
-        "down_sampling_window": [
+        "moving_avg": [
+          4,
+          8
+        ],
+        "channel_independence": [
+          0,
+          1
+        ]
+      }
+    },
+    "iTransformer": {
+      "model_config": {
+        "n_heads": [
+          4,
+          8
+        ],
+        "factor": [
           1,
-          2
+          3
         ]
       }
     },
     "PatchTST": {
       "model_config": {
-        "d_model": [
-          128,
-          256
+        "patch_len": [
+          4,
+          8
+        ],
+        "stride": [
+          2,
+          4
         ]
       }
     }

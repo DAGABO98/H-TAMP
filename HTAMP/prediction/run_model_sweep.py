@@ -413,6 +413,35 @@ def _validate_selection_metric(selection_metric: str) -> str:
     return normalized_metric
 
 
+def _validate_training_config_for_model(training_config: RequestTrainingConfig) -> None:
+    model_config = training_config.model_config
+    model_name = model_config.model_name
+
+    if model_name in {"iTransformer", "PatchTST"} and model_config.d_model % model_config.n_heads != 0:
+        raise ValueError(
+            f"Invalid {model_name} configuration: d_model ({model_config.d_model}) must be "
+            f"divisible by n_heads ({model_config.n_heads})."
+        )
+
+    if model_name != "PatchTST":
+        return
+
+    if model_config.patch_len <= 0:
+        raise ValueError("Invalid PatchTST configuration: patch_len must be positive.")
+    if model_config.stride <= 0:
+        raise ValueError("Invalid PatchTST configuration: stride must be positive.")
+    if model_config.patch_len > model_config.seq_len:
+        raise ValueError(
+            f"Invalid PatchTST configuration: patch_len ({model_config.patch_len}) must be "
+            f"less than or equal to seq_len ({model_config.seq_len})."
+        )
+    if model_config.stride > model_config.patch_len:
+        raise ValueError(
+            f"Invalid PatchTST configuration: stride ({model_config.stride}) should be "
+            f"less than or equal to patch_len ({model_config.patch_len})."
+        )
+
+
 def _build_effective_training_config(
     sweep_config: RequestModelSweepConfig,
     model_name: str,
@@ -553,6 +582,7 @@ def _build_model_trials(
         )
         training_config.model_config.model_name = model_name
         training_config.model_config.run_name = run_name
+        _validate_training_config_for_model(training_config=training_config)
 
         trials.append(
             SweepTrial(

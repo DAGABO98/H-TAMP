@@ -58,24 +58,29 @@ class Model(nn.Module):
     def __init__(
         self,
         configs: Any,
-        patch_len: int = 16,
-        stride: int = 8,
     ) -> None:
-        """
-        patch_len: patch length for patch embedding
-        stride: stride for patch embedding
-        """
         super().__init__()
         self.task_name: str = configs.task_name
         self.seq_len: int = configs.seq_len
         self.pred_len: int = configs.pred_len
-        padding = stride
+        self.patch_len: int = int(configs.patch_len)
+        self.stride: int = int(configs.stride)
+        if self.patch_len <= 0:
+            raise ValueError("PatchTST patch_len must be positive.")
+        if self.stride <= 0:
+            raise ValueError("PatchTST stride must be positive.")
+        if self.patch_len > self.seq_len:
+            raise ValueError(
+                f"PatchTST patch_len ({self.patch_len}) must be less than or equal to "
+                f"seq_len ({self.seq_len})."
+            )
+        padding = self.stride
 
         # patching and embedding
         self.patch_embedding = PatchEmbedding(
             configs.d_model,
-            patch_len,
-            stride,
+            self.patch_len,
+            self.stride,
             padding,
             configs.dropout,
         )
@@ -109,7 +114,8 @@ class Model(nn.Module):
         )
 
         # Prediction head
-        self.head_nf: int = configs.d_model * int((configs.seq_len - patch_len) / stride + 2)
+        patch_count = ((self.seq_len + padding - self.patch_len) // self.stride) + 1
+        self.head_nf: int = configs.d_model * patch_count
 
         if self.task_name in {"long_term_forecast", "short_term_forecast"}:
             self.head: nn.Module = FlattenHead(

@@ -47,6 +47,8 @@
     "moving_avg": 25,
     "factor": 1,
     "dropout": 0.1,
+    "patch_len": 4,
+    "stride": 2,
     "activation": "gelu",
     "output_attention": false,
     "channel_independence": 0,

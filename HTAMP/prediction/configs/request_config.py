@@ -177,6 +177,8 @@ class TimeseriesModelConfig:
     moving_avg: int = 25
     factor: int = 1
     dropout: float = 0.1
+    patch_len: int = 4
+    stride: int = 2
     activation: str = "gelu"
     output_attention: bool = False
     channel_independence: int = 0
