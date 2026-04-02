@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import os
 import traceback
 from pathlib import Path
+from typing import Any
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
@@ -21,6 +23,35 @@ from HTAMP.prediction.configs.request_config import (
     TimeseriesModelConfig,
 )
 from HTAMP.prediction.module.request_module import RequestsModule
+
+METRICS_SUMMARY_FILENAME = "metrics_summary.json"
+
+
+def _serialize_metric_value(value: Any) -> Any:
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _serialize_metric_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_serialize_metric_value(item) for item in value]
+    return value
+
+
+def _result_dict(results: list[dict[str, Any]]) -> dict[str, Any]:
+    if not results:
+        return {}
+    return {
+        str(key): _serialize_metric_value(value)
+        for key, value in results[0].items()
+    }
 
 class RequestsPredictor:
     def create_data_module_and_time_series(
@@ -135,7 +166,46 @@ class RequestsPredictor:
 
         return "auto"
 
-    def compile_and_train(self, training_config: RequestTrainingConfig) -> None:
+    def _run_dir(self, log_dir: str, run_name: str) -> Path:
+        return Path(log_dir) / run_name
+
+    def _metrics_summary_path(self, log_dir: str, run_name: str) -> Path:
+        return self._run_dir(log_dir=log_dir, run_name=run_name) / METRICS_SUMMARY_FILENAME
+
+    def _write_metrics_summary(
+        self,
+        training_config: RequestTrainingConfig,
+        log_dir: str,
+        checkpoint_callback: ModelCheckpoint,
+        validation_metrics: dict[str, Any],
+        test_metrics: dict[str, Any],
+    ) -> Path:
+        run_name = training_config.model_config.run_name
+        summary_path = self._metrics_summary_path(log_dir=log_dir, run_name=run_name)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+
+        best_model_score = checkpoint_callback.best_model_score
+        metrics_summary = {
+            "run_name": run_name,
+            "model_name": training_config.model_config.model_name,
+            "metrics_summary_path": str(summary_path),
+            "best_checkpoint_path": checkpoint_callback.best_model_path,
+            "best_checkpoint_score": (
+                _serialize_metric_value(best_model_score)
+                if best_model_score is not None
+                else None
+            ),
+            "validation_metrics": _serialize_metric_value(validation_metrics),
+            "test_metrics": _serialize_metric_value(test_metrics),
+            "training_config": training_config.to_dict(),
+        }
+
+        with summary_path.open("w", encoding="utf-8") as summary_file:
+            json.dump(metrics_summary, summary_file, indent=2)
+
+        return summary_path
+
+    def compile_and_train(self, training_config: RequestTrainingConfig) -> dict[str, Any]:
         dataset_config = training_config.dataset_config
         model_config = training_config.model_config
 
@@ -154,6 +224,9 @@ class RequestsPredictor:
         forecaster = self.create_model(model_config=model_config, time_series=time_series)
         callbacks = self.create_callbacks(model_config=model_config, save_dir=log_dir)
         strategy = self._resolve_strategy(model_config=model_config)
+        checkpoint_callback = next(
+            callback for callback in callbacks if isinstance(callback, ModelCheckpoint)
+        )
 
         trainer = Trainer(
             accelerator=model_config.accelerator,
@@ -165,7 +238,22 @@ class RequestsPredictor:
         )
 
         trainer.fit(forecaster, datamodule=data_module)
-        trainer.test(datamodule=data_module, ckpt_path="best")
+        validation_results = trainer.validate(datamodule=data_module, ckpt_path="best", verbose=False)
+        test_results = trainer.test(datamodule=data_module, ckpt_path="best", verbose=False)
+
+        metrics_summary_path = self._write_metrics_summary(
+            training_config=training_config,
+            log_dir=log_dir,
+            checkpoint_callback=checkpoint_callback,
+            validation_metrics=_result_dict(validation_results),
+            test_metrics=_result_dict(test_results),
+        )
+        print(f"Metrics summary saved to {metrics_summary_path}")
+        return {
+            "metrics_summary_path": str(metrics_summary_path),
+            "validation_metrics": _result_dict(validation_results),
+            "test_metrics": _result_dict(test_results),
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -182,7 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-if __name__ == "__main__":
+def main() -> int:
     p_start = datetime.datetime.now()
     try:
         parser = build_parser()
@@ -190,8 +278,15 @@ if __name__ == "__main__":
         training_config = RequestTrainingConfig.from_json_file(parsed_args.config_path)
         request_predictor = RequestsPredictor()
         request_predictor.compile_and_train(training_config=training_config)
+        return 0
     except Exception as error_main_context:
         print("Fail End Process: ", error_main_context)
         traceback.print_exc()
-    p_stop = datetime.datetime.now()
-    print("Execution time: " + str(p_stop - p_start))
+        return 1
+    finally:
+        p_stop = datetime.datetime.now()
+        print("Execution time: " + str(p_stop - p_start))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

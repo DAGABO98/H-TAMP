@@ -323,6 +323,8 @@ class RequestModelSweepConfig:
     predictor_config: RequestTrainingConfig
     models: tuple[str, ...] = field(default_factory=lambda: SUPPORTED_REQUEST_MODELS)
     summary_path: str = "data/prediction/request_model_sweep_summary.csv"
+    comparison_plot_path: Optional[str] = None
+    selection_metric: str = "val_loss"
     fail_fast: bool = False
     model_overrides: dict[str, dict[str, dict[str, object]]] = field(default_factory=dict)
     search_space: dict[str, dict[str, object]] = field(default_factory=dict)
@@ -369,6 +371,8 @@ class RequestModelSweepConfig:
             predictor_config=RequestTrainingConfig.from_dict(config_payload["predictor_config"]),
             models=config_payload.get("models", SUPPORTED_REQUEST_MODELS),
             summary_path=str(config_payload.get("summary_path", "data/prediction/request_model_sweep_summary.csv")),
+            comparison_plot_path=config_payload.get("comparison_plot_path"),
+            selection_metric=str(config_payload.get("selection_metric", "val_loss")),
             fail_fast=bool(config_payload.get("fail_fast", False)),
             model_overrides=dict(config_payload.get("model_overrides", {})),
             search_space=dict(config_payload.get("search_space", {})),

@@ -5,6 +5,7 @@ import copy
 import csv
 import datetime
 import json
+import math
 import os
 import subprocess
 import sys
@@ -28,6 +29,30 @@ AVAILABLE_MODELS = SUPPORTED_REQUEST_MODELS
 DEFAULT_PREDICTOR_RUN_NAME = "TimesNet_medical_request_intervals"
 MANAGED_MODEL_FIELDS = {"model_name", "run_name"}
 MULTI_DEVICE_STRATEGY_PREFIXES = ("ddp", "fsdp", "deepspeed")
+DEFAULT_SELECTION_METRIC = "val_loss"
+METRICS_SUMMARY_FILENAME = "metrics_summary.json"
+SUMMARY_METRIC_FIELDS = [
+    "val_loss",
+    "val_delta_loss",
+    "val_availability_loss",
+    "val_delta_mae",
+    "val_delta_mse",
+    "val_delta_rmse",
+    "val_availability_accuracy",
+    "test_loss",
+    "test_delta_loss",
+    "test_availability_loss",
+    "test_delta_mae",
+    "test_delta_mse",
+    "test_delta_rmse",
+    "test_availability_accuracy",
+]
+PREFERRED_TEST_PLOT_METRICS = [
+    "test_delta_mae",
+    "test_delta_rmse",
+    "test_availability_accuracy",
+    "test_loss",
+]
 CONFIG_SECTION_FIELDS = {
     "dataset_config": {field.name for field in fields(MedicalRequestDatasetConfig)},
     "model_config": {field.name for field in fields(TimeseriesModelConfig)},
@@ -91,6 +116,23 @@ def _resolve_summary_path(summary_path: str) -> Path:
     return _resolve_repo_relative_path(path_str=summary_path)
 
 
+def _resolve_comparison_plot_path(
+    comparison_plot_path: str | None,
+    summary_path: Path,
+) -> Path:
+    if comparison_plot_path:
+        return _resolve_repo_relative_path(path_str=comparison_plot_path)
+    return summary_path.with_name(f"{summary_path.stem}_test_metrics.png")
+
+
+def _log_dir() -> Path:
+    return Path(os.getenv("STF_LOG_DIR", "./data/STF_LOG_DIR"))
+
+
+def _metrics_summary_path(run_name: str) -> Path:
+    return _log_dir() / run_name / METRICS_SUMMARY_FILENAME
+
+
 def _derive_model_run_name(base_run_name: str, model_name: str) -> str:
     if base_run_name == DEFAULT_PREDICTOR_RUN_NAME:
         return f"{model_name}_medical_request_intervals"
@@ -130,6 +172,56 @@ def _set_nested_value(payload: dict[str, Any], path: Sequence[str], value: Any) 
     current_level[path[-1]] = copy.deepcopy(value)
 
 
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value in ("", None):
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(numeric_value):
+        return None
+    return numeric_value
+
+
+def _metric_higher_is_better(metric_name: str) -> bool:
+    metric_name_lower = metric_name.lower()
+    return any(token in metric_name_lower for token in ("accuracy", "auc", "f1", "precision", "recall"))
+
+
+def _read_metrics_summary(run_name: str) -> dict[str, Any]:
+    metrics_path = _metrics_summary_path(run_name=run_name)
+    if not metrics_path.exists():
+        return {}
+
+    with metrics_path.open("r", encoding="utf-8") as metrics_file:
+        payload = json.load(metrics_file)
+
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _extract_summary_metrics(metrics_summary: Mapping[str, Any]) -> dict[str, Any]:
+    extracted_metrics = {
+        "metrics_summary_path": str(metrics_summary.get("metrics_summary_path", "")),
+        "best_checkpoint_path": str(metrics_summary.get("best_checkpoint_path", "")),
+        "best_checkpoint_score": metrics_summary.get("best_checkpoint_score", ""),
+    }
+
+    validation_metrics = metrics_summary.get("validation_metrics", {})
+    if isinstance(validation_metrics, Mapping):
+        for metric_name, metric_value in validation_metrics.items():
+            extracted_metrics[str(metric_name)] = metric_value
+
+    test_metrics = metrics_summary.get("test_metrics", {})
+    if isinstance(test_metrics, Mapping):
+        for metric_name, metric_value in test_metrics.items():
+            extracted_metrics[str(metric_name)] = metric_value
+
+    return extracted_metrics
+
+
 def _write_summary(summary_path: Path, summary_rows: list[dict[str, object]]) -> None:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -144,8 +236,15 @@ def _write_summary(summary_path: Path, summary_rows: list[dict[str, object]]) ->
         "start_time",
         "end_time",
         "duration_seconds",
+        "selection_metric",
+        "selection_metric_value",
+        "selection_rank",
+        "best_checkpoint_path",
+        "best_checkpoint_score",
+        "metrics_summary_path",
         "search_overrides",
         "applied_overrides",
+        *SUMMARY_METRIC_FIELDS,
     ]
     with summary_path.open("w", newline="", encoding="utf-8") as summary_file:
         writer = csv.DictWriter(summary_file, fieldnames=fieldnames)
@@ -305,6 +404,13 @@ def _validate_scoped_mapping_names(
             f"Invalid {mapping_name} scope(s): {invalid_scopes}. "
             f"Expected 'defaults' or one of {models}."
         )
+
+
+def _validate_selection_metric(selection_metric: str) -> str:
+    normalized_metric = str(selection_metric).strip()
+    if not normalized_metric:
+        raise ValueError("selection_metric must not be empty.")
+    return normalized_metric
 
 
 def _build_effective_training_config(
@@ -584,6 +690,8 @@ def _build_process_env(gpu_id: int | None) -> dict[str, str]:
 
 
 def _launch_trial(trial: SweepTrial, gpu_id: int | None) -> RunningTrial:
+    metrics_path = _metrics_summary_path(run_name=trial.run_name)
+    metrics_path.unlink(missing_ok=True)
     temp_config_path = _write_temp_training_config(
         training_config=trial.training_config,
         run_name=trial.run_name,
@@ -635,6 +743,8 @@ def _finalize_running_trial(running_trial: RunningTrial) -> dict[str, object]:
     end_time = datetime.datetime.now()
     running_trial.temp_config_path.unlink(missing_ok=True)
     status = "success" if returncode == 0 else "failed"
+    metrics_summary = _read_metrics_summary(run_name=running_trial.trial.run_name)
+    extracted_metrics = _extract_summary_metrics(metrics_summary=metrics_summary)
 
     print(
         f"Finished trial {running_trial.trial.trial_index}/{running_trial.trial.total_model_trials} "
@@ -654,8 +764,15 @@ def _finalize_running_trial(running_trial: RunningTrial) -> dict[str, object]:
         "start_time": running_trial.start_time.isoformat(timespec="seconds"),
         "end_time": end_time.isoformat(timespec="seconds"),
         "duration_seconds": round(duration_seconds, 2),
+        "selection_metric": "",
+        "selection_metric_value": "",
+        "selection_rank": "",
         "search_overrides": json.dumps(running_trial.trial.search_overrides, sort_keys=True),
         "applied_overrides": json.dumps(running_trial.trial.applied_overrides, sort_keys=True),
+        **{metric_name: extracted_metrics.get(metric_name, "") for metric_name in SUMMARY_METRIC_FIELDS},
+        "best_checkpoint_path": extracted_metrics.get("best_checkpoint_path", ""),
+        "best_checkpoint_score": extracted_metrics.get("best_checkpoint_score", ""),
+        "metrics_summary_path": extracted_metrics.get("metrics_summary_path", ""),
     }
 
 
@@ -677,8 +794,15 @@ def _build_non_run_trial_result(
         "start_time": "",
         "end_time": "",
         "duration_seconds": "",
+        "selection_metric": "",
+        "selection_metric_value": "",
+        "selection_rank": "",
+        "best_checkpoint_path": "",
+        "best_checkpoint_score": "",
+        "metrics_summary_path": "",
         "search_overrides": json.dumps(trial.search_overrides, sort_keys=True),
         "applied_overrides": json.dumps(trial.applied_overrides, sort_keys=True),
+        **{metric_name: "" for metric_name in SUMMARY_METRIC_FIELDS},
     }
 
 
@@ -843,11 +967,143 @@ def _run_sweep_trials(
     return summary_rows, 1 if failed_rows else 0
 
 
+def _apply_selection_ranking(
+    summary_rows: list[dict[str, object]],
+    selection_metric: str,
+) -> None:
+    ranked_rows: list[tuple[float, dict[str, object]]] = []
+    for row in summary_rows:
+        row["selection_metric"] = selection_metric
+        metric_value = _coerce_float(row.get(selection_metric))
+        row["selection_metric_value"] = metric_value if metric_value is not None else ""
+        row["selection_rank"] = ""
+        if row.get("status") == "success" and metric_value is not None:
+            ranked_rows.append((metric_value, row))
+
+    ranked_rows.sort(
+        key=lambda item: item[0],
+        reverse=_metric_higher_is_better(metric_name=selection_metric),
+    )
+    for rank, (_, row) in enumerate(ranked_rows, start=1):
+        row["selection_rank"] = rank
+
+
+def _best_successful_rows_by_model(
+    summary_rows: Sequence[dict[str, object]],
+    selection_metric: str,
+    model_order: Sequence[str],
+) -> list[dict[str, object]]:
+    best_rows_by_model: dict[str, dict[str, object]] = {}
+    higher_is_better = _metric_higher_is_better(metric_name=selection_metric)
+
+    for row in summary_rows:
+        if row.get("status") != "success":
+            continue
+        metric_value = _coerce_float(row.get(selection_metric))
+        if metric_value is None:
+            continue
+
+        model_name = str(row["model_name"])
+        current_best = best_rows_by_model.get(model_name)
+        if current_best is None:
+            best_rows_by_model[model_name] = row
+            continue
+
+        current_value = _coerce_float(current_best.get(selection_metric))
+        if current_value is None:
+            best_rows_by_model[model_name] = row
+            continue
+
+        if higher_is_better:
+            if metric_value > current_value:
+                best_rows_by_model[model_name] = row
+        elif metric_value < current_value:
+            best_rows_by_model[model_name] = row
+
+    ordered_rows = [best_rows_by_model[model_name] for model_name in model_order if model_name in best_rows_by_model]
+    for model_name, row in sorted(best_rows_by_model.items()):
+        if model_name not in model_order:
+            ordered_rows.append(row)
+    return ordered_rows
+
+
+def _plot_test_metric_comparison(
+    summary_rows: Sequence[dict[str, object]],
+    selection_metric: str,
+    model_order: Sequence[str],
+    plot_path: Path,
+) -> bool:
+    best_rows = _best_successful_rows_by_model(
+        summary_rows=summary_rows,
+        selection_metric=selection_metric,
+        model_order=model_order,
+    )
+    if not best_rows:
+        return False
+
+    metric_names = [
+        metric_name
+        for metric_name in PREFERRED_TEST_PLOT_METRICS
+        if all(_coerce_float(row.get(metric_name)) is not None for row in best_rows)
+    ]
+    if not metric_names:
+        return False
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("matplotlib is not available, so the comparison plot was skipped.")
+        return False
+
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(
+        len(metric_names),
+        1,
+        figsize=(max(8, len(best_rows) * 1.8), max(4, len(metric_names) * 3.6)),
+    )
+    if len(metric_names) == 1:
+        axes = [axes]
+
+    labels = [
+        f"{row['model_name']}\ntrial {int(row['trial_index']):03d}"
+        for row in best_rows
+    ]
+    positions = np.arange(len(best_rows))
+
+    for axis, metric_name in zip(axes, metric_names):
+        values = [float(row[metric_name]) for row in best_rows]
+        axis.bar(positions, values)
+        axis.set_xticks(positions, labels, rotation=0)
+        axis.set_ylabel(metric_name)
+        direction = "higher is better" if _metric_higher_is_better(metric_name=metric_name) else "lower is better"
+        axis.set_title(f"{metric_name} ({direction})")
+        for index, value in enumerate(values):
+            axis.annotate(
+                f"{value:.4f}",
+                xy=(positions[index], value),
+                xytext=(0, 6),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+
+    fig.suptitle(f"Best test metrics by model, selected via {selection_metric}", fontsize=12)
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     sweep_config = RequestModelSweepConfig.from_json_file(args.config_path)
     sweep_config.models = _validate_models(models=sweep_config.models)
+    sweep_config.selection_metric = _validate_selection_metric(
+        selection_metric=sweep_config.selection_metric
+    )
     _validate_scoped_mapping_names(
         scoped_mapping=sweep_config.model_overrides,
         models=sweep_config.models,
@@ -860,6 +1116,10 @@ def main() -> int:
     )
 
     summary_path = _resolve_summary_path(summary_path=sweep_config.summary_path)
+    comparison_plot_path = _resolve_comparison_plot_path(
+        comparison_plot_path=sweep_config.comparison_plot_path,
+        summary_path=summary_path,
+    )
     trials = _build_sweep_trials(sweep_config=sweep_config)
     total_trials = len(trials)
     parallelism = _resolve_parallelism(sweep_config=sweep_config)
@@ -876,8 +1136,34 @@ def main() -> int:
         trials=trials,
         summary_path=summary_path,
     )
+    _apply_selection_ranking(
+        summary_rows=summary_rows,
+        selection_metric=sweep_config.selection_metric,
+    )
+    _write_summary(summary_path=summary_path, summary_rows=summary_rows)
+
+    plotted = _plot_test_metric_comparison(
+        summary_rows=summary_rows,
+        selection_metric=sweep_config.selection_metric,
+        model_order=sweep_config.models,
+        plot_path=comparison_plot_path,
+    )
 
     print(f"Model sweep summary saved to {summary_path}")
+    if plotted:
+        print(f"Test-metric comparison plot saved to {comparison_plot_path}")
+
+    top_ranked_rows = [
+        row for row in summary_rows
+        if row.get("selection_rank") == 1
+    ]
+    if top_ranked_rows:
+        top_row = top_ranked_rows[0]
+        print(
+            f"Top trial by {sweep_config.selection_metric}: "
+            f"{top_row['run_name']} ({top_row['selection_metric_value']})"
+        )
+
     failed_rows = [row for row in summary_rows if row["status"] == "failed"]
     if failed_rows:
         print(f"{len(failed_rows)} trial(s) failed.")

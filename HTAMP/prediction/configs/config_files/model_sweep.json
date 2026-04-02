@@ -77,6 +77,8 @@
     "PatchTST"
   ],
   "summary_path": "data/prediction/request_model_sweep_summary.csv",
+  "comparison_plot_path": "data/prediction/request_model_sweep_test_metrics.png",
+  "selection_metric": "val_loss",
   "fail_fast": false,
   "model_overrides": {
     "defaults": {
