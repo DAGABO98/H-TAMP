@@ -13,9 +13,8 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.planning.request_handler import GlobalRequestHandler
-from HTAMP.prediction.configs.request_config import MedicalRequestDatasetConfig
+from HTAMP.prediction.configs.request_config import MedicalRequestDatasetConfig, RequestTrainingConfig
 from HTAMP.prediction.data_provider.data_module import DataModule
 
 TASK_SPECS: dict[str, str] = {
@@ -1239,45 +1238,13 @@ class RequestsDataset(Dataset):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="RequestsDataset",
-        description="Create a requests dataset for training and evaluation of forecasting models.",
-    )
-    parser.add_argument("--use_saved_request_data", action="store_true", default=False)
-    parser.add_argument("--preprocess_data", action="store_true", default=False)
-    parser.add_argument("--save_data", action="store_true", default=False)
-
-    parser.add_argument("--seq_len", type=int, default=5)
-    parser.add_argument("--label_len", type=int, default=0)
-    parser.add_argument("--pred_len", type=int, default=3)
-
-    parser.add_argument(
-        "--medications_orders_file",
-        type=str,
-        default="data/processed/medication_orders_annotated.csv",
+        description="Create a requests dataset for training and evaluation from a JSON config file.",
     )
     parser.add_argument(
-        "--blood_pressure_orders_file",
+        "--config_path",
         type=str,
-        default="data/processed/blood_pressure_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--heart_rate_orders_file",
-        type=str,
-        default="data/processed/heart_rate_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--respiratory_rate_orders_file",
-        type=str,
-        default="data/processed/respiratory_rate_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--temperature_orders_file",
-        type=str,
-        default="data/processed/temperature_orders_annotated.csv",
-    )
-    parser.add_argument(
-        "--oxygen_saturation_orders_file",
-        type=str,
-        default="data/processed/oxygen_saturation_orders_annotated.csv",
+        required=True,
+        help="Path to a JSON file containing 'dataset_config' and 'model_config'.",
     )
     return parser
     
@@ -1288,20 +1255,9 @@ if __name__ == '__main__':
     try:
         parser = build_parser()
         args = parser.parse_args()
-        annotated_data_files = AnnotatedDataFiles(
-            annotated_visits=None,
-            annotated_admissions_discharges=None,
-            annotated_medications=args.medications_orders_file,
-            annotated_blood_pressure=args.blood_pressure_orders_file,
-            annotated_heart_rate=args.heart_rate_orders_file,
-            annotated_respiratory_rate=args.respiratory_rate_orders_file,
-            annotated_temperature=args.temperature_orders_file,
-            annotated_oxygen_saturation=args.oxygen_saturation_orders_file,
-        )
-        dataset_config = MedicalRequestDatasetConfig(annotated_data_files=annotated_data_files,
-                                                     use_saved_request_data=args.use_saved_request_data,
-                                                     preprocess_data=args.preprocess_data,
-                                                     save_data=args.save_data)
+        training_config = RequestTrainingConfig.from_json_file(args.config_path)
+        dataset_config = training_config.dataset_config
+        model_config = training_config.model_config
         
         request_data_manager = RequestsDataManager(dataset_config=dataset_config)
 
@@ -1316,9 +1272,9 @@ if __name__ == '__main__':
                                         val_segments_df=val_segments_df,
                                         test_segments_df=test_segments_df,
                                         metadata=request_data_manager.metadata,
-                                        sequence_length=args.seq_len,
-                                        label_length=args.label_len,
-                                        prediction_length=args.pred_len)
+                                        sequence_length=model_config.seq_len,
+                                        label_length=model_config.label_len,
+                                        prediction_length=model_config.pred_len)
         
 
         data_module = DataModule(
@@ -1326,12 +1282,12 @@ if __name__ == '__main__':
             dataset_kwargs={
                 "request_time_series": time_series,
                 "split": "test",
-                "sequence_length": args.seq_len,
-                "label_length": args.label_len,
-                "prediction_length": args.pred_len,
+                "sequence_length": model_config.seq_len,
+                "label_length": model_config.label_len,
+                "prediction_length": model_config.pred_len,
             },
-            batch_size=32,
-            workers=4,
+            batch_size=model_config.batch_size,
+            workers=model_config.num_workers,
             collate_fun=None,
         )
 
