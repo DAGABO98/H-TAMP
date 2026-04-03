@@ -101,7 +101,7 @@ SEGMENT_COLUMNS = ["patient_id", "start_idx", "end_idx", "num_rows"]
 SPLITS = ("train", "val", "test")
 TASK_NAMES = tuple(TASK_SPECS.keys())
 TASK_TO_INDEX = {task_name: index for index, task_name in enumerate(TASK_NAMES)}
-REQUESTS_TIME_SERIES_CACHE_VERSION = 1
+REQUESTS_TIME_SERIES_CACHE_VERSION = 2
 REQUESTS_TIME_SERIES_CACHE_DIRNAME = "time_series_cache"
 REQUEST_CACHE_FILENAMES = {
     "blood_pressure": "blood_pressure_extended.csv",
@@ -119,6 +119,12 @@ DATASET_CACHE_FILENAMES = (
     "val_segments.csv",
     "test_data.csv",
     "test_segments.csv",
+)
+REQUESTS_TIME_SERIES_IGNORED_CONFIG_FIELDS = (
+    "preprocess_data",
+    "save_data",
+    "use_saved_request_data",
+    "use_saved_time_series",
 )
 
 
@@ -163,12 +169,14 @@ def _requests_time_series_signature(
     sequence_length: int,
     label_length: int,
     prediction_length: int,
+    source_kind: str,
 ) -> dict[str, object]:
     dataset_payload = dataset_config.to_dict()
-    dataset_payload.pop("use_saved_time_series", None)
+    for field_name in REQUESTS_TIME_SERIES_IGNORED_CONFIG_FIELDS:
+        dataset_payload.pop(field_name, None)
 
     source_files: dict[str, object]
-    if not dataset_config.preprocess_data:
+    if source_kind == "dataset_files":
         dataset_dir = Path(dataset_config.dataset_dir)
         source_files = {
             "dataset_dir": str(dataset_dir),
@@ -177,7 +185,7 @@ def _requests_time_series_signature(
                 for filename in DATASET_CACHE_FILENAMES
             },
         }
-    elif dataset_config.use_saved_request_data:
+    elif source_kind == "request_files":
         request_dir = Path(dataset_config.request_dir)
         source_files = {
             "request_dir": str(request_dir),
@@ -186,7 +194,7 @@ def _requests_time_series_signature(
                 for key, filename in REQUEST_CACHE_FILENAMES.items()
             },
         }
-    else:
+    elif source_kind == "annotated_data_files":
         annotated_files = dataset_payload.get("annotated_data_files", {})
         source_files = {
             "annotated_data_files": {
@@ -194,14 +202,43 @@ def _requests_time_series_signature(
                 for field_name, path_value in dict(annotated_files).items()
             }
         }
+    else:
+        raise ValueError(f"Unsupported request time-series source kind '{source_kind}'.")
 
     return {
         "dataset_config": _json_safe_value(dataset_payload),
         "sequence_length": int(sequence_length),
         "label_length": int(label_length),
         "prediction_length": int(prediction_length),
+        "source_kind": source_kind,
         "source_files": source_files,
     }
+
+
+def _request_cache_files_exist(request_dir: Path) -> bool:
+    return all((request_dir / filename).exists() for filename in REQUEST_CACHE_FILENAMES.values())
+
+
+def _dataset_cache_files_exist(dataset_dir: Path) -> bool:
+    return all((dataset_dir / filename).exists() for filename in DATASET_CACHE_FILENAMES)
+
+
+def _resolve_requests_time_series_source_kind(
+    dataset_config: MedicalRequestDatasetConfig,
+) -> str:
+    dataset_dir = Path(dataset_config.dataset_dir)
+    request_dir = Path(dataset_config.request_dir)
+
+    if not dataset_config.preprocess_data:
+        return "dataset_files"
+
+    if dataset_config.save_data and _dataset_cache_files_exist(dataset_dir):
+        return "dataset_files"
+
+    if _request_cache_files_exist(request_dir):
+        return "request_files"
+
+    return "annotated_data_files"
 
 
 def _requests_time_series_cache_path(
@@ -1307,13 +1344,18 @@ class RequestsTimeSeries:
         self,
         dataset_config: MedicalRequestDatasetConfig,
     ) -> dict[str, object]:
+        source_kind = _resolve_requests_time_series_source_kind(
+            dataset_config=dataset_config,
+        )
         return {
             "_version": REQUESTS_TIME_SERIES_CACHE_VERSION,
+            "source_kind": source_kind,
             "signature": _requests_time_series_signature(
                 dataset_config=dataset_config,
                 sequence_length=self.sequence_length,
                 label_length=self.label_length,
                 prediction_length=self.prediction_length,
+                source_kind=source_kind,
             ),
             "time_series": self,
         }
@@ -1359,12 +1401,6 @@ class RequestsTimeSeries:
             label_length=label_length,
             prediction_length=prediction_length,
         )
-        expected_signature = _requests_time_series_signature(
-            dataset_config=dataset_config,
-            sequence_length=sequence_length,
-            label_length=label_length,
-            prediction_length=prediction_length,
-        )
 
         with cache_path.open("rb") as cache_file:
             payload = pickle.load(cache_file)
@@ -1373,6 +1409,16 @@ class RequestsTimeSeries:
             raise ValueError("Request time-series cache is corrupted.")
         if payload.get("_version") != REQUESTS_TIME_SERIES_CACHE_VERSION:
             raise ValueError("Request time-series cache version mismatch.")
+        source_kind = str(payload.get("source_kind", "")).strip()
+        if not source_kind:
+            raise ValueError("Request time-series cache source kind is missing.")
+        expected_signature = _requests_time_series_signature(
+            dataset_config=dataset_config,
+            sequence_length=sequence_length,
+            label_length=label_length,
+            prediction_length=prediction_length,
+            source_kind=source_kind,
+        )
         if payload.get("signature") != expected_signature:
             raise ValueError("Request time-series cache does not match the current configuration.")
 
@@ -1432,7 +1478,6 @@ def build_request_time_series(
     model_config: TimeseriesModelConfig,
 ) -> RequestsTimeSeries:
     if dataset_config.use_saved_time_series:
-        print("Dataset configuration allows using saved time-series cache. Checking for existing cache...")
         cache_path = _requests_time_series_cache_path(
             dataset_config=dataset_config,
             sequence_length=model_config.seq_len,
