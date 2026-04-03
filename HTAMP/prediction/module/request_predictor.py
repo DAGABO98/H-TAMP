@@ -207,13 +207,15 @@ class RequestsPredictor:
         checkpoint_callback = next(
             callback for callback in callbacks if isinstance(callback, ModelCheckpoint)
         )
+        trainer_logger = logger if logger is not None else False
 
         trainer = Trainer(
             accelerator=model_config.accelerator,
             devices=model_config.devices,
             strategy=strategy,
             callbacks=callbacks,
-            logger=logger,
+            logger=trainer_logger,
+            default_root_dir=log_dir,
             max_epochs=model_config.max_epochs,
         )
 

@@ -129,6 +129,10 @@ def _log_dir() -> Path:
     return Path(os.getenv("STF_LOG_DIR", "./data/STF_LOG_DIR"))
 
 
+def _temp_config_dir() -> Path:
+    return _log_dir() / "temp_configs"
+
+
 def _metrics_summary_path(run_name: str) -> Path:
     return _log_dir() / run_name / METRICS_SUMMARY_FILENAME
 
@@ -710,12 +714,14 @@ def _build_sweep_trials(sweep_config: RequestModelSweepConfig) -> list[SweepTria
 
 def _write_temp_training_config(training_config: RequestTrainingConfig, run_name: str) -> Path:
     safe_prefix = "".join(char if char.isalnum() else "_" for char in run_name.lower())
+    temp_config_dir = _temp_config_dir()
+    temp_config_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
         suffix=".json",
         prefix=f"{safe_prefix[:40]}_",
-        dir=_repo_root(),
+        dir=temp_config_dir,
         delete=False,
     ) as config_file:
         json.dump(training_config.to_dict(), config_file, indent=2)
