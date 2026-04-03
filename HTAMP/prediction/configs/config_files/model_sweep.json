@@ -16,8 +16,8 @@
       "start_date": "2024-06-24",
       "end_date": "2025-06-29",
       "patient_id_col": "MRN",
-      "train_ratio": 0.7,
-      "val_ratio": 0.15,
+      "train_ratio": 0.8,
+      "val_ratio": 0.1,
       "test_iso_weeks": [
         "2024W27",
         "2024W36",
@@ -37,7 +37,7 @@
       "task_name": "long_term_forecast",
       "seq_len": 8,
       "label_len": 0,
-      "pred_len": 3,
+      "pred_len": 4,
       "d_model": 256,
       "n_heads": 4,
       "e_layers": 2,
@@ -85,8 +85,8 @@
   "model_overrides": {
     "defaults": {
       "model_config": {
-        "max_epochs": 100,
-        "patience": 20
+        "max_epochs": 200,
+        "patience": 40
       }
     },
     "TimesNet": {
@@ -131,8 +131,9 @@
     "defaults": {
       "model_config": {
         "learning_rate": [
+          0.00001,
           0.0001,
-          0.0003
+          0.001
         ],
         "batch_size": [
           16,
@@ -144,7 +145,8 @@
       "model_config": {
         "top_k": [
           1,
-          2
+          2,
+          3
         ],
         "num_kernels": [
           4,
@@ -155,8 +157,9 @@
     "TimeMixer": {
       "model_config": {
         "moving_avg": [
-          4,
-          8
+          3,
+          5,
+          7
         ],
         "channel_independence": [
           0,
@@ -179,19 +182,21 @@
     "PatchTST": {
       "model_config": {
         "patch_len": [
+          2,
           4,
           8
         ],
         "stride": [
-          2,
-          4
+          1,
+          2
         ]
       }
     }
   },
-  "max_parallel_runs": 2,
+  "max_parallel_runs": 3,
   "gpu_ids": [
     0,
-    1
+    1,
+    2
   ]
 }
