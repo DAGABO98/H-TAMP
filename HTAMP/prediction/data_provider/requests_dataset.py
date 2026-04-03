@@ -323,14 +323,20 @@ class RequestsDataManager:
         self._warned_missing_measurements: set[str] = set()
 
         if dataset_config.preprocess_data:
+            print("Preprocessing request data...")
             self.dataset_dir.mkdir(parents=True, exist_ok=True)
             request_handler = self._build_request_handler()
             split_data = self._preprocess_requests_data(request_handler=request_handler)
             self._unpack_preprocessed_data(split_data=split_data)
+            print("Finished preprocessing request data.")
             if dataset_config.save_data:
+                print("Saving preprocessed request data to dataset directory...")
                 self._save_dataframes()
+                print("Finished saving preprocessed request data.")
         else:
+            print("Loading preprocessed request data from dataset directory...")
             self._load_dataframes()
+            print("Finished loading preprocessed request data.")
 
     @property
     def patient_id_col(self) -> str:
@@ -1568,6 +1574,7 @@ def build_request_time_series(
     model_config: TimeseriesModelConfig,
 ) -> RequestsTimeSeries:
     if dataset_config.use_saved_time_series:
+        print("Checking for cached request time series...")
         cache_path = _requests_time_series_cache_path(
             dataset_config=dataset_config,
             sequence_length=model_config.seq_len,
@@ -1575,6 +1582,7 @@ def build_request_time_series(
             prediction_length=model_config.pred_len,
         )
         if cache_path.exists():
+            print(f"Found cached request time series at {cache_path}. Attempting to load...")
             try:
                 time_series = RequestsTimeSeries.load_cache(
                     dataset_config=dataset_config,
@@ -1586,6 +1594,7 @@ def build_request_time_series(
                     num_input_channels=len(time_series.input_feature_cols),
                     num_output_channels=len(time_series.target_cols),
                 )
+                print("Successfully loaded cached request time series.")
                 return time_series
             except Exception as cache_error:
                 print(
@@ -1593,7 +1602,9 @@ def build_request_time_series(
                     "Rebuilding the cache."
                 )
 
+    print("Building request time series from source data...")
     request_data_manager = RequestsDataManager(dataset_config=dataset_config)
+    print("Loading request data for all splits...")
 
     train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
     val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
