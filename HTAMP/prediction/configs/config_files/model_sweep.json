@@ -12,7 +12,7 @@
         "annotated_oxygen_saturation": "data/processed/oxygen_saturation_orders_annotated.csv"
       },
       "request_dir": "data/requests",
-      "dataset_dir": "data/prediction/request_intervals",
+      "dataset_dir": "data/prediction/requests_dataset",
       "start_date": "2024-06-24",
       "end_date": "2025-06-29",
       "patient_id_col": "MRN",
@@ -41,7 +41,7 @@
     "model_config": {
       "model_name": "TimesNet",
       "run_name": "TimesNet_medical_request_intervals",
-      "wandb": false,
+      "wandb": true,
       "task_name": "long_term_forecast",
       "seq_len": 8,
       "label_len": 0,
@@ -86,8 +86,8 @@
     "iTransformer",
     "PatchTST"
   ],
-  "summary_path": "data/prediction/request_model_sweep_summary.csv",
-  "comparison_plot_path": "data/prediction/request_model_sweep_test_metrics.png",
+  "summary_path": "data/prediction/requests_dataset/model_sweep_summary.csv",
+  "comparison_plot_path": "data/prediction/requests_dataset/model_sweep_test_metrics.png",
   "selection_metric": "val_loss",
   "fail_fast": false,
   "model_overrides": {
