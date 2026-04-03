@@ -1627,7 +1627,7 @@ def build_request_time_series(
         num_output_channels=len(time_series.target_cols),
     )
 
-    if dataset_config.use_saved_time_series:
+    if dataset_config.save_data:
         time_series.save_cache(dataset_config=dataset_config)
 
     return time_series
