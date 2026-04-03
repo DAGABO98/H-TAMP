@@ -148,10 +148,9 @@ class RequestsPredictor:
             project="medical_request_timeseries",
             config=config_payload,
             dir=log_dir,
-            reinit=True,
         )
         wandb.run.name = model_config.run_name
-        wandb.run.save()
+        wandb.run.save(log_dir)
 
         logger = WandbLogger(experiment=experiment, save_dir=log_dir)
         logger.log_hyperparams(config_payload)
