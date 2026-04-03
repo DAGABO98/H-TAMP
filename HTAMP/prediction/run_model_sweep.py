@@ -544,6 +544,7 @@ def _dataset_group_key(training_config: RequestTrainingConfig) -> str:
     dataset_payload = training_config.dataset_config.to_dict()
     dataset_payload.pop("preprocess_data", None)
     dataset_payload.pop("save_data", None)
+    dataset_payload.pop("use_saved_time_series", None)
     return json.dumps(dataset_payload, sort_keys=True)
 
 
@@ -606,6 +607,16 @@ def _assign_dataset_dependencies(trials: list[SweepTrial]) -> None:
         grouped_trials.setdefault(trial.dataset_group_key, []).append(trial)
 
     for group_trials in grouped_trials.values():
+        if len(group_trials) > 1:
+            for trial in group_trials:
+                if trial.training_config.dataset_config.use_saved_time_series:
+                    continue
+                trial.training_config.dataset_config.use_saved_time_series = True
+                trial.applied_overrides = _deep_merge_dicts(
+                    base=trial.applied_overrides,
+                    updates={"dataset_config": {"use_saved_time_series": True}},
+                )
+
         leader = next(
             (
                 trial

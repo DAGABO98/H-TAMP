@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import pickle
 import re
+import tempfile
 from pathlib import Path
 import traceback
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -14,7 +16,11 @@ import torch
 from torch.utils.data import Dataset
 
 from HTAMP.planning.request_handler import GlobalRequestHandler
-from HTAMP.prediction.configs.request_config import MedicalRequestDatasetConfig, RequestTrainingConfig
+from HTAMP.prediction.configs.request_config import (
+    MedicalRequestDatasetConfig,
+    RequestTrainingConfig,
+    TimeseriesModelConfig,
+)
 from HTAMP.prediction.data_provider.data_module import DataModule
 
 TASK_SPECS: dict[str, str] = {
@@ -95,6 +101,25 @@ SEGMENT_COLUMNS = ["patient_id", "start_idx", "end_idx", "num_rows"]
 SPLITS = ("train", "val", "test")
 TASK_NAMES = tuple(TASK_SPECS.keys())
 TASK_TO_INDEX = {task_name: index for index, task_name in enumerate(TASK_NAMES)}
+REQUESTS_TIME_SERIES_CACHE_VERSION = 1
+REQUESTS_TIME_SERIES_CACHE_DIRNAME = "time_series_cache"
+REQUEST_CACHE_FILENAMES = {
+    "blood_pressure": "blood_pressure_extended.csv",
+    "heart_rate": "heart_rate_extended.csv",
+    "respiratory_rate": "respiratory_rate_extended.csv",
+    "temperature": "temperature_extended.csv",
+    "oxygen_saturation": "oxygen_saturation_extended.csv",
+    "medications": "medications_extended.csv",
+}
+DATASET_CACHE_FILENAMES = (
+    "metadata.json",
+    "train_data.csv",
+    "train_segments.csv",
+    "val_data.csv",
+    "val_segments.csv",
+    "test_data.csv",
+    "test_segments.csv",
+)
 
 
 def _normalize_column_name(column_name: str) -> str:
@@ -103,6 +128,92 @@ def _normalize_column_name(column_name: str) -> str:
 
 def _event_measurement_column(task_name: str, component: str) -> str:
     return f"{task_name}_{component}"
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    return value
+
+
+def _path_signature(path_value: str | Path) -> dict[str, object]:
+    path_str = str(path_value)
+    if not path_str:
+        return {"path": "", "exists": False}
+
+    path = Path(path_str)
+    path_signature: dict[str, object] = {
+        "path": str(path),
+        "exists": path.exists(),
+    }
+    if path.exists():
+        stat_result = path.stat()
+        path_signature["size"] = int(stat_result.st_size)
+        path_signature["mtime_ns"] = int(stat_result.st_mtime_ns)
+    return path_signature
+
+
+def _requests_time_series_signature(
+    dataset_config: MedicalRequestDatasetConfig,
+    sequence_length: int,
+    label_length: int,
+    prediction_length: int,
+) -> dict[str, object]:
+    dataset_payload = dataset_config.to_dict()
+    dataset_payload.pop("use_saved_time_series", None)
+
+    source_files: dict[str, object]
+    if not dataset_config.preprocess_data:
+        dataset_dir = Path(dataset_config.dataset_dir)
+        source_files = {
+            "dataset_dir": str(dataset_dir),
+            "dataset_files": {
+                filename: _path_signature(dataset_dir / filename)
+                for filename in DATASET_CACHE_FILENAMES
+            },
+        }
+    elif dataset_config.use_saved_request_data:
+        request_dir = Path(dataset_config.request_dir)
+        source_files = {
+            "request_dir": str(request_dir),
+            "request_files": {
+                key: _path_signature(request_dir / filename)
+                for key, filename in REQUEST_CACHE_FILENAMES.items()
+            },
+        }
+    else:
+        annotated_files = dataset_payload.get("annotated_data_files", {})
+        source_files = {
+            "annotated_data_files": {
+                str(field_name): _path_signature(path_value)
+                for field_name, path_value in dict(annotated_files).items()
+            }
+        }
+
+    return {
+        "dataset_config": _json_safe_value(dataset_payload),
+        "sequence_length": int(sequence_length),
+        "label_length": int(label_length),
+        "prediction_length": int(prediction_length),
+        "source_files": source_files,
+    }
+
+
+def _requests_time_series_cache_path(
+    dataset_config: MedicalRequestDatasetConfig,
+    sequence_length: int,
+    label_length: int,
+    prediction_length: int,
+) -> Path:
+    cache_dir = Path(dataset_config.dataset_dir) / REQUESTS_TIME_SERIES_CACHE_DIRNAME
+    return cache_dir / (
+        f"requests_timeseries_seq{sequence_length}_label{label_length}_pred{prediction_length}.pkl"
+    )
 
 def _build_cyclical_time_features(timestamp_series: pd.Series) -> pd.DataFrame:
     timestamp_series = pd.to_datetime(timestamp_series, errors="coerce")
@@ -1192,6 +1303,86 @@ class RequestsTimeSeries:
         assert split in SPLITS
         return int(self.samples[split]["x"].shape[0])
 
+    def _cache_payload(
+        self,
+        dataset_config: MedicalRequestDatasetConfig,
+    ) -> dict[str, object]:
+        return {
+            "_version": REQUESTS_TIME_SERIES_CACHE_VERSION,
+            "signature": _requests_time_series_signature(
+                dataset_config=dataset_config,
+                sequence_length=self.sequence_length,
+                label_length=self.label_length,
+                prediction_length=self.prediction_length,
+            ),
+            "time_series": self,
+        }
+
+    def save_cache(self, dataset_config: MedicalRequestDatasetConfig) -> Path:
+        cache_path = _requests_time_series_cache_path(
+            dataset_config=dataset_config,
+            sequence_length=self.sequence_length,
+            label_length=self.label_length,
+            prediction_length=self.prediction_length,
+        )
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            delete=False,
+            dir=cache_path.parent,
+            prefix=f"{cache_path.stem}_",
+            suffix=".tmp",
+        ) as temp_file:
+            pickle.dump(
+                self._cache_payload(dataset_config=dataset_config),
+                temp_file,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+            temp_path = Path(temp_file.name)
+
+        temp_path.replace(cache_path)
+        print(f"Saved request time-series cache to {cache_path}.")
+        return cache_path
+
+    @classmethod
+    def load_cache(
+        cls,
+        dataset_config: MedicalRequestDatasetConfig,
+        sequence_length: int,
+        label_length: int,
+        prediction_length: int,
+    ) -> "RequestsTimeSeries":
+        cache_path = _requests_time_series_cache_path(
+            dataset_config=dataset_config,
+            sequence_length=sequence_length,
+            label_length=label_length,
+            prediction_length=prediction_length,
+        )
+        expected_signature = _requests_time_series_signature(
+            dataset_config=dataset_config,
+            sequence_length=sequence_length,
+            label_length=label_length,
+            prediction_length=prediction_length,
+        )
+
+        with cache_path.open("rb") as cache_file:
+            payload = pickle.load(cache_file)
+
+        if not isinstance(payload, dict):
+            raise ValueError("Request time-series cache is corrupted.")
+        if payload.get("_version") != REQUESTS_TIME_SERIES_CACHE_VERSION:
+            raise ValueError("Request time-series cache version mismatch.")
+        if payload.get("signature") != expected_signature:
+            raise ValueError("Request time-series cache does not match the current configuration.")
+
+        time_series = payload.get("time_series")
+        if not isinstance(time_series, cls):
+            raise ValueError("Request time-series cache payload is corrupted.")
+
+        print(f"Loaded request time-series cache from {cache_path}.")
+        return time_series
+
 
 class RequestsDataset(Dataset):
     def __init__(
@@ -1235,6 +1426,69 @@ class RequestsDataset(Dataset):
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
         return self.series.inverse_transform_target_deltas(data)
 
+
+def build_request_time_series(
+    dataset_config: MedicalRequestDatasetConfig,
+    model_config: TimeseriesModelConfig,
+) -> RequestsTimeSeries:
+    if dataset_config.use_saved_time_series:
+        print("Dataset configuration allows using saved time-series cache. Checking for existing cache...")
+        cache_path = _requests_time_series_cache_path(
+            dataset_config=dataset_config,
+            sequence_length=model_config.seq_len,
+            label_length=model_config.label_len,
+            prediction_length=model_config.pred_len,
+        )
+        if cache_path.exists():
+            print(f"Found existing request time-series cache at {cache_path}. Attempting to load it.")
+            try:
+                time_series = RequestsTimeSeries.load_cache(
+                    dataset_config=dataset_config,
+                    sequence_length=model_config.seq_len,
+                    label_length=model_config.label_len,
+                    prediction_length=model_config.pred_len,
+                )
+                model_config.sync_channel_dimensions(
+                    num_input_channels=len(time_series.input_feature_cols),
+                    num_output_channels=len(time_series.target_cols),
+                )
+                print("Successfully loaded cached request time-series. Reusing it for the dataset.")
+                return time_series
+            except Exception as cache_error:
+                print(
+                    f"Could not reuse cached request time series at {cache_path}: {cache_error}. "
+                    "Rebuilding the cache."
+                )
+
+    print("Building request time-series from raw data...")
+    request_data_manager = RequestsDataManager(dataset_config=dataset_config)
+
+    train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
+    val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
+    test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
+
+    time_series = RequestsTimeSeries(
+        train_data_df=train_data_df,
+        val_data_df=val_data_df,
+        test_data_df=test_data_df,
+        train_segments_df=train_segments_df,
+        val_segments_df=val_segments_df,
+        test_segments_df=test_segments_df,
+        metadata=request_data_manager.metadata,
+        sequence_length=model_config.seq_len,
+        label_length=model_config.label_len,
+        prediction_length=model_config.pred_len,
+    )
+    model_config.sync_channel_dimensions(
+        num_input_channels=len(time_series.input_feature_cols),
+        num_output_channels=len(time_series.target_cols),
+    )
+
+    if dataset_config.save_data:
+        time_series.save_cache(dataset_config=dataset_config)
+
+    return time_series
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="RequestsDataset",
@@ -1259,22 +1513,10 @@ if __name__ == '__main__':
         dataset_config = training_config.dataset_config
         model_config = training_config.model_config
         
-        request_data_manager = RequestsDataManager(dataset_config=dataset_config)
-
-        train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
-        val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
-        test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
-
-        time_series = RequestsTimeSeries(train_data_df=train_data_df,
-                                        val_data_df=val_data_df,
-                                        test_data_df=test_data_df,
-                                        train_segments_df=train_segments_df,
-                                        val_segments_df=val_segments_df,
-                                        test_segments_df=test_segments_df,
-                                        metadata=request_data_manager.metadata,
-                                        sequence_length=model_config.seq_len,
-                                        label_length=model_config.label_len,
-                                        prediction_length=model_config.pred_len)
+        time_series = build_request_time_series(
+            dataset_config=dataset_config,
+            model_config=model_config,
+        )
         
 
         data_module = DataModule(

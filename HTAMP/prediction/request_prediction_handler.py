@@ -11,9 +11,9 @@ import pandas as pd
 import torch
 
 from HTAMP.prediction.data_provider.requests_dataset import (
-    RequestsDataManager,
     RequestsDataset,
     RequestsTimeSeries,
+    build_request_time_series,
 )
 from HTAMP.prediction.configs.request_config import (
     MedicalRequestDatasetConfig,
@@ -82,29 +82,10 @@ class RequestPredictionManager:
         return self.predictions_dir / "requests_metadata.json"
 
     def _build_time_series(self) -> RequestsTimeSeries:
-        request_data_manager = RequestsDataManager(dataset_config=self.dataset_config)
-
-        train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
-        val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
-        test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
-
-        time_series = RequestsTimeSeries(
-            train_data_df=train_data_df,
-            val_data_df=val_data_df,
-            test_data_df=test_data_df,
-            train_segments_df=train_segments_df,
-            val_segments_df=val_segments_df,
-            test_segments_df=test_segments_df,
-            metadata=request_data_manager.metadata,
-            sequence_length=self.model_config.seq_len,
-            label_length=self.model_config.label_len,
-            prediction_length=self.model_config.pred_len,
+        return build_request_time_series(
+            dataset_config=self.dataset_config,
+            model_config=self.model_config,
         )
-        self.model_config.sync_channel_dimensions(
-            num_input_channels=len(time_series.input_feature_cols),
-            num_output_channels=len(time_series.target_cols),
-        )
-        return time_series
 
     def _load_model(self, device: torch.device) -> RequestsModule:
         print("Loading request interval predictor ...")

@@ -120,6 +120,7 @@ class MedicalRequestDatasetConfig:
     val_ratio: float = 0.15
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
     use_saved_request_data: bool = False
+    use_saved_time_series: bool = False
     preprocess_data: bool = False
     save_data: bool = True
 

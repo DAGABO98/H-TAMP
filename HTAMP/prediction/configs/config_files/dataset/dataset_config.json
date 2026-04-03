@@ -26,8 +26,9 @@
       "2025W14"
     ],
     "use_saved_request_data": true,
-    "preprocess_data": true,
-    "save_data": true
+    "use_saved_time_series": true,
+    "preprocess_data": false,
+    "save_data": false
   },
   "model_config": {
     "model_name": "TimesNet",
