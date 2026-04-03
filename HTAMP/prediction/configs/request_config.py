@@ -8,6 +8,14 @@ from typing import Any, Mapping, Optional, Sequence
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 
 SUPPORTED_REQUEST_MODELS = ("TimesNet", "TimeMixer", "iTransformer", "PatchTST")
+SUPPORTED_REQUEST_TASKS = (
+    "medication",
+    "blood_pressure",
+    "heart_rate",
+    "respiratory_rate",
+    "temperature",
+    "oxygen_saturation",
+)
 
 
 def _default_test_iso_weeks() -> tuple[tuple[int, int], ...]:
@@ -108,6 +116,40 @@ def _build_annotated_data_files(raw_value: Any) -> AnnotatedDataFiles:
     return AnnotatedDataFiles(**dict(annotated_data))
 
 
+def _default_included_tasks() -> tuple[str, ...]:
+    return tuple(SUPPORTED_REQUEST_TASKS)
+
+
+def _normalize_included_tasks(
+    raw_tasks: Sequence[str] | str | None,
+) -> tuple[str, ...]:
+    if raw_tasks is None:
+        return _default_included_tasks()
+    if isinstance(raw_tasks, str):
+        raw_tasks = [raw_tasks]
+
+    normalized_tasks: list[str] = []
+    seen_tasks: set[str] = set()
+    for raw_task in raw_tasks:
+        task_name = str(raw_task).strip()
+        if not task_name:
+            continue
+        if task_name not in SUPPORTED_REQUEST_TASKS:
+            raise ValueError(
+                f"Unsupported request task '{task_name}'. "
+                f"Expected one of {SUPPORTED_REQUEST_TASKS}."
+            )
+        if task_name in seen_tasks:
+            continue
+        normalized_tasks.append(task_name)
+        seen_tasks.add(task_name)
+
+    if not normalized_tasks:
+        raise ValueError("included_tasks must contain at least one supported request task.")
+
+    return tuple(normalized_tasks)
+
+
 @dataclass
 class MedicalRequestDatasetConfig:
     annotated_data_files: AnnotatedDataFiles
@@ -116,6 +158,7 @@ class MedicalRequestDatasetConfig:
     start_date: str = "2024-06-24"
     end_date: str = "2025-06-29"
     patient_id_col: str = "MRN"
+    included_tasks: tuple[str, ...] = field(default_factory=_default_included_tasks)
     train_ratio: float = 0.70
     val_ratio: float = 0.15
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
@@ -126,6 +169,7 @@ class MedicalRequestDatasetConfig:
 
     def __post_init__(self) -> None:
         self.annotated_data_files = _build_annotated_data_files(self.annotated_data_files)
+        self.included_tasks = _normalize_included_tasks(raw_tasks=self.included_tasks)
 
         if min(self.train_ratio, self.val_ratio) < 0.0:
             raise ValueError("train_ratio and val_ratio must be non-negative.")

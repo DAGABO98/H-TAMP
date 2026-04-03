@@ -19,6 +19,7 @@ from HTAMP.planning.request_handler import GlobalRequestHandler
 from HTAMP.prediction.configs.request_config import (
     MedicalRequestDatasetConfig,
     RequestTrainingConfig,
+    SUPPORTED_REQUEST_TASKS,
     TimeseriesModelConfig,
 )
 from HTAMP.prediction.data_provider.data_module import DataModule
@@ -99,17 +100,17 @@ TIME_COLUMNS = [
 ]
 SEGMENT_COLUMNS = ["patient_id", "start_idx", "end_idx", "num_rows"]
 SPLITS = ("train", "val", "test")
-TASK_NAMES = tuple(TASK_SPECS.keys())
+TASK_NAMES = tuple(SUPPORTED_REQUEST_TASKS)
 TASK_TO_INDEX = {task_name: index for index, task_name in enumerate(TASK_NAMES)}
-REQUESTS_TIME_SERIES_CACHE_VERSION = 2
+REQUESTS_TIME_SERIES_CACHE_VERSION = 3
 REQUESTS_TIME_SERIES_CACHE_DIRNAME = "time_series_cache"
 REQUEST_CACHE_FILENAMES = {
+    "medication": "medications_extended.csv",
     "blood_pressure": "blood_pressure_extended.csv",
     "heart_rate": "heart_rate_extended.csv",
     "respiratory_rate": "respiratory_rate_extended.csv",
     "temperature": "temperature_extended.csv",
     "oxygen_saturation": "oxygen_saturation_extended.csv",
-    "medications": "medications_extended.csv",
 }
 DATASET_CACHE_FILENAMES = (
     "metadata.json",
@@ -190,8 +191,8 @@ def _requests_time_series_signature(
         source_files = {
             "request_dir": str(request_dir),
             "request_files": {
-                key: _path_signature(request_dir / filename)
-                for key, filename in REQUEST_CACHE_FILENAMES.items()
+                task_name: _path_signature(request_dir / REQUEST_CACHE_FILENAMES[task_name])
+                for task_name in dataset_config.included_tasks
             },
         }
     elif source_kind == "annotated_data_files":
@@ -215,8 +216,14 @@ def _requests_time_series_signature(
     }
 
 
-def _request_cache_files_exist(request_dir: Path) -> bool:
-    return all((request_dir / filename).exists() for filename in REQUEST_CACHE_FILENAMES.values())
+def _request_cache_files_exist(
+    request_dir: Path,
+    task_names: list[str] | tuple[str, ...],
+) -> bool:
+    return all(
+        (request_dir / REQUEST_CACHE_FILENAMES[task_name]).exists()
+        for task_name in task_names
+    )
 
 
 def _dataset_cache_files_exist(dataset_dir: Path) -> bool:
@@ -235,7 +242,7 @@ def _resolve_requests_time_series_source_kind(
     if dataset_config.save_data and _dataset_cache_files_exist(dataset_dir):
         return "dataset_files"
 
-    if _request_cache_files_exist(request_dir):
+    if _request_cache_files_exist(request_dir, dataset_config.included_tasks):
         return "request_files"
 
     return "annotated_data_files"
@@ -331,7 +338,14 @@ class RequestsDataManager:
 
     @property
     def task_names(self) -> list[str]:
-        return list(TASK_NAMES)
+        return list(self.dataset_config.included_tasks)
+
+    @property
+    def task_to_index(self) -> dict[str, int]:
+        return {
+            task_name: index
+            for index, task_name in enumerate(self.task_names)
+        }
 
     @property
     def time_cols(self) -> list[str]:
@@ -339,7 +353,11 @@ class RequestsDataManager:
 
     @property
     def event_measurement_cols(self) -> list[str]:
-        return list(EVENT_MEASUREMENT_COLUMNS)
+        return [
+            feature_name
+            for task_name in self.task_names
+            for feature_name in TASK_EVENT_MEASUREMENT_COLUMNS.get(task_name, [])
+        ]
 
     @property
     def event_cols(self) -> list[str]:
@@ -360,12 +378,14 @@ class RequestsDataManager:
             start_date=self.dataset_config.start_date,
             end_date=self.dataset_config.end_date,
             use_saved_data=self.dataset_config.use_saved_request_data,
+            included_tasks=self.task_names,
         )
 
     def _task_frames(self, request_handler: GlobalRequestHandler) -> dict[str, pd.DataFrame]:
         return {
             task_name: getattr(request_handler, handler_attr)
             for task_name, handler_attr in REQUEST_HANDLER_ATTRS.items()
+            if task_name in self.task_names
         }
 
     def _empty_events_frame(self) -> pd.DataFrame:
@@ -467,7 +487,7 @@ class RequestsDataManager:
 
         event_df = task_df[[self.patient_id_col, TIMESTAMP_COLUMN]].copy()
         event_df["task_name"] = task_name
-        event_df["task_index"] = TASK_TO_INDEX[task_name]
+        event_df["task_index"] = self.task_to_index[task_name]
         event_df = pd.concat(
             [event_df, _build_cyclical_time_features(event_df[TIMESTAMP_COLUMN])],
             axis=1,
@@ -494,7 +514,7 @@ class RequestsDataManager:
                 task_name=task_name,
                 time_col=TASK_SPECS[task_name],
             )
-            for task_name in TASK_NAMES
+            for task_name in self.task_names
         ]
 
         events_df = pd.concat(event_frames, axis=0, ignore_index=True)
@@ -705,8 +725,8 @@ class RequestsDataManager:
             "sequence_axis_semantics": "per_task_history_depth",
             "patient_id_col": self.patient_id_col,
             "timestamp_col": TIMESTAMP_COLUMN,
-            "task_names": list(TASK_NAMES),
-            "task_to_index": TASK_TO_INDEX,
+            "task_names": self.task_names,
+            "task_to_index": self.task_to_index,
             "time_columns": self.time_cols,
             "event_measurement_columns": self.event_measurement_cols,
             "start_date": self.dataset_config.start_date,
@@ -789,6 +809,59 @@ class RequestsDataManager:
 
         return data_df, segments_df
 
+    def _filter_loaded_split_to_selected_tasks(
+        self,
+        data_df: pd.DataFrame,
+        segments_df: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        if data_df.empty or segments_df.empty:
+            return self._empty_events_frame(), self._empty_segments_frame()
+
+        selected_task_names = set(self.task_names)
+        filtered_parts: list[pd.DataFrame] = []
+        filtered_segments: list[dict[str, object]] = []
+        split_offset = 0
+
+        for segment in segments_df.itertuples(index=False):
+            segment_df = data_df.iloc[int(segment.start_idx) : int(segment.end_idx)].copy()
+            if segment_df.empty:
+                continue
+
+            segment_df = segment_df[segment_df["task_name"].isin(selected_task_names)].copy()
+            if segment_df.empty:
+                continue
+
+            segment_df["task_index"] = segment_df["task_name"].map(self.task_to_index).astype(int)
+            segment_df = segment_df.sort_values(
+                [TIMESTAMP_COLUMN, "task_index"]
+            ).reset_index(drop=True)
+
+            start_idx = split_offset
+            end_idx = start_idx + len(segment_df)
+            split_offset = end_idx
+
+            filtered_parts.append(segment_df[self.event_cols])
+            filtered_segments.append(
+                {
+                    "patient_id": str(segment.patient_id),
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "num_rows": len(segment_df),
+                }
+            )
+
+        filtered_data_df = (
+            pd.concat(filtered_parts, ignore_index=True)
+            if filtered_parts
+            else self._empty_events_frame()
+        )
+        filtered_segments_df = (
+            pd.DataFrame(filtered_segments, columns=SEGMENT_COLUMNS)
+            if filtered_segments
+            else self._empty_segments_frame()
+        )
+        return filtered_data_df, filtered_segments_df
+
     def _load_dataframes(self) -> None:
         with self._metadata_path().open("r", encoding="utf-8") as metadata_file:
             self.metadata = json.load(metadata_file)
@@ -797,9 +870,26 @@ class RequestsDataManager:
         if not loaded_time_cols or loaded_time_cols == TIME_MARK_COLUMNS:
             self.metadata["time_columns"] = TIME_COLUMNS.copy()
 
-        self.train_requests_df, self.train_segments_df = self._load_split("train")
-        self.val_requests_df, self.val_segments_df = self._load_split("val")
-        self.test_requests_df, self.test_segments_df = self._load_split("test")
+        self.metadata["task_names"] = self.task_names
+        self.metadata["task_to_index"] = self.task_to_index
+        self.metadata["event_measurement_columns"] = self.event_measurement_cols
+
+        train_data_df, train_segments_df = self._load_split("train")
+        val_data_df, val_segments_df = self._load_split("val")
+        test_data_df, test_segments_df = self._load_split("test")
+
+        self.train_requests_df, self.train_segments_df = self._filter_loaded_split_to_selected_tasks(
+            data_df=train_data_df,
+            segments_df=train_segments_df,
+        )
+        self.val_requests_df, self.val_segments_df = self._filter_loaded_split_to_selected_tasks(
+            data_df=val_data_df,
+            segments_df=val_segments_df,
+        )
+        self.test_requests_df, self.test_segments_df = self._filter_loaded_split_to_selected_tasks(
+            data_df=test_data_df,
+            segments_df=test_segments_df,
+        )
 
     def get_requests_training_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         return self.train_requests_df, self.train_segments_df
@@ -1485,7 +1575,6 @@ def build_request_time_series(
             prediction_length=model_config.pred_len,
         )
         if cache_path.exists():
-            print(f"Found existing request time-series cache at {cache_path}. Attempting to load it.")
             try:
                 time_series = RequestsTimeSeries.load_cache(
                     dataset_config=dataset_config,
@@ -1497,7 +1586,6 @@ def build_request_time_series(
                     num_input_channels=len(time_series.input_feature_cols),
                     num_output_channels=len(time_series.target_cols),
                 )
-                print("Successfully loaded cached request time-series. Reusing it for the dataset.")
                 return time_series
             except Exception as cache_error:
                 print(
@@ -1505,7 +1593,6 @@ def build_request_time_series(
                     "Rebuilding the cache."
                 )
 
-    print("Building request time-series from raw data...")
     request_data_manager = RequestsDataManager(dataset_config=dataset_config)
 
     train_data_df, train_segments_df = request_data_manager.get_requests_training_data()
@@ -1529,7 +1616,7 @@ def build_request_time_series(
         num_output_channels=len(time_series.target_cols),
     )
 
-    if dataset_config.save_data:
+    if dataset_config.use_saved_time_series:
         time_series.save_cache(dataset_config=dataset_config)
 
     return time_series

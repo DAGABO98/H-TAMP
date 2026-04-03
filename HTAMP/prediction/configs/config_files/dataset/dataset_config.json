@@ -15,6 +15,13 @@
     "start_date": "2024-06-24",
     "end_date": "2025-06-29",
     "patient_id_col": "MRN",
+    "included_tasks": [
+      "blood_pressure",
+      "heart_rate",
+      "respiratory_rate",
+      "temperature",
+      "oxygen_saturation"
+    ],
     "train_ratio": 0.8,
     "val_ratio": 0.10,
     "test_iso_weeks": [

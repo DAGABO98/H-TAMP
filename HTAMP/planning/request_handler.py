@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import traceback
+from typing import Sequence
 
 import pandas as pd
 
@@ -10,13 +11,25 @@ from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles, Dai
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskProperties, TaskRequest, TimeSignal
 
+SUPPORTED_REQUEST_TASKS = (
+    "medication",
+    "blood_pressure",
+    "heart_rate",
+    "respiratory_rate",
+    "temperature",
+    "oxygen_saturation",
+)
+
+
 class GlobalRequestHandler:
 
     def __init__(self, annotated_data_files: AnnotatedDataFiles, 
-                 request_dir: str, start_date: str, end_date: str, use_saved_data: bool = False):
+                 request_dir: str, start_date: str, end_date: str, use_saved_data: bool = False,
+                 included_tasks: Sequence[str] | None = None):
         self.annotated_data_files = annotated_data_files
         self.use_saved_data = use_saved_data
         self.request_dir = Path(request_dir)
+        self.included_tasks = tuple(included_tasks) if included_tasks is not None else SUPPORTED_REQUEST_TASKS
         if not self.use_saved_data:
             self._make_dirs()
             preprocessed_dfs = self._load_preprocessed_data()
@@ -27,14 +40,20 @@ class GlobalRequestHandler:
 
     def _make_dirs(self) -> None:
         self.request_dir.mkdir(parents=True, exist_ok=True)
+
+    def _task_enabled(self, task_name: str) -> bool:
+        return task_name in self.included_tasks
+
+    def _empty_task_df(self) -> pd.DataFrame:
+        return pd.DataFrame()
     
     def _load_preprocessed_data(self) -> PreprocessedDataFrames:
-        bp_df = self._load_blood_pressure_data()
-        hr_df = self._load_heart_rate_data()
-        rr_df = self._load_respiratory_rate_data()
-        temp_df = self._load_temperature_data()
-        os_df = self._load_oxygen_saturation_data()
-        med_df = self._load_medications_data()
+        bp_df = self._load_blood_pressure_data() if self._task_enabled("blood_pressure") else self._empty_task_df()
+        hr_df = self._load_heart_rate_data() if self._task_enabled("heart_rate") else self._empty_task_df()
+        rr_df = self._load_respiratory_rate_data() if self._task_enabled("respiratory_rate") else self._empty_task_df()
+        temp_df = self._load_temperature_data() if self._task_enabled("temperature") else self._empty_task_df()
+        os_df = self._load_oxygen_saturation_data() if self._task_enabled("oxygen_saturation") else self._empty_task_df()
+        med_df = self._load_medications_data() if self._task_enabled("medication") else self._empty_task_df()
 
         preprocessed_dfs = PreprocessedDataFrames(
             blood_pressure_df=bp_df,
@@ -75,60 +94,77 @@ class GlobalRequestHandler:
                            preprocessed_dfs: PreprocessedDataFrames, 
                            start_date: str, 
                            end_date: str) -> None:
-
-        self.bp_df = self._prepare_floor_data(original_df=preprocessed_dfs.blood_pressure_df, 
-                                 time_col="Scheduled DTTM",
-                                 room_col="scheduled_room", 
-                                 start_date=start_date, 
-                                 end_date=end_date)
+        if self._task_enabled("blood_pressure"):
+            self.bp_df = self._prepare_floor_data(original_df=preprocessed_dfs.blood_pressure_df, 
+                                     time_col="Scheduled DTTM",
+                                     room_col="scheduled_room", 
+                                     start_date=start_date, 
+                                     end_date=end_date)
+            
+            self.bp_df["Ordered DTTM"] = pd.to_datetime(self.bp_df["Ordered DTTM"])
+            self.bp_df["Administered DTTM"] = pd.to_datetime(self.bp_df["Administered DTTM"])
+        else:
+            self.bp_df = self._empty_task_df()
         
-        self.bp_df["Ordered DTTM"] = pd.to_datetime(self.bp_df["Ordered DTTM"])
-        self.bp_df["Administered DTTM"] = pd.to_datetime(self.bp_df["Administered DTTM"])
+        if self._task_enabled("heart_rate"):
+            self.hr_df = self._prepare_floor_data(original_df=preprocessed_dfs.heart_rate_df, 
+                                     time_col="Scheduled DTTM",
+                                     room_col="scheduled_room", 
+                                     start_date=start_date, 
+                                     end_date=end_date)
+            
+            self.hr_df["Ordered DTTM"] = pd.to_datetime(self.hr_df["Ordered DTTM"])
+            self.hr_df["Administered DTTM"] = pd.to_datetime(self.hr_df["Administered DTTM"])
+        else:
+            self.hr_df = self._empty_task_df()
         
-        self.hr_df = self._prepare_floor_data(original_df=preprocessed_dfs.heart_rate_df, 
-                                 time_col="Scheduled DTTM",
-                                 room_col="scheduled_room", 
-                                 start_date=start_date, 
-                                 end_date=end_date)
+        if self._task_enabled("respiratory_rate"):
+            self.rr_df = self._prepare_floor_data(original_df=preprocessed_dfs.respiratory_rate_df, 
+                                     time_col="Scheduled DTTM",
+                                     room_col="scheduled_room", 
+                                     start_date=start_date, 
+                                     end_date=end_date)
+            
+            self.rr_df["Ordered DTTM"] = pd.to_datetime(self.rr_df["Ordered DTTM"])
+            self.rr_df["Administered DTTM"] = pd.to_datetime(self.rr_df["Administered DTTM"])
+        else:
+            self.rr_df = self._empty_task_df()
         
-        self.hr_df["Ordered DTTM"] = pd.to_datetime(self.hr_df["Ordered DTTM"])
-        self.hr_df["Administered DTTM"] = pd.to_datetime(self.hr_df["Administered DTTM"])
+        if self._task_enabled("temperature"):
+            self.temp_df = self._prepare_floor_data(original_df=preprocessed_dfs.temperature_df, 
+                                     time_col="Scheduled DTTM",
+                                     room_col="scheduled_room", 
+                                     start_date=start_date, 
+                                     end_date=end_date)
+            
+            self.temp_df["Ordered DTTM"] = pd.to_datetime(self.temp_df["Ordered DTTM"])
+            self.temp_df["Administered DTTM"] = pd.to_datetime(self.temp_df["Administered DTTM"])
+        else:
+            self.temp_df = self._empty_task_df()
         
-        self.rr_df = self._prepare_floor_data(original_df=preprocessed_dfs.respiratory_rate_df, 
-                                 time_col="Scheduled DTTM",
-                                 room_col="scheduled_room", 
-                                 start_date=start_date, 
-                                 end_date=end_date)
+        if self._task_enabled("oxygen_saturation"):
+            self.os_df = self._prepare_floor_data(original_df=preprocessed_dfs.oxygen_saturation_df, 
+                                     time_col="Scheduled DTTM",
+                                     room_col="scheduled_room", 
+                                     start_date=start_date, 
+                                     end_date=end_date)
+            
+            self.os_df["Ordered DTTM"] = pd.to_datetime(self.os_df["Ordered DTTM"])
+            self.os_df["Administered DTTM"] = pd.to_datetime(self.os_df["Administered DTTM"])
+        else:
+            self.os_df = self._empty_task_df()
         
-        self.rr_df["Ordered DTTM"] = pd.to_datetime(self.rr_df["Ordered DTTM"])
-        self.rr_df["Administered DTTM"] = pd.to_datetime(self.rr_df["Administered DTTM"])
-        
-        self.temp_df = self._prepare_floor_data(original_df=preprocessed_dfs.temperature_df, 
-                                 time_col="Scheduled DTTM",
-                                 room_col="scheduled_room", 
-                                 start_date=start_date, 
-                                 end_date=end_date)
-        
-        self.temp_df["Ordered DTTM"] = pd.to_datetime(self.temp_df["Ordered DTTM"])
-        self.temp_df["Administered DTTM"] = pd.to_datetime(self.temp_df["Administered DTTM"])
-        
-        self.os_df = self._prepare_floor_data(original_df=preprocessed_dfs.oxygen_saturation_df, 
-                                 time_col="Scheduled DTTM",
-                                 room_col="scheduled_room", 
-                                 start_date=start_date, 
-                                 end_date=end_date)
-        
-        self.os_df["Ordered DTTM"] = pd.to_datetime(self.os_df["Ordered DTTM"])
-        self.os_df["Administered DTTM"] = pd.to_datetime(self.os_df["Administered DTTM"])
-        
-        self.med_df = self._prepare_floor_data(original_df=preprocessed_dfs.medications_df, 
-                                 time_col="Medication Scheduled DTTM",
-                                 room_col="scheduled_room",
-                                 start_date=start_date, 
-                                 end_date=end_date)
-        
-        self.med_df["Medication Order DTTM"] = pd.to_datetime(self.med_df["Medication Order DTTM"])
-        self.med_df["Administered DTTM"] = pd.to_datetime(self.med_df["Administered DTTM"])
+        if self._task_enabled("medication"):
+            self.med_df = self._prepare_floor_data(original_df=preprocessed_dfs.medications_df, 
+                                     time_col="Medication Scheduled DTTM",
+                                     room_col="scheduled_room",
+                                     start_date=start_date, 
+                                     end_date=end_date)
+            
+            self.med_df["Medication Order DTTM"] = pd.to_datetime(self.med_df["Medication Order DTTM"])
+            self.med_df["Administered DTTM"] = pd.to_datetime(self.med_df["Administered DTTM"])
+        else:
+            self.med_df = self._empty_task_df()
     
     def _prepare_floor_data(self, 
                             original_df: pd.DataFrame, 
@@ -151,49 +187,73 @@ class GlobalRequestHandler:
         return df_filtered
     
     def _save_dataframes(self) -> None:
-        self.bp_df.to_csv(self.request_dir / "blood_pressure_extended.csv", index=False)
-        self.hr_df.to_csv(self.request_dir / "heart_rate_extended.csv", index=False)
-        self.rr_df.to_csv(self.request_dir / "respiratory_rate_extended.csv", index=False)
-        self.temp_df.to_csv(self.request_dir / "temperature_extended.csv", index=False)
-        self.os_df.to_csv(self.request_dir / "oxygen_saturation_extended.csv", index=False)
-        self.med_df.to_csv(self.request_dir / "medications_extended.csv", index=False)
+        if self._task_enabled("blood_pressure"):
+            self.bp_df.to_csv(self.request_dir / "blood_pressure_extended.csv", index=False)
+        if self._task_enabled("heart_rate"):
+            self.hr_df.to_csv(self.request_dir / "heart_rate_extended.csv", index=False)
+        if self._task_enabled("respiratory_rate"):
+            self.rr_df.to_csv(self.request_dir / "respiratory_rate_extended.csv", index=False)
+        if self._task_enabled("temperature"):
+            self.temp_df.to_csv(self.request_dir / "temperature_extended.csv", index=False)
+        if self._task_enabled("oxygen_saturation"):
+            self.os_df.to_csv(self.request_dir / "oxygen_saturation_extended.csv", index=False)
+        if self._task_enabled("medication"):
+            self.med_df.to_csv(self.request_dir / "medications_extended.csv", index=False)
 
     def _load_saved_data(self) -> None:
-        self.bp_df = pd.read_csv(self.request_dir / "blood_pressure_extended.csv")
-        self.bp_df["Scheduled DTTM"] = pd.to_datetime(self.bp_df["Scheduled DTTM"])
-        self.bp_df["Ordered DTTM"] = pd.to_datetime(self.bp_df["Ordered DTTM"])
-        self.bp_df["Administered DTTM"] = pd.to_datetime(self.bp_df["Administered DTTM"])
-        self.bp_df["__day__"] = pd.to_datetime(self.bp_df["__day__"]).dt.date
+        if self._task_enabled("blood_pressure"):
+            self.bp_df = pd.read_csv(self.request_dir / "blood_pressure_extended.csv")
+            self.bp_df["Scheduled DTTM"] = pd.to_datetime(self.bp_df["Scheduled DTTM"])
+            self.bp_df["Ordered DTTM"] = pd.to_datetime(self.bp_df["Ordered DTTM"])
+            self.bp_df["Administered DTTM"] = pd.to_datetime(self.bp_df["Administered DTTM"])
+            self.bp_df["__day__"] = pd.to_datetime(self.bp_df["__day__"]).dt.date
+        else:
+            self.bp_df = self._empty_task_df()
 
-        self.hr_df = pd.read_csv(self.request_dir / "heart_rate_extended.csv")
-        self.hr_df["Scheduled DTTM"] = pd.to_datetime(self.hr_df["Scheduled DTTM"])
-        self.hr_df["Ordered DTTM"] = pd.to_datetime(self.hr_df["Ordered DTTM"])
-        self.hr_df["Administered DTTM"] = pd.to_datetime(self.hr_df["Administered DTTM"])
-        self.hr_df["__day__"] = pd.to_datetime(self.hr_df["__day__"]).dt.date
+        if self._task_enabled("heart_rate"):
+            self.hr_df = pd.read_csv(self.request_dir / "heart_rate_extended.csv")
+            self.hr_df["Scheduled DTTM"] = pd.to_datetime(self.hr_df["Scheduled DTTM"])
+            self.hr_df["Ordered DTTM"] = pd.to_datetime(self.hr_df["Ordered DTTM"])
+            self.hr_df["Administered DTTM"] = pd.to_datetime(self.hr_df["Administered DTTM"])
+            self.hr_df["__day__"] = pd.to_datetime(self.hr_df["__day__"]).dt.date
+        else:
+            self.hr_df = self._empty_task_df()
 
-        self.rr_df = pd.read_csv(self.request_dir / "respiratory_rate_extended.csv")
-        self.rr_df["Scheduled DTTM"] = pd.to_datetime(self.rr_df["Scheduled DTTM"])
-        self.rr_df["Ordered DTTM"] = pd.to_datetime(self.rr_df["Ordered DTTM"])
-        self.rr_df["Administered DTTM"] = pd.to_datetime(self.rr_df["Administered DTTM"])
-        self.rr_df["__day__"] = pd.to_datetime(self.rr_df["__day__"]).dt.date
+        if self._task_enabled("respiratory_rate"):
+            self.rr_df = pd.read_csv(self.request_dir / "respiratory_rate_extended.csv")
+            self.rr_df["Scheduled DTTM"] = pd.to_datetime(self.rr_df["Scheduled DTTM"])
+            self.rr_df["Ordered DTTM"] = pd.to_datetime(self.rr_df["Ordered DTTM"])
+            self.rr_df["Administered DTTM"] = pd.to_datetime(self.rr_df["Administered DTTM"])
+            self.rr_df["__day__"] = pd.to_datetime(self.rr_df["__day__"]).dt.date
+        else:
+            self.rr_df = self._empty_task_df()
 
-        self.temp_df = pd.read_csv(self.request_dir / "temperature_extended.csv")
-        self.temp_df["Scheduled DTTM"] = pd.to_datetime(self.temp_df["Scheduled DTTM"])
-        self.temp_df["Ordered DTTM"] = pd.to_datetime(self.temp_df["Ordered DTTM"])
-        self.temp_df["Administered DTTM"] = pd.to_datetime(self.temp_df["Administered DTTM"])
-        self.temp_df["__day__"] = pd.to_datetime(self.temp_df["__day__"]).dt.date
+        if self._task_enabled("temperature"):
+            self.temp_df = pd.read_csv(self.request_dir / "temperature_extended.csv")
+            self.temp_df["Scheduled DTTM"] = pd.to_datetime(self.temp_df["Scheduled DTTM"])
+            self.temp_df["Ordered DTTM"] = pd.to_datetime(self.temp_df["Ordered DTTM"])
+            self.temp_df["Administered DTTM"] = pd.to_datetime(self.temp_df["Administered DTTM"])
+            self.temp_df["__day__"] = pd.to_datetime(self.temp_df["__day__"]).dt.date
+        else:
+            self.temp_df = self._empty_task_df()
 
-        self.os_df = pd.read_csv(self.request_dir / "oxygen_saturation_extended.csv")
-        self.os_df["Scheduled DTTM"] = pd.to_datetime(self.os_df["Scheduled DTTM"])
-        self.os_df["Ordered DTTM"] = pd.to_datetime(self.os_df["Ordered DTTM"])
-        self.os_df["Administered DTTM"] = pd.to_datetime(self.os_df["Administered DTTM"])
-        self.os_df["__day__"] = pd.to_datetime(self.os_df["__day__"]).dt.date
+        if self._task_enabled("oxygen_saturation"):
+            self.os_df = pd.read_csv(self.request_dir / "oxygen_saturation_extended.csv")
+            self.os_df["Scheduled DTTM"] = pd.to_datetime(self.os_df["Scheduled DTTM"])
+            self.os_df["Ordered DTTM"] = pd.to_datetime(self.os_df["Ordered DTTM"])
+            self.os_df["Administered DTTM"] = pd.to_datetime(self.os_df["Administered DTTM"])
+            self.os_df["__day__"] = pd.to_datetime(self.os_df["__day__"]).dt.date
+        else:
+            self.os_df = self._empty_task_df()
 
-        self.med_df = pd.read_csv(self.request_dir / "medications_extended.csv")
-        self.med_df["Medication Scheduled DTTM"] = pd.to_datetime(self.med_df["Medication Scheduled DTTM"])
-        self.med_df["Medication Order DTTM"] = pd.to_datetime(self.med_df["Medication Order DTTM"])
-        self.med_df["Administered DTTM"] = pd.to_datetime(self.med_df["Administered DTTM"])
-        self.med_df["__day__"] = pd.to_datetime(self.med_df["__day__"]).dt.date
+        if self._task_enabled("medication"):
+            self.med_df = pd.read_csv(self.request_dir / "medications_extended.csv")
+            self.med_df["Medication Scheduled DTTM"] = pd.to_datetime(self.med_df["Medication Scheduled DTTM"])
+            self.med_df["Medication Order DTTM"] = pd.to_datetime(self.med_df["Medication Order DTTM"])
+            self.med_df["Administered DTTM"] = pd.to_datetime(self.med_df["Administered DTTM"])
+            self.med_df["__day__"] = pd.to_datetime(self.med_df["__day__"]).dt.date
+        else:
+            self.med_df = self._empty_task_df()
 
 class DailyRequestHandler(GlobalRequestHandler):
     
