@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import lightning as L
@@ -43,7 +44,29 @@ class RequestsModule(L.LightningModule):
         if self.model_config.model_name not in model_dict:
             raise ValueError(f"Unsupported model_name: {self.model_config.model_name}")
 
-        self.forecaster = model_dict[self.model_config.model_name](self.model_config).float()
+        # The bundled forecasting backbones expect to predict the same feature space
+        # that they ingest. Request forecasting uses a richer input schema than the
+        # target schema, so we keep the backbone in input space and project to the
+        # task targets afterward.
+        self.requires_target_projection = (
+            self.model_config.task_name in {"long_term_forecast", "short_term_forecast"}
+            and self.model_config.enc_in != self.model_config.c_out
+        )
+        self.backbone_config = self.model_config
+        if self.requires_target_projection:
+            self.backbone_config = replace(
+                self.model_config,
+                dec_in=self.model_config.enc_in,
+                c_out=self.model_config.enc_in,
+            )
+            self.target_projection: torch.nn.Module = torch.nn.Linear(
+                self.backbone_config.c_out,
+                self.model_config.c_out,
+            )
+        else:
+            self.target_projection = torch.nn.Identity()
+
+        self.forecaster = model_dict[self.model_config.model_name](self.backbone_config).float()
         self.delta_criterion = (
             torch.nn.MSELoss()
             if self.model_config.loss == "MSE"
@@ -63,6 +86,8 @@ class RequestsModule(L.LightningModule):
         self.save_hyperparameters(
             {
                 "model_config": self.model_config.to_dict(),
+                "backbone_model_config": self.backbone_config.to_dict(),
+                "requires_target_projection": self.requires_target_projection,
                 "target_scaler_mean": scaler_mean_tensor.detach().cpu().tolist(),
                 "target_scaler_scale": scaler_scale_tensor.detach().cpu().tolist(),
                 "delta_target_indices": delta_target_indices_tensor.detach().cpu().tolist(),
@@ -140,14 +165,23 @@ class RequestsModule(L.LightningModule):
             "availability_accuracy": availability_accuracy,
         }
 
-    def _build_decoder_input(self, batch_y: torch.Tensor) -> torch.Tensor:
+    def _build_decoder_input(
+        self,
+        batch_x: torch.Tensor,
+        batch_y: torch.Tensor,
+    ) -> torch.Tensor:
+        decoder_channels = self.backbone_config.dec_in
         decoder_zeros = torch.zeros(
-            (batch_y.shape[0], self.model_config.pred_len, batch_y.shape[-1]),
+            (batch_y.shape[0], self.model_config.pred_len, decoder_channels),
             device=batch_y.device,
             dtype=torch.float32,
         )
         if self.model_config.label_len > 0:
-            return torch.cat([batch_y[:, : self.model_config.label_len, :], decoder_zeros], dim=1).float()
+            if not self.requires_target_projection and batch_y.shape[-1] == decoder_channels:
+                label_context = batch_y[:, : self.model_config.label_len, :]
+            else:
+                label_context = batch_x[:, -self.model_config.label_len :, :]
+            return torch.cat([label_context, decoder_zeros], dim=1).float()
         return decoder_zeros
 
     def _shared_step(
@@ -156,8 +190,9 @@ class RequestsModule(L.LightningModule):
     ) -> dict[str, torch.Tensor | float]:
         batch_x, batch_y = batch
 
-        decoder_input = self._build_decoder_input(batch_y=batch_y)
+        decoder_input = self._build_decoder_input(batch_x=batch_x, batch_y=batch_y)
         outputs = self.forecaster(batch_x, None, decoder_input, None)
+        outputs = self.target_projection(outputs)
         predictions = outputs[:, -self.model_config.pred_len :, :]
         targets = batch_y[:, -self.model_config.pred_len :, :]
 
@@ -242,14 +277,22 @@ class RequestsModule(L.LightningModule):
     ) -> dict[str, np.ndarray]:
         x = x.to(self.device).float()
 
-        decoder_input = torch.zeros(
-            (x.shape[0], self.model_config.label_len + self.model_config.pred_len, self.model_config.dec_in),
+        decoder_zeros = torch.zeros(
+            (x.shape[0], self.model_config.pred_len, self.backbone_config.dec_in),
             device=self.device,
             dtype=torch.float32,
         )
+        if self.model_config.label_len > 0:
+            decoder_input = torch.cat(
+                [x[:, -self.model_config.label_len :, :], decoder_zeros],
+                dim=1,
+            )
+        else:
+            decoder_input = decoder_zeros
 
         with torch.no_grad():
             outputs = self.forecaster(x, None, decoder_input, None)
+            outputs = self.target_projection(outputs)
 
         predictions = outputs[:, -self.model_config.pred_len :, :]
         pred_delta = self._select_delta_targets(predictions)
