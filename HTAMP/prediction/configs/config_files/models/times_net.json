@@ -61,7 +61,7 @@
     "embed": "timeF",
     "freq": "h",
     "num_class": 0,
-    "num_workers": 0,
+    "num_workers": 30,
     "max_epochs": 300,
     "batch_size": 32,
     "patience": 40,
