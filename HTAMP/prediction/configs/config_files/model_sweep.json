@@ -45,18 +45,18 @@
       "run_name": "TimesNet_medical_request_intervals",
       "wandb": true,
       "task_name": "long_term_forecast",
-      "seq_len": 4,
+      "seq_len": 8,
       "label_len": 0,
-      "pred_len": 2,
-      "d_model": 128,
+      "pred_len": 4,
+      "d_model": 256,
       "n_heads": 4,
       "e_layers": 2,
       "d_layers": 1,
-      "d_ff": 512,
+      "d_ff": 1024,
       "top_k": 2,
       "num_kernels": 4,
       "moving_avg": 3,
-      "factor": 1,
+      "factor": 3,
       "dropout": 0.1,
       "patch_len": 2,
       "stride": 1,
@@ -65,9 +65,9 @@
       "channel_independence": 0,
       "decomp_method": "moving_avg",
       "use_norm": 1,
-      "down_sampling_layers": 0,
-      "down_sampling_window": 1,
-      "down_sampling_method": null,
+      "down_sampling_layers": 1,
+      "down_sampling_window": 2,
+      "down_sampling_method": "avg",
       "embed": "timeF",
       "freq": "h",
       "num_class": 0,
@@ -76,7 +76,7 @@
       "batch_size": 32,
       "patience": 30,
       "learning_rate": 0.0001,
-      "loss": "MSE",
+      "loss": "L1",
       "accelerator": "auto",
       "devices": 1,
       "strategy": null
@@ -101,7 +101,7 @@
     },
     "TimesNet": {
       "model_config": {
-        "d_model": 128,
+        "d_model": 256,
         "e_layers": 2,
         "d_ff": 512,
         "top_k": 2,
@@ -111,29 +111,32 @@
     "TimeMixer": {
       "model_config": {
         "d_model": 128,
-        "e_layers": 2,
+        "e_layers": 4,
         "d_ff": 256,
         "moving_avg": 3,
+        "down_sampling_layers": 1,
+        "down_sampling_window": 2,
         "channel_independence": 0
       }
     },
     "iTransformer": {
       "model_config": {
-        "d_model": 128,
+        "d_model": 256,
         "n_heads": 4,
         "e_layers": 2,
         "d_ff": 512,
-        "factor": 1
+        "factor": 3
       }
     },
     "PatchTST": {
       "model_config": {
-        "d_model": 128,
         "n_heads": 4,
-        "e_layers": 2,
-        "d_ff": 512,
-        "patch_len": 2,
-        "stride": 1
+        "e_layers": 3,
+        "d_layers": 1,
+        "d_model": 512,
+        "d_ff": 1024,
+        "patch_len": 4,
+        "stride": 2
       }
     }
   },
@@ -150,7 +153,7 @@
       "model_config": {
         "top_k": [
           1,
-          2
+          3
         ]
       }
     },
@@ -173,8 +176,8 @@
     "PatchTST": {
       "model_config": {
         "stride": [
-          1,
-          2
+          2,
+          4
         ]
       }
     }
