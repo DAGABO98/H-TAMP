@@ -1,37 +1,195 @@
-import pandas as pd
+import argparse
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 
-df = df.copy()
-df['Ordered DTTM'] = pd.to_datetime(df['Ordered DTTM'])
-df = df.sort_values(['Patient ID', 'Ordered DTTM'])
 
-def requests_in_next_hour(times):
-    # times is a Series of datetimes for one patient, already sorted
-    t = times.to_numpy(dtype='datetime64[ns]')
-    
-    # For each request time, find the insertion point of time + 1 hour
-    upper = np.searchsorted(t, t + np.timedelta64(1, 'h'), side='right')
-    
-    # Count how many rows lie after the current row and before/equal to +1 hour
-    counts = upper - np.arange(len(t)) - 1
-    
+EXTENDED_DATAFRAME_FILES = {
+    "blood_pressure": "blood_pressure_extended.csv",
+    "heart_rate": "heart_rate_extended.csv",
+    "respiratory_rate": "respiratory_rate_extended.csv",
+    "temperature": "temperature_extended.csv",
+    "oxygen_saturation": "oxygen_saturation_extended.csv",
+    "medications": "medications_extended.csv",
+}
+
+PATIENT_ID_CANDIDATES = (
+    "MRN",
+    "Patient ID",
+)
+
+ORDER_TIME_CANDIDATES = (
+    "Ordered DTTM",
+    "Medication Order DTTM",
+)
+
+
+def requests_in_next_window(times: pd.Series, window_minutes: int) -> pd.Series:
+    """Count later requests for the same patient within the next time window."""
+    ordered_times = times.to_numpy(dtype="datetime64[ns]")
+    upper = np.searchsorted(
+        ordered_times,
+        ordered_times + np.timedelta64(window_minutes, "m"),
+        side="right",
+    )
+    counts = upper - np.arange(len(ordered_times)) - 1
     return pd.Series(counts, index=times.index)
 
-df['requests_next_hour'] = (
-    df.groupby('Patient ID', group_keys=False)['Ordered DTTM']
-      .apply(requests_in_next_hour)
-)
 
-# Maximum over the whole dataframe
-max_value = df['requests_next_hour'].max()
+def infer_existing_column(df: pd.DataFrame, candidates: tuple[str, ...], column_type: str) -> str:
+    for candidate in candidates:
+        if candidate in df.columns:
+            return candidate
+    raise KeyError(
+        f"Could not find a {column_type} column. Tried {candidates}. "
+        f"Available columns: {list(df.columns)}"
+    )
 
-# Maximum per patient
-max_per_patient = (
-    df.groupby('Patient ID')['requests_next_hour']
-      .max()
-      .reset_index(name='max_requests_next_hour')
-)
 
-print(df[['Patient ID', 'Ordered DTTM', 'requests_next_hour']])
-print("Overall max:", max_value)
-print(max_per_patient)
+def compute_next_hour_metrics(
+    df: pd.DataFrame,
+    patient_col: str,
+    ordered_time_col: str,
+    window_minutes: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    working_df = df.copy()
+    working_df[ordered_time_col] = pd.to_datetime(working_df[ordered_time_col], errors="coerce")
+    working_df = working_df.dropna(subset=[patient_col, ordered_time_col])
+    working_df = working_df.sort_values([patient_col, ordered_time_col]).reset_index(drop=True)
+
+    metric_col = f"requests_next_{window_minutes}_minutes"
+    working_df[metric_col] = (
+        working_df.groupby(patient_col, group_keys=False)[ordered_time_col]
+        .apply(requests_in_next_window, window_minutes=window_minutes)
+        .astype(int)
+    )
+
+    max_per_patient = (
+        working_df.groupby(patient_col)[metric_col]
+        .max()
+        .reset_index(name=f"max_{metric_col}")
+        .sort_values([f"max_{metric_col}", patient_col], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+    overall_max = int(working_df[metric_col].max()) if not working_df.empty else 0
+    return working_df, max_per_patient, overall_max
+
+
+def process_extended_dataframe(
+    task_name: str,
+    input_csv: Path,
+    output_dir: Path,
+    window_minutes: int,
+) -> dict[str, object]:
+    df = pd.read_csv(input_csv)
+    patient_col = infer_existing_column(df, PATIENT_ID_CANDIDATES, "patient id")
+    ordered_time_col = infer_existing_column(df, ORDER_TIME_CANDIDATES, "ordered timestamp")
+
+    enriched_df, max_per_patient_df, overall_max = compute_next_hour_metrics(
+        df=df,
+        patient_col=patient_col,
+        ordered_time_col=ordered_time_col,
+        window_minutes=window_minutes,
+    )
+
+    metric_col = f"requests_next_{window_minutes}_minutes"
+    enriched_path = output_dir / f"{task_name}_extended_with_{metric_col}.csv"
+    patient_summary_path = output_dir / f"{task_name}_max_{metric_col}_per_patient.csv"
+
+    enriched_df.to_csv(enriched_path, index=False)
+    max_per_patient_df.to_csv(patient_summary_path, index=False)
+
+    return {
+        "task_name": task_name,
+        "input_csv": str(input_csv),
+        "patient_col": patient_col,
+        "ordered_time_col": ordered_time_col,
+        "rows_processed": int(len(enriched_df)),
+        "patients_processed": int(enriched_df[patient_col].nunique()) if not enriched_df.empty else 0,
+        "overall_max_requests_in_window": overall_max,
+        "enriched_output_csv": str(enriched_path),
+        "patient_summary_csv": str(patient_summary_path),
+    }
+
+
+def resolve_task_files(request_dir: Path, task_names: list[str] | None) -> dict[str, Path]:
+    selected_tasks = task_names if task_names else list(EXTENDED_DATAFRAME_FILES.keys())
+    resolved_files: dict[str, Path] = {}
+
+    for task_name in selected_tasks:
+        if task_name not in EXTENDED_DATAFRAME_FILES:
+            supported = ", ".join(EXTENDED_DATAFRAME_FILES.keys())
+            raise ValueError(f"Unsupported task '{task_name}'. Supported tasks: {supported}")
+
+        csv_path = request_dir / EXTENDED_DATAFRAME_FILES[task_name]
+        if csv_path.exists():
+            resolved_files[task_name] = csv_path
+
+    return resolved_files
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Explore extended request dataframes and compute per-patient next-window request counts."
+    )
+    parser.add_argument(
+        "--request_dir",
+        type=str,
+        default="data/requests",
+        help="Directory containing the *_extended.csv files generated by request_handler.py.",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Directory to store exploration outputs. Defaults to <request_dir>/exploration.",
+    )
+    parser.add_argument(
+        "--window_minutes",
+        type=int,
+        default=60,
+        help="Look-ahead window in minutes for counting future requests per patient.",
+    )
+    parser.add_argument(
+        "--tasks",
+        nargs="*",
+        default=None,
+        help="Optional subset of tasks to process. Supported: blood_pressure heart_rate respiratory_rate temperature oxygen_saturation medications",
+    )
+    args = parser.parse_args()
+
+    request_dir = Path(args.request_dir)
+    output_dir = Path(args.output_dir) if args.output_dir else request_dir / "exploration"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    task_files = resolve_task_files(request_dir=request_dir, task_names=args.tasks)
+    if not task_files:
+        expected_files = ", ".join(EXTENDED_DATAFRAME_FILES.values())
+        raise FileNotFoundError(
+            f"No extended request dataframes were found in '{request_dir}'. "
+            f"Expected any of: {expected_files}"
+        )
+
+    summary_rows = []
+    for task_name, input_csv in task_files.items():
+        result = process_extended_dataframe(
+            task_name=task_name,
+            input_csv=input_csv,
+            output_dir=output_dir,
+            window_minutes=args.window_minutes,
+        )
+        summary_rows.append(result)
+
+    summary_df = pd.DataFrame(summary_rows).sort_values("task_name").reset_index(drop=True)
+    combined_summary_path = output_dir / f"all_tasks_requests_next_{args.window_minutes}_minutes_summary.csv"
+    summary_df.to_csv(combined_summary_path, index=False)
+
+    print("Processed extended dataframes:")
+    print(summary_df[["task_name", "rows_processed", "patients_processed", "overall_max_requests_in_window"]])
+    print(f"Combined summary saved to: {combined_summary_path}")
+
+
+if __name__ == "__main__":
+    main()
