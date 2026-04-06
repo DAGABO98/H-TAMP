@@ -76,7 +76,8 @@
       "batch_size": 32,
       "patience": 30,
       "learning_rate": 0.0001,
-      "loss": "L1",
+      "loss": "HUBER",
+      "huber_delta": 1.0,
       "accelerator": "auto",
       "devices": 1,
       "strategy": null
