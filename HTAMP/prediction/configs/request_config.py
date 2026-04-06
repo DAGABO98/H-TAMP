@@ -284,10 +284,15 @@ class TimeseriesModelConfig:
     patience: int = 40
     learning_rate: float = 0.0001
     loss: str = "MSE"
+    huber_delta: float = 1.0
 
     accelerator: str = "auto"
     devices: int = 1
     strategy: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.huber_delta <= 0:
+            raise ValueError("huber_delta must be greater than zero.")
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any] | "TimeseriesModelConfig") -> "TimeseriesModelConfig":

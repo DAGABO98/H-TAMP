@@ -67,11 +67,7 @@ class RequestsModule(L.LightningModule):
             self.target_projection = torch.nn.Identity()
 
         self.forecaster = model_dict[self.model_config.model_name](self.backbone_config).float()
-        self.delta_criterion = (
-            torch.nn.MSELoss()
-            if self.model_config.loss == "MSE"
-            else torch.nn.L1Loss()
-        )
+        self.delta_criterion = self._build_delta_criterion()
 
         scaler_mean_tensor = torch.as_tensor(target_scaler_mean, dtype=torch.float32)
         scaler_scale_tensor = torch.as_tensor(target_scaler_scale, dtype=torch.float32)
@@ -93,6 +89,20 @@ class RequestsModule(L.LightningModule):
                 "delta_target_indices": delta_target_indices_tensor.detach().cpu().tolist(),
                 "availability_target_indices": availability_target_indices_tensor.detach().cpu().tolist(),
             }
+        )
+
+    def _build_delta_criterion(self) -> torch.nn.Module:
+        loss_name = str(self.model_config.loss).strip().upper()
+        if loss_name == "MSE":
+            return torch.nn.MSELoss()
+        if loss_name in {"L1", "MAE"}:
+            return torch.nn.L1Loss()
+        if loss_name == "HUBER":
+            return torch.nn.HuberLoss(delta=float(self.model_config.huber_delta))
+
+        raise ValueError(
+            f"Unsupported loss '{self.model_config.loss}'. "
+            "Supported regression losses are: MSE, L1, MAE, Huber."
         )
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
