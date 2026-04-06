@@ -32,6 +32,8 @@
       "2025W05",
       "2025W14"
     ],
+    "validation_split_strategy": "random_patients",
+    "validation_split_seed": 42,
     "use_saved_request_data": true,
     "use_saved_time_series": false,
     "preprocess_data": true,

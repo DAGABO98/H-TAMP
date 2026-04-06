@@ -550,17 +550,35 @@ class RequestsDataManager:
             return 0.0
         return float(self.dataset_config.val_ratio / remaining_ratio)
 
+    def _collect_sorted_unique_weeks(
+        self,
+        patient_events: dict[str, pd.DataFrame],
+    ) -> list[tuple[int, int]]:
+        unique_weeks: set[tuple[int, int]] = set()
+
+        for patient_df in patient_events.values():
+            if patient_df.empty:
+                continue
+            iso_fields = self._derive_iso_week_fields(patient_df[TIMESTAMP_COLUMN])
+            unique_weeks.update(
+                (int(iso_year), int(iso_week))
+                for iso_year, iso_week in zip(iso_fields["iso_year"], iso_fields["iso_week"])
+            )
+
+        return sorted(unique_weeks)
+
+    def _resolve_test_week_set(
+        self,
+        patient_events: dict[str, pd.DataFrame],
+    ) -> set[tuple[int, int]]:
+        sorted_unique_weeks = self._collect_sorted_unique_weeks(patient_events=patient_events)
+        return set(self.dataset_config.test_iso_weeks).intersection(sorted_unique_weeks)
+
     def _resolve_week_split_sets(
         self,
         patient_events: dict[str, pd.DataFrame],
     ) -> dict[str, set[tuple[int, int]]]:
-        unique_weeks: set[tuple[int, int]] = set()
-
-        for patient_df in patient_events.values():
-            iso_fields = self._derive_iso_week_fields(patient_df[TIMESTAMP_COLUMN])
-            unique_weeks.update(zip(iso_fields["iso_year"], iso_fields["iso_week"]))
-
-        sorted_unique_weeks = sorted(unique_weeks)
+        sorted_unique_weeks = self._collect_sorted_unique_weeks(patient_events=patient_events)
         test_weeks = set(self.dataset_config.test_iso_weeks).intersection(sorted_unique_weeks)
         non_test_weeks = [week for week in sorted_unique_weeks if week not in test_weeks]
 
@@ -579,10 +597,77 @@ class RequestsDataManager:
             "test": test_weeks,
         }
 
-    def _split_patient_series_by_weeks(
+    def _resolve_random_patient_split_sets(
         self,
+        patient_events: dict[str, pd.DataFrame],
+        test_weeks: set[tuple[int, int]],
+    ) -> dict[str, set[str]]:
+        eligible_patient_ids: list[str] = []
+
+        for patient_id, patient_df in patient_events.items():
+            if patient_df.empty:
+                continue
+            iso_fields = self._derive_iso_week_fields(patient_df[TIMESTAMP_COLUMN])
+            patient_weeks = {
+                (int(iso_year), int(iso_week))
+                for iso_year, iso_week in zip(iso_fields["iso_year"], iso_fields["iso_week"])
+            }
+            if any(week not in test_weeks for week in patient_weeks):
+                eligible_patient_ids.append(str(patient_id))
+
+        eligible_patient_ids = sorted(set(eligible_patient_ids))
+        val_ratio = self._validation_ratio_over_non_test_weeks()
+        val_patient_count = int(np.floor(len(eligible_patient_ids) * val_ratio))
+        if val_ratio > 0.0 and val_patient_count == 0 and eligible_patient_ids:
+            val_patient_count = 1
+        val_patient_count = min(val_patient_count, len(eligible_patient_ids))
+
+        val_patients: set[str] = set()
+        if val_patient_count > 0:
+            rng = np.random.default_rng(self.dataset_config.validation_split_seed)
+            selected_indices = np.atleast_1d(
+                rng.choice(len(eligible_patient_ids), size=val_patient_count, replace=False)
+            )
+            val_patients = {
+                eligible_patient_ids[int(patient_index)]
+                for patient_index in selected_indices.tolist()
+            }
+
+        train_patients = set(eligible_patient_ids) - val_patients
+        return {
+            "train": train_patients,
+            "val": val_patients,
+            "test": set(),
+        }
+
+    def _resolve_row_split(
+        self,
+        patient_id: str,
+        week_key: tuple[int, int],
+        split_week_sets: dict[str, set[tuple[int, int]]],
+        split_patient_sets: dict[str, set[str]],
+    ) -> Optional[str]:
+        if week_key in split_week_sets["test"]:
+            return "test"
+
+        if self.dataset_config.validation_split_strategy == "random_patients":
+            if patient_id in split_patient_sets["val"]:
+                return "val"
+            if patient_id in split_patient_sets["train"]:
+                return "train"
+            return None
+
+        for split_name in ("train", "val"):
+            if week_key in split_week_sets[split_name]:
+                return split_name
+        return None
+
+    def _split_patient_series(
+        self,
+        patient_id: str,
         patient_df: pd.DataFrame,
         split_week_sets: dict[str, set[tuple[int, int]]],
+        split_patient_sets: dict[str, set[str]],
     ) -> dict[str, list[pd.DataFrame]]:
         patient_with_iso = patient_df.copy()
         iso_fields = self._derive_iso_week_fields(patient_with_iso[TIMESTAMP_COLUMN])
@@ -593,15 +678,13 @@ class RequestsDataManager:
         current_split: Optional[str] = None
         run_start = 0
 
-        def resolve_split(iso_year: int, iso_week: int) -> Optional[str]:
-            week_key = (int(iso_year), int(iso_week))
-            for split_name in SPLITS:
-                if week_key in split_week_sets[split_name]:
-                    return split_name
-            return None
-
         resolved_splits = [
-            resolve_split(iso_year=row.iso_year, iso_week=row.iso_week)
+            self._resolve_row_split(
+                patient_id=str(patient_id),
+                week_key=(int(row.iso_year), int(row.iso_week)),
+                split_week_sets=split_week_sets,
+                split_patient_sets=split_patient_sets,
+            )
             for row in patient_with_iso[["iso_year", "iso_week"]].itertuples(index=False)
         ]
 
@@ -656,6 +739,39 @@ class RequestsDataManager:
         enriched_df["time_diff_minutes"] = pd.to_numeric(enriched_df["time_diff_minutes"], errors="coerce")
         return enriched_df
 
+    def _derive_split_week_sets(
+        self,
+        split_frames: dict[str, pd.DataFrame],
+    ) -> dict[str, set[tuple[int, int]]]:
+        split_week_sets: dict[str, set[tuple[int, int]]] = {split: set() for split in SPLITS}
+
+        for split_name, split_df in split_frames.items():
+            if split_df.empty:
+                continue
+            iso_fields = self._derive_iso_week_fields(split_df[TIMESTAMP_COLUMN])
+            split_week_sets[split_name] = {
+                (int(iso_year), int(iso_week))
+                for iso_year, iso_week in zip(iso_fields["iso_year"], iso_fields["iso_week"])
+            }
+
+        return split_week_sets
+
+    def _derive_split_patient_sets(
+        self,
+        split_segments_frames: dict[str, pd.DataFrame],
+    ) -> dict[str, set[str]]:
+        split_patient_sets: dict[str, set[str]] = {split: set() for split in SPLITS}
+
+        for split_name, segments_df in split_segments_frames.items():
+            if segments_df.empty:
+                continue
+            split_patient_sets[split_name] = {
+                str(patient_id)
+                for patient_id in segments_df["patient_id"].astype(str).tolist()
+            }
+
+        return split_patient_sets
+
     def _build_split_frames(
         self,
         events_df: pd.DataFrame,
@@ -664,15 +780,27 @@ class RequestsDataManager:
             patient_id: patient_df.sort_values(TIMESTAMP_COLUMN).reset_index(drop=True)
             for patient_id, patient_df in events_df.groupby(self.patient_id_col, sort=False)
         }
-        split_week_sets = self._resolve_week_split_sets(patient_events=patient_events)
+        split_strategy = self.dataset_config.validation_split_strategy
+        split_week_sets = {split: set() for split in SPLITS}
+        split_patient_sets = {split: set() for split in SPLITS}
+        split_week_sets["test"] = self._resolve_test_week_set(patient_events=patient_events)
+        if split_strategy == "random_patients":
+            split_patient_sets = self._resolve_random_patient_split_sets(
+                patient_events=patient_events,
+                test_weeks=split_week_sets["test"],
+            )
+        else:
+            split_week_sets = self._resolve_week_split_sets(patient_events=patient_events)
         split_frame_parts: dict[str, list[pd.DataFrame]] = {split: [] for split in SPLITS}
         split_segments: dict[str, list[dict[str, object]]] = {split: [] for split in SPLITS}
         split_offsets = {split: 0 for split in SPLITS}
 
         for patient_id, patient_df in patient_events.items():
-            patient_split_frames = self._split_patient_series_by_weeks(
+            patient_split_frames = self._split_patient_series(
+                patient_id=str(patient_id),
                 patient_df=patient_df,
                 split_week_sets=split_week_sets,
+                split_patient_sets=split_patient_sets,
             )
 
             for split_name, split_dfs in patient_split_frames.items():
@@ -721,7 +849,10 @@ class RequestsDataManager:
                 segments_df=split_segments_frames[split_name],
             )
 
-        self.split_week_sets = split_week_sets
+        self.split_week_sets = self._derive_split_week_sets(split_frames=split_frames)
+        self.split_patient_sets = self._derive_split_patient_sets(
+            split_segments_frames=split_segments_frames
+        )
         return split_frames, split_segments_frames
 
     def _build_metadata(self) -> dict[str, object]:
@@ -739,6 +870,11 @@ class RequestsDataManager:
             "end_date": self.dataset_config.end_date,
             "train_ratio": self.dataset_config.train_ratio,
             "val_ratio": self.dataset_config.val_ratio,
+            "validation_split_strategy": self.dataset_config.validation_split_strategy,
+            "validation_split_seed": self.dataset_config.validation_split_seed,
+            "train_patient_count": len(getattr(self, "split_patient_sets", {}).get("train", set())),
+            "val_patient_count": len(getattr(self, "split_patient_sets", {}).get("val", set())),
+            "test_patient_count": len(getattr(self, "split_patient_sets", {}).get("test", set())),
             "train_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("train", set()))],
             "val_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("val", set()))],
             "test_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("test", set()))],

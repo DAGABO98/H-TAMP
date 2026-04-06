@@ -16,6 +16,13 @@ SUPPORTED_REQUEST_TASKS = (
     "temperature",
     "oxygen_saturation",
 )
+SUPPORTED_VALIDATION_SPLIT_STRATEGIES = (
+    "chronological_weeks",
+    "random_patients",
+)
+VALIDATION_SPLIT_STRATEGY_ALIASES = {
+    "grouped_patients": "random_patients",
+}
 
 
 def _default_test_iso_weeks() -> tuple[tuple[int, int], ...]:
@@ -150,6 +157,33 @@ def _normalize_included_tasks(
     return tuple(normalized_tasks)
 
 
+def _normalize_validation_split_strategy(raw_strategy: str | None) -> str:
+    if raw_strategy is None:
+        return "chronological_weeks"
+
+    normalized_strategy = VALIDATION_SPLIT_STRATEGY_ALIASES.get(
+        str(raw_strategy).strip().lower(),
+        str(raw_strategy).strip().lower(),
+    )
+    if not normalized_strategy:
+        return "chronological_weeks"
+    if normalized_strategy not in SUPPORTED_VALIDATION_SPLIT_STRATEGIES:
+        raise ValueError(
+            f"Unsupported validation_split_strategy '{raw_strategy}'. "
+            f"Expected one of {SUPPORTED_VALIDATION_SPLIT_STRATEGIES}."
+        )
+    return normalized_strategy
+
+
+def _normalize_validation_split_seed(raw_seed: Any) -> int:
+    if isinstance(raw_seed, bool):
+        raise TypeError("validation_split_seed must be an integer, not a boolean.")
+    try:
+        return int(raw_seed)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("validation_split_seed must be an integer.") from exc
+
+
 @dataclass
 class MedicalRequestDatasetConfig:
     annotated_data_files: AnnotatedDataFiles
@@ -162,6 +196,8 @@ class MedicalRequestDatasetConfig:
     train_ratio: float = 0.70
     val_ratio: float = 0.15
     test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
+    validation_split_strategy: str = "chronological_weeks"
+    validation_split_seed: int = 42
     use_saved_request_data: bool = False
     use_saved_time_series: bool = False
     preprocess_data: bool = False
@@ -179,6 +215,12 @@ class MedicalRequestDatasetConfig:
 
         self.test_iso_weeks = _normalize_test_iso_weeks(raw_weeks=self.test_iso_weeks)
         self.test_iso_weeks = tuple(sorted(set(self.test_iso_weeks)))
+        self.validation_split_strategy = _normalize_validation_split_strategy(
+            raw_strategy=self.validation_split_strategy
+        )
+        self.validation_split_seed = _normalize_validation_split_seed(
+            raw_seed=self.validation_split_seed
+        )
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any] | "MedicalRequestDatasetConfig") -> "MedicalRequestDatasetConfig":
