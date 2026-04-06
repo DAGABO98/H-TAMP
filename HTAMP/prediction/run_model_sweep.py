@@ -29,7 +29,7 @@ AVAILABLE_MODELS = SUPPORTED_REQUEST_MODELS
 DEFAULT_PREDICTOR_RUN_NAME = "TimesNet_medical_request_intervals"
 MANAGED_MODEL_FIELDS = {"model_name", "run_name"}
 MULTI_DEVICE_STRATEGY_PREFIXES = ("ddp", "fsdp", "deepspeed")
-DEFAULT_SELECTION_METRIC = "val_loss"
+DEFAULT_SELECTION_METRIC = "val_delta_mae"
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 SUMMARY_METRIC_FIELDS = [
     "val_loss",

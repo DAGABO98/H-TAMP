@@ -76,9 +76,11 @@
     "patience": 40,
     "learning_rate": 0.00001,
     "loss": "HUBER",
-    "huber_delta": 1.0,
+    "huber_delta": 1.5,
     "delta_loss_weight": 5.0,
-    "availability_loss_weight": 1.0,
+    "availability_loss_weight": 0.25,
+    "monitor_metric": "val_delta_mae",
+    "monitor_mode": "min",
     "accelerator": "auto",
     "devices": 1,
     "strategy": null

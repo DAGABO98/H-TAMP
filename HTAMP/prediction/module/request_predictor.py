@@ -53,6 +53,14 @@ def _result_dict(results: list[dict[str, Any]]) -> dict[str, Any]:
         for key, value in results[0].items()
     }
 
+
+def _metric_higher_is_better(metric_name: str) -> bool:
+    metric_name_lower = str(metric_name).lower()
+    return any(
+        token in metric_name_lower
+        for token in ("accuracy", "auc", "f1", "precision", "recall")
+    )
+
 class RequestsPredictor:
     def create_data_module_and_time_series(
         self,
@@ -98,10 +106,16 @@ class RequestsPredictor:
         save_dir: str,
     ) -> list[object]:
         run_dir = Path(save_dir) / model_config.run_name
+        monitor_metric = model_config.monitor_metric
+        monitor_mode = (
+            model_config.monitor_mode
+            if model_config.monitor_mode is not None
+            else ("max" if _metric_higher_is_better(metric_name=monitor_metric) else "min")
+        )
         checkpoint = ModelCheckpoint(
             dirpath=run_dir,
-            monitor="val_loss",
-            mode="min",
+            monitor=monitor_metric,
+            mode=monitor_mode,
             filename=f"{model_config.run_name}" + "{epoch:02d}",
             save_top_k=1,
             auto_insert_metric_name=True,
@@ -109,7 +123,11 @@ class RequestsPredictor:
 
         return [
             checkpoint,
-            EarlyStopping(monitor="val_loss", patience=model_config.patience),
+            EarlyStopping(
+                monitor=monitor_metric,
+                mode=monitor_mode,
+                patience=model_config.patience,
+            ),
             LearningRateMonitor(),
         ]
 

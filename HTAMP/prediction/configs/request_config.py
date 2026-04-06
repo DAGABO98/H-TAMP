@@ -287,6 +287,8 @@ class TimeseriesModelConfig:
     huber_delta: float = 1.0
     delta_loss_weight: float = 1.0
     availability_loss_weight: float = 1.0
+    monitor_metric: str = "val_delta_mae"
+    monitor_mode: Optional[str] = None
 
     accelerator: str = "auto"
     devices: int = 1
@@ -301,6 +303,13 @@ class TimeseriesModelConfig:
             raise ValueError("availability_loss_weight must be non-negative.")
         if self.delta_loss_weight == 0 and self.availability_loss_weight == 0:
             raise ValueError("At least one loss weight must be greater than zero.")
+        self.monitor_metric = str(self.monitor_metric).strip()
+        if not self.monitor_metric:
+            raise ValueError("monitor_metric must not be empty.")
+        if self.monitor_mode is not None:
+            self.monitor_mode = str(self.monitor_mode).strip().lower()
+            if self.monitor_mode not in {"min", "max"}:
+                raise ValueError("monitor_mode must be either 'min', 'max', or null.")
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any] | "TimeseriesModelConfig") -> "TimeseriesModelConfig":
@@ -426,7 +435,7 @@ class RequestModelSweepConfig:
     models: tuple[str, ...] = field(default_factory=lambda: SUPPORTED_REQUEST_MODELS)
     summary_path: str = "data/prediction/request_model_sweep_summary.csv"
     comparison_plot_path: Optional[str] = None
-    selection_metric: str = "val_loss"
+    selection_metric: str = "val_delta_mae"
     fail_fast: bool = False
     model_overrides: dict[str, dict[str, dict[str, object]]] = field(default_factory=dict)
     search_space: dict[str, dict[str, object]] = field(default_factory=dict)
@@ -474,7 +483,7 @@ class RequestModelSweepConfig:
             models=config_payload.get("models", SUPPORTED_REQUEST_MODELS),
             summary_path=str(config_payload.get("summary_path", "data/prediction/request_model_sweep_summary.csv")),
             comparison_plot_path=config_payload.get("comparison_plot_path"),
-            selection_metric=str(config_payload.get("selection_metric", "val_loss")),
+            selection_metric=str(config_payload.get("selection_metric", "val_delta_mae")),
             fail_fast=bool(config_payload.get("fail_fast", False)),
             model_overrides=dict(config_payload.get("model_overrides", {})),
             search_space=dict(config_payload.get("search_space", {})),
