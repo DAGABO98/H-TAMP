@@ -220,7 +220,11 @@ class RequestsModule(L.LightningModule):
             pred_availability_logits,
             true_availability,
         )
-        loss = delta_loss + availability_loss
+        weighted_delta_loss = self.model_config.delta_loss_weight * delta_loss
+        weighted_availability_loss = (
+            self.model_config.availability_loss_weight * availability_loss
+        )
+        loss = weighted_delta_loss + weighted_availability_loss
 
         stats = self._compute_stats(
             pred_delta=pred_delta,
@@ -230,6 +234,8 @@ class RequestsModule(L.LightningModule):
         )
         stats["delta_loss"] = delta_loss
         stats["availability_loss"] = availability_loss
+        stats["weighted_delta_loss"] = weighted_delta_loss
+        stats["weighted_availability_loss"] = weighted_availability_loss
         stats["loss"] = loss
         return stats
 

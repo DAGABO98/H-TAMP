@@ -285,6 +285,8 @@ class TimeseriesModelConfig:
     learning_rate: float = 0.0001
     loss: str = "MSE"
     huber_delta: float = 1.0
+    delta_loss_weight: float = 1.0
+    availability_loss_weight: float = 1.0
 
     accelerator: str = "auto"
     devices: int = 1
@@ -293,6 +295,12 @@ class TimeseriesModelConfig:
     def __post_init__(self) -> None:
         if self.huber_delta <= 0:
             raise ValueError("huber_delta must be greater than zero.")
+        if self.delta_loss_weight < 0:
+            raise ValueError("delta_loss_weight must be non-negative.")
+        if self.availability_loss_weight < 0:
+            raise ValueError("availability_loss_weight must be non-negative.")
+        if self.delta_loss_weight == 0 and self.availability_loss_weight == 0:
+            raise ValueError("At least one loss weight must be greater than zero.")
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any] | "TimeseriesModelConfig") -> "TimeseriesModelConfig":
