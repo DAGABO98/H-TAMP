@@ -53,10 +53,10 @@
       "d_ff": 1024,
       "top_k": 2,
       "num_kernels": 4,
-      "moving_avg": 5,
+      "moving_avg": 4,
       "factor": 1,
       "dropout": 0.1,
-      "patch_len": 4,
+      "patch_len": 2,
       "stride": 2,
       "activation": "gelu",
       "output_attention": false,
@@ -72,7 +72,7 @@
       "num_workers": 30,
       "max_epochs": 300,
       "batch_size": 32,
-      "patience": 20,
+      "patience": 30,
       "learning_rate": 0.0001,
       "loss": "MSE",
       "accelerator": "auto",
@@ -93,8 +93,8 @@
   "model_overrides": {
     "defaults": {
       "model_config": {
-        "max_epochs": 200,
-        "patience": 20
+        "max_epochs": 300,
+        "patience": 30
       }
     },
     "TimesNet": {
@@ -111,7 +111,7 @@
         "d_model": 128,
         "e_layers": 2,
         "d_ff": 512,
-        "moving_avg": 8,
+        "moving_avg": 4,
         "channel_independence": 0
       }
     },
@@ -130,8 +130,8 @@
         "n_heads": 4,
         "e_layers": 2,
         "d_ff": 1024,
-        "patch_len": 4,
-        "stride": 2
+        "patch_len": 2,
+        "stride": 1
       }
     }
   },
@@ -139,13 +139,8 @@
     "defaults": {
       "model_config": {
         "learning_rate": [
-          0.00001,
           0.0001,
           0.001
-        ],
-        "batch_size": [
-          16,
-          32
         ]
       }
     },
@@ -153,34 +148,20 @@
       "model_config": {
         "top_k": [
           1,
-          2,
-          3
-        ],
-        "num_kernels": [
-          4,
-          6
+          2
         ]
       }
     },
     "TimeMixer": {
       "model_config": {
         "moving_avg": [
-          3,
-          5,
-          7
-        ],
-        "channel_independence": [
-          0,
-          1
+          2,
+          4
         ]
       }
     },
     "iTransformer": {
       "model_config": {
-        "n_heads": [
-          4,
-          8
-        ],
         "factor": [
           1,
           3
@@ -189,11 +170,6 @@
     },
     "PatchTST": {
       "model_config": {
-        "patch_len": [
-          2,
-          4,
-          8
-        ],
         "stride": [
           1,
           2
