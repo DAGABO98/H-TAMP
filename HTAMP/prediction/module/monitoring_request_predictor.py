@@ -144,7 +144,7 @@ class MonitoringRequestsPredictor:
         from lightning.pytorch.loggers import WandbLogger
 
         experiment = wandb.init(
-            project="vital_signs_timeseries",
+            project="monitoring_requests_timeseries",
             config=config_payload,
             dir=log_dir,
         )
