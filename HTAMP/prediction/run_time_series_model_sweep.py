@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
-from HTAMP.prediction.configs.request_config import (
-    MedicalRequestDatasetConfig,
-    RequestModelSweepConfig,
-    RequestTrainingConfig,
+from HTAMP.prediction.configs.monitoring_request_config import (
+    MonitoringRequestDatasetConfig,
+    MonitoringRequestModelSweepConfig,
+    MonitoringRequestTrainingConfig,
     SUPPORTED_REQUEST_MODELS,
     TimeseriesModelConfig,
 )
@@ -54,7 +54,7 @@ PREFERRED_TEST_PLOT_METRICS = [
     "test_loss",
 ]
 CONFIG_SECTION_FIELDS = {
-    "dataset_config": {field.name for field in fields(MedicalRequestDatasetConfig)},
+    "dataset_config": {field.name for field in fields(MonitoringRequestDatasetConfig)},
     "model_config": {field.name for field in fields(TimeseriesModelConfig)},
 }
 ANNOTATED_DATA_FILE_FIELDS = {field.name for field in fields(AnnotatedDataFiles)}
@@ -66,7 +66,7 @@ class SweepTrial:
     trial_index: int
     total_model_trials: int
     run_name: str
-    training_config: RequestTrainingConfig
+    training_config: MonitoringRequestTrainingConfig
     applied_overrides: dict[str, Any]
     search_overrides: dict[str, Any]
     dataset_group_key: str
@@ -417,7 +417,7 @@ def _validate_selection_metric(selection_metric: str) -> str:
     return normalized_metric
 
 
-def _validate_training_config_for_model(training_config: RequestTrainingConfig) -> None:
+def _validate_training_config_for_model(training_config: MonitoringRequestTrainingConfig) -> None:
     model_config = training_config.model_config
     model_name = model_config.model_name
 
@@ -447,11 +447,11 @@ def _validate_training_config_for_model(training_config: RequestTrainingConfig) 
 
 
 def _build_effective_training_config(
-    sweep_config: RequestModelSweepConfig,
+    sweep_config: MonitoringRequestModelSweepConfig,
     model_name: str,
     preprocess_data: bool,
-) -> tuple[RequestTrainingConfig, dict[str, Any]]:
-    effective_training_config = RequestTrainingConfig.from_dict(
+) -> tuple[MonitoringRequestTrainingConfig, dict[str, Any]]:
+    effective_training_config = MonitoringRequestTrainingConfig.from_dict(
         sweep_config.predictor_config.to_dict()
     )
     applied_overrides: dict[str, Any] = {}
@@ -482,7 +482,7 @@ def _build_effective_training_config(
 
 
 def _build_effective_search_space(
-    sweep_config: RequestModelSweepConfig,
+    sweep_config: MonitoringRequestModelSweepConfig,
     model_name: str,
 ) -> dict[str, Any]:
     effective_search_space: dict[str, Any] = {}
@@ -544,7 +544,7 @@ def _expand_search_space_overrides(search_space: Mapping[str, Any]) -> list[dict
     return search_overrides
 
 
-def _dataset_group_key(training_config: RequestTrainingConfig) -> str:
+def _dataset_group_key(training_config: MonitoringRequestTrainingConfig) -> str:
     dataset_payload = training_config.dataset_config.to_dict()
     dataset_payload.pop("preprocess_data", None)
     dataset_payload.pop("save_data", None)
@@ -553,7 +553,7 @@ def _dataset_group_key(training_config: RequestTrainingConfig) -> str:
 
 
 def _build_model_trials(
-    sweep_config: RequestModelSweepConfig,
+    sweep_config: MonitoringRequestModelSweepConfig,
     model_name: str,
     preprocess_data: bool,
 ) -> list[SweepTrial]:
@@ -683,14 +683,14 @@ def _normalize_parallel_trial_settings(
             )
 
 
-def _resolve_parallelism(sweep_config: RequestModelSweepConfig) -> int:
+def _resolve_parallelism(sweep_config: MonitoringRequestModelSweepConfig) -> int:
     parallelism = max(1, sweep_config.max_parallel_runs)
     if sweep_config.gpu_ids:
         parallelism = min(parallelism, len(sweep_config.gpu_ids))
     return max(1, parallelism)
 
 
-def _build_sweep_trials(sweep_config: RequestModelSweepConfig) -> list[SweepTrial]:
+def _build_sweep_trials(sweep_config: MonitoringRequestModelSweepConfig) -> list[SweepTrial]:
     preprocess_data = bool(sweep_config.predictor_config.dataset_config.preprocess_data)
     trials: list[SweepTrial] = []
     for model_name in sweep_config.models:
@@ -712,7 +712,7 @@ def _build_sweep_trials(sweep_config: RequestModelSweepConfig) -> list[SweepTria
     return trials
 
 
-def _write_temp_training_config(training_config: RequestTrainingConfig, run_name: str) -> Path:
+def _write_temp_training_config(training_config: MonitoringRequestTrainingConfig, run_name: str) -> Path:
     safe_prefix = "".join(char if char.isalnum() else "_" for char in run_name.lower())
     temp_config_dir = _temp_config_dir()
     temp_config_dir.mkdir(parents=True, exist_ok=True)
@@ -916,7 +916,7 @@ def _cancel_running_trials(running_trials: list[RunningTrial]) -> list[dict[str,
 
 
 def _run_sweep_trials(
-    sweep_config: RequestModelSweepConfig,
+    sweep_config: MonitoringRequestModelSweepConfig,
     trials: list[SweepTrial],
     summary_path: Path,
 ) -> tuple[list[dict[str, object]], int]:
@@ -1146,7 +1146,7 @@ def _plot_test_metric_comparison(
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    sweep_config = RequestModelSweepConfig.from_json_file(args.config_path)
+    sweep_config = MonitoringRequestModelSweepConfig.from_json_file(args.config_path)
     sweep_config.models = _validate_models(models=sweep_config.models)
     sweep_config.selection_metric = _validate_selection_metric(
         selection_metric=sweep_config.selection_metric

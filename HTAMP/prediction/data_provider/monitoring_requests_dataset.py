@@ -16,9 +16,9 @@ import torch
 from torch.utils.data import Dataset
 
 from HTAMP.planning.request_handler import GlobalRequestHandler
-from HTAMP.prediction.configs.request_config import (
-    MedicalRequestDatasetConfig,
-    RequestTrainingConfig,
+from HTAMP.prediction.configs.monitoring_request_config import (
+    MonitoringRequestDatasetConfig,
+    MonitoringRequestTrainingConfig,
     SUPPORTED_REQUEST_TASKS,
     TimeseriesModelConfig,
 )
@@ -172,7 +172,7 @@ def _normalize_identifier_series(series: pd.Series) -> pd.Series:
 
 
 def _resolved_admissions_discharges_path(
-    dataset_config: MedicalRequestDatasetConfig,
+    dataset_config: MonitoringRequestDatasetConfig,
 ) -> Path | None:
     configured_path = str(
         getattr(dataset_config.annotated_data_files, "annotated_admissions_discharges", "")
@@ -203,7 +203,7 @@ def _path_signature(path_value: str | Path) -> dict[str, object]:
 
 
 def _requests_time_series_signature(
-    dataset_config: MedicalRequestDatasetConfig,
+    dataset_config: MonitoringRequestDatasetConfig,
     sequence_length: int,
     label_length: int,
     prediction_length: int,
@@ -275,7 +275,7 @@ def _dataset_cache_files_exist(dataset_dir: Path) -> bool:
 
 
 def _resolve_requests_time_series_source_kind(
-    dataset_config: MedicalRequestDatasetConfig,
+    dataset_config: MonitoringRequestDatasetConfig,
 ) -> str:
     dataset_dir = Path(dataset_config.dataset_dir)
     request_dir = Path(dataset_config.request_dir)
@@ -293,7 +293,7 @@ def _resolve_requests_time_series_source_kind(
 
 
 def _requests_time_series_cache_path(
-    dataset_config: MedicalRequestDatasetConfig,
+    dataset_config: MonitoringRequestDatasetConfig,
     sequence_length: int,
     label_length: int,
     prediction_length: int,
@@ -359,7 +359,7 @@ EVENT_MEASUREMENT_COLUMNS = tuple(
 class RequestsDataManager:
     def __init__(
         self,
-        dataset_config: MedicalRequestDatasetConfig
+        dataset_config: MonitoringRequestDatasetConfig
     ) -> None:
         self.dataset_config = dataset_config
         self.dataset_dir = Path(self.dataset_config.dataset_dir)
@@ -1392,7 +1392,7 @@ class RequestsDataManager:
         return self.test_requests_df, self.test_segments_df
 
 
-class RequestsTimeSeries:
+class MonitoringRequestsTimeSeries:
     def __init__(
         self,
         train_data_df: pd.DataFrame,
@@ -1929,7 +1929,7 @@ class RequestsTimeSeries:
 
     def _cache_payload(
         self,
-        dataset_config: MedicalRequestDatasetConfig,
+        dataset_config: MonitoringRequestDatasetConfig,
     ) -> dict[str, object]:
         source_kind = _resolve_requests_time_series_source_kind(
             dataset_config=dataset_config,
@@ -1947,7 +1947,7 @@ class RequestsTimeSeries:
             "time_series": self,
         }
 
-    def save_cache(self, dataset_config: MedicalRequestDatasetConfig) -> Path:
+    def save_cache(self, dataset_config: MonitoringRequestDatasetConfig) -> Path:
         cache_path = _requests_time_series_cache_path(
             dataset_config=dataset_config,
             sequence_length=self.sequence_length,
@@ -1977,11 +1977,11 @@ class RequestsTimeSeries:
     @classmethod
     def load_cache(
         cls,
-        dataset_config: MedicalRequestDatasetConfig,
+        dataset_config: MonitoringRequestDatasetConfig,
         sequence_length: int,
         label_length: int,
         prediction_length: int,
-    ) -> "RequestsTimeSeries":
+    ) -> "MonitoringRequestsTimeSeries":
         cache_path = _requests_time_series_cache_path(
             dataset_config=dataset_config,
             sequence_length=sequence_length,
@@ -2017,10 +2017,10 @@ class RequestsTimeSeries:
         return time_series
 
 
-class RequestsDataset(Dataset):
+class MonitoringRequestsDataset(Dataset):
     def __init__(
         self,
-        request_time_series: RequestsTimeSeries,
+        request_time_series: MonitoringRequestsTimeSeries,
         slice_start_points_dict: Optional[dict[str, list[int]]] = None,
         split: str = "train",
         sequence_length: int = 5,
@@ -2061,9 +2061,9 @@ class RequestsDataset(Dataset):
 
 
 def build_request_time_series(
-    dataset_config: MedicalRequestDatasetConfig,
+    dataset_config: MonitoringRequestDatasetConfig,
     model_config: TimeseriesModelConfig,
-) -> RequestsTimeSeries:
+) -> MonitoringRequestsTimeSeries:
     if dataset_config.use_saved_time_series:
         print("Checking for cached request time series...")
         cache_path = _requests_time_series_cache_path(
@@ -2075,7 +2075,7 @@ def build_request_time_series(
         if cache_path.exists():
             print(f"Found cached request time series at {cache_path}. Attempting to load...")
             try:
-                time_series = RequestsTimeSeries.load_cache(
+                time_series = MonitoringRequestsTimeSeries.load_cache(
                     dataset_config=dataset_config,
                     sequence_length=model_config.seq_len,
                     label_length=model_config.label_len,
@@ -2101,7 +2101,7 @@ def build_request_time_series(
     val_data_df, val_segments_df = request_data_manager.get_requests_validation_data()
     test_data_df, test_segments_df = request_data_manager.get_requests_testing_data()
 
-    time_series = RequestsTimeSeries(
+    time_series = MonitoringRequestsTimeSeries(
         train_data_df=train_data_df,
         val_data_df=val_data_df,
         test_data_df=test_data_df,
@@ -2143,7 +2143,7 @@ if __name__ == '__main__':
     try:
         parser = build_parser()
         args = parser.parse_args()
-        training_config = RequestTrainingConfig.from_json_file(args.config_path)
+        training_config = MonitoringRequestTrainingConfig.from_json_file(args.config_path)
         dataset_config = training_config.dataset_config
         model_config = training_config.model_config
         
@@ -2154,7 +2154,7 @@ if __name__ == '__main__':
         
 
         data_module = DataModule(
-            dataset_cls=RequestsDataset,
+            dataset_cls=MonitoringRequestsDataset,
             dataset_kwargs={
                 "request_time_series": time_series,
                 "split": "test",

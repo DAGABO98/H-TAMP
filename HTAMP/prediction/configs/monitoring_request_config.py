@@ -9,7 +9,6 @@ from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 
 SUPPORTED_REQUEST_MODELS = ("TimesNet", "TimeMixer", "iTransformer", "PatchTST")
 SUPPORTED_REQUEST_TASKS = (
-    "medication",
     "blood_pressure",
     "heart_rate",
     "respiratory_rate",
@@ -185,7 +184,7 @@ def _normalize_validation_split_seed(raw_seed: Any) -> int:
 
 
 @dataclass
-class MedicalRequestDatasetConfig:
+class MonitoringRequestDatasetConfig:
     annotated_data_files: AnnotatedDataFiles
     request_dir: str = "data/requests"
     dataset_dir: str = "data/prediction/request_intervals"
@@ -223,7 +222,7 @@ class MedicalRequestDatasetConfig:
         )
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any] | "MedicalRequestDatasetConfig") -> "MedicalRequestDatasetConfig":
+    def from_dict(cls, payload: Mapping[str, Any] | "MonitoringRequestDatasetConfig") -> "MonitoringRequestDatasetConfig":
         if isinstance(payload, cls):
             return payload
 
@@ -233,7 +232,7 @@ class MedicalRequestDatasetConfig:
         return cls(**dataset_payload)
 
     @classmethod
-    def from_json_file(cls, config_path: str | Path) -> "MedicalRequestDatasetConfig":
+    def from_json_file(cls, config_path: str | Path) -> "MonitoringRequestDatasetConfig":
         return cls.from_dict(payload=_load_json_object(config_path=config_path))
 
     def to_dict(self) -> dict[str, object]:
@@ -341,32 +340,32 @@ class TimeseriesModelConfig:
 
 
 @dataclass
-class RequestTrainingConfig:
-    dataset_config: MedicalRequestDatasetConfig
+class MonitoringRequestTrainingConfig:
+    dataset_config: MonitoringRequestDatasetConfig
     model_config: TimeseriesModelConfig
 
     def __post_init__(self) -> None:
-        self.dataset_config = MedicalRequestDatasetConfig.from_dict(self.dataset_config)
+        self.dataset_config = MonitoringRequestDatasetConfig.from_dict(self.dataset_config)
         self.model_config = TimeseriesModelConfig.from_dict(self.model_config)
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any] | "RequestTrainingConfig") -> "RequestTrainingConfig":
+    def from_dict(cls, payload: Mapping[str, Any] | "MonitoringRequestTrainingConfig") -> "MonitoringRequestTrainingConfig":
         if isinstance(payload, cls):
             return payload
 
         config_payload = dict(_coerce_mapping(value=payload, field_name="training_config"))
         return cls(
-            dataset_config=MedicalRequestDatasetConfig.from_dict(config_payload["dataset_config"]),
+            dataset_config=MonitoringRequestDatasetConfig.from_dict(config_payload["dataset_config"]),
             model_config=TimeseriesModelConfig.from_dict(config_payload["model_config"]),
         )
 
     @classmethod
-    def from_json_file(cls, config_path: str | Path) -> "RequestTrainingConfig":
+    def from_json_file(cls, config_path: str | Path) -> "MonitoringRequestTrainingConfig":
         return cls.from_dict(payload=_load_json_object(config_path=config_path))
 
-    def with_overrides(self, overrides: Mapping[str, Any] | None) -> "RequestTrainingConfig":
+    def with_overrides(self, overrides: Mapping[str, Any] | None) -> "MonitoringRequestTrainingConfig":
         if overrides is None:
-            return RequestTrainingConfig.from_dict(self)
+            return MonitoringRequestTrainingConfig.from_dict(self)
 
         merged_payload = self.to_dict()
         for section_name, section_updates in dict(_coerce_mapping(value=overrides, field_name="model_overrides")).items():
@@ -381,15 +380,15 @@ class RequestTrainingConfig:
                 updates=section_mapping,
             )
 
-        return RequestTrainingConfig.from_dict(merged_payload)
+        return MonitoringRequestTrainingConfig.from_dict(merged_payload)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
 
 @dataclass
-class RequestPredictionJobConfig:
-    dataset_config: MedicalRequestDatasetConfig
+class MonitoringRequestPredictionJobConfig:
+    dataset_config: MonitoringRequestDatasetConfig
     model_config: TimeseriesModelConfig
     checkpoint_path: str
     predictions_dir: Optional[str] = None
@@ -397,7 +396,7 @@ class RequestPredictionJobConfig:
     prediction_splits: tuple[str, ...] = ("train", "val", "test")
 
     def __post_init__(self) -> None:
-        self.dataset_config = MedicalRequestDatasetConfig.from_dict(self.dataset_config)
+        self.dataset_config = MonitoringRequestDatasetConfig.from_dict(self.dataset_config)
         self.model_config = TimeseriesModelConfig.from_dict(self.model_config)
         if isinstance(self.prediction_splits, str):
             self.prediction_splits = (self.prediction_splits,)
@@ -406,14 +405,14 @@ class RequestPredictionJobConfig:
     @classmethod
     def from_dict(
         cls,
-        payload: Mapping[str, Any] | "RequestPredictionJobConfig",
-    ) -> "RequestPredictionJobConfig":
+        payload: Mapping[str, Any] | "MonitoringRequestPredictionJobConfig",
+    ) -> "MonitoringRequestPredictionJobConfig":
         if isinstance(payload, cls):
             return payload
 
         config_payload = dict(_coerce_mapping(value=payload, field_name="prediction_job_config"))
         return cls(
-            dataset_config=MedicalRequestDatasetConfig.from_dict(config_payload["dataset_config"]),
+            dataset_config=MonitoringRequestDatasetConfig.from_dict(config_payload["dataset_config"]),
             model_config=TimeseriesModelConfig.from_dict(config_payload["model_config"]),
             checkpoint_path=str(config_payload["checkpoint_path"]),
             predictions_dir=config_payload.get("predictions_dir"),
@@ -422,7 +421,7 @@ class RequestPredictionJobConfig:
         )
 
     @classmethod
-    def from_json_file(cls, config_path: str | Path) -> "RequestPredictionJobConfig":
+    def from_json_file(cls, config_path: str | Path) -> "MonitoringRequestPredictionJobConfig":
         return cls.from_dict(payload=_load_json_object(config_path=config_path))
 
     def to_dict(self) -> dict[str, object]:
@@ -430,10 +429,10 @@ class RequestPredictionJobConfig:
 
 
 @dataclass
-class RequestModelSweepConfig:
-    predictor_config: RequestTrainingConfig
+class MonitoringRequestModelSweepConfig:
+    predictor_config: MonitoringRequestTrainingConfig
     models: tuple[str, ...] = field(default_factory=lambda: SUPPORTED_REQUEST_MODELS)
-    summary_path: str = "data/prediction/request_model_sweep_summary.csv"
+    summary_path: str = "data/prediction/monitoring_request_model_sweep_summary.csv"
     comparison_plot_path: Optional[str] = None
     selection_metric: str = "val_delta_mae"
     fail_fast: bool = False
@@ -443,7 +442,7 @@ class RequestModelSweepConfig:
     gpu_ids: tuple[int, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        self.predictor_config = RequestTrainingConfig.from_dict(self.predictor_config)
+        self.predictor_config = MonitoringRequestTrainingConfig.from_dict(self.predictor_config)
         if isinstance(self.models, str):
             self.models = (self.models,)
         self.models = tuple(self.models)
@@ -473,15 +472,15 @@ class RequestModelSweepConfig:
             raise ValueError("gpu_ids must contain non-negative integers.")
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any] | "RequestModelSweepConfig") -> "RequestModelSweepConfig":
+    def from_dict(cls, payload: Mapping[str, Any] | "MonitoringRequestModelSweepConfig") -> "MonitoringRequestModelSweepConfig":
         if isinstance(payload, cls):
             return payload
 
         config_payload = dict(_coerce_mapping(value=payload, field_name="model_sweep_config"))
         return cls(
-            predictor_config=RequestTrainingConfig.from_dict(config_payload["predictor_config"]),
+            predictor_config=MonitoringRequestTrainingConfig.from_dict(config_payload["predictor_config"]),
             models=config_payload.get("models", SUPPORTED_REQUEST_MODELS),
-            summary_path=str(config_payload.get("summary_path", "data/prediction/request_model_sweep_summary.csv")),
+            summary_path=str(config_payload.get("summary_path", "data/prediction/monitoring_request_model_sweep_summary.csv")),
             comparison_plot_path=config_payload.get("comparison_plot_path"),
             selection_metric=str(config_payload.get("selection_metric", "val_delta_mae")),
             fail_fast=bool(config_payload.get("fail_fast", False)),
@@ -492,7 +491,7 @@ class RequestModelSweepConfig:
         )
 
     @classmethod
-    def from_json_file(cls, config_path: str | Path) -> "RequestModelSweepConfig":
+    def from_json_file(cls, config_path: str | Path) -> "MonitoringRequestModelSweepConfig":
         return cls.from_dict(payload=_load_json_object(config_path=config_path))
 
     def to_dict(self) -> dict[str, object]:

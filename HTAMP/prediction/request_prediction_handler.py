@@ -10,24 +10,24 @@ from typing import Optional, Sequence
 import pandas as pd
 import torch
 
-from HTAMP.prediction.data_provider.requests_dataset import (
-    RequestsDataset,
-    RequestsTimeSeries,
+from HTAMP.prediction.data_provider.monitoring_requests_dataset import (
+    MonitoringRequestsDataset,
+    MonitoringRequestsTimeSeries,
     build_request_time_series,
 )
-from HTAMP.prediction.configs.request_config import (
-    MedicalRequestDatasetConfig,
-    RequestPredictionJobConfig,
+from HTAMP.prediction.configs.monitoring_request_config import (
+    MonitoringRequestDatasetConfig,
+    MonitoringRequestPredictionJobConfig,
     TimeseriesModelConfig,
 )
-from HTAMP.prediction.module.request_module import RequestsModule
+from HTAMP.prediction.module.monitoring_request_module import MonitoringRequestsModule
 
 SPLITS = ("train", "val", "test")
 
 class RequestPredictionManager:
     def __init__(
         self,
-        dataset_config: MedicalRequestDatasetConfig,
+        dataset_config: MonitoringRequestDatasetConfig,
         model_config: TimeseriesModelConfig,
         checkpoint_file_path: str,
         predictions_dir: Optional[str] = None,
@@ -81,15 +81,15 @@ class RequestPredictionManager:
     def _prediction_metadata_path(self) -> Path:
         return self.predictions_dir / "requests_metadata.json"
 
-    def _build_time_series(self) -> RequestsTimeSeries:
+    def _build_time_series(self) -> MonitoringRequestsTimeSeries:
         return build_request_time_series(
             dataset_config=self.dataset_config,
             model_config=self.model_config,
         )
 
-    def _load_model(self, device: torch.device) -> RequestsModule:
+    def _load_model(self, device: torch.device) -> MonitoringRequestsModule:
         print("Loading request interval predictor ...")
-        requests_forecaster = RequestsModule.load_from_checkpoint(
+        requests_forecaster = MonitoringRequestsModule.load_from_checkpoint(
             checkpoint_path=str(self.checkpoint_path),
             map_location=device,
         )
@@ -100,10 +100,10 @@ class RequestPredictionManager:
 
     def _build_dataset(
         self,
-        time_series: RequestsTimeSeries,
+        time_series: MonitoringRequestsTimeSeries,
         split: str,
-    ) -> RequestsDataset:
-        return RequestsDataset(
+    ) -> MonitoringRequestsDataset:
+        return MonitoringRequestsDataset(
             request_time_series=time_series,
             split=split,
             sequence_length=self.model_config.seq_len,
@@ -130,7 +130,7 @@ class RequestPredictionManager:
     def _build_prediction_record(
         self,
         split: str,
-        time_series: RequestsTimeSeries,
+        time_series: MonitoringRequestsTimeSeries,
         metadata_row: pd.Series,
         prediction_intervals,
         prediction_availability,
@@ -158,10 +158,10 @@ class RequestPredictionManager:
 
     def _generate_request_predictions(
         self,
-        requests_dataset: RequestsDataset,
-        time_series: RequestsTimeSeries,
+        requests_dataset: MonitoringRequestsDataset,
+        time_series: MonitoringRequestsTimeSeries,
         split: str,
-        requests_forecaster: RequestsModule,
+        requests_forecaster: MonitoringRequestsModule,
     ) -> list[dict[str, object]]:
         prediction_records: list[dict[str, object]] = []
         metadata_df = time_series.get_split_metadata(split=split).reset_index(drop=True)
@@ -205,7 +205,7 @@ class RequestPredictionManager:
         print(f"Request-interval predictions have been generated for split '{split}'!")
         return prediction_records
 
-    def _build_prediction_metadata(self, time_series: RequestsTimeSeries) -> dict[str, object]:
+    def _build_prediction_metadata(self, time_series: MonitoringRequestsTimeSeries) -> dict[str, object]:
         return {
             "checkpoint_path": str(self.checkpoint_path),
             "dataset_dir": self.dataset_config.dataset_dir,
@@ -293,7 +293,7 @@ if __name__ == "__main__":
     try:
         parser = build_parser()
         args = parser.parse_args()
-        prediction_job_config = RequestPredictionJobConfig.from_json_file(args.config_path)
+        prediction_job_config = MonitoringRequestPredictionJobConfig.from_json_file(args.config_path)
 
         RequestPredictionManager(
             dataset_config=prediction_job_config.dataset_config,

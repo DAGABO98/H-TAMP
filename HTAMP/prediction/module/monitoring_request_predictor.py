@@ -12,17 +12,17 @@ from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 
 from HTAMP.prediction.data_provider.data_module import DataModule
-from HTAMP.prediction.data_provider.requests_dataset import (
-    RequestsDataset,
-    RequestsTimeSeries,
+from HTAMP.prediction.data_provider.monitoring_requests_dataset import (
+    MonitoringRequestsDataset,
+    MonitoringRequestsTimeSeries,
     build_request_time_series,
 )
-from HTAMP.prediction.configs.request_config import (
-    MedicalRequestDatasetConfig,
-    RequestTrainingConfig,
+from HTAMP.prediction.configs.monitoring_request_config import (
+    MonitoringRequestDatasetConfig,
+    MonitoringRequestTrainingConfig,
     TimeseriesModelConfig,
 )
-from HTAMP.prediction.module.request_module import RequestsModule
+from HTAMP.prediction.module.monitoring_request_module import MonitoringRequestsModule
 
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 
@@ -61,19 +61,19 @@ def _metric_higher_is_better(metric_name: str) -> bool:
         for token in ("accuracy", "auc", "f1", "precision", "recall")
     )
 
-class RequestsPredictor:
+class MonitoringRequestsPredictor:
     def create_data_module_and_time_series(
         self,
         model_config: TimeseriesModelConfig,
-        dataset_config: MedicalRequestDatasetConfig,
-    ) -> tuple[DataModule, RequestsTimeSeries]:
+        dataset_config: MonitoringRequestDatasetConfig,
+    ) -> tuple[DataModule, MonitoringRequestsTimeSeries]:
         time_series = build_request_time_series(
             dataset_config=dataset_config,
             model_config=model_config,
         )
 
         data_module = DataModule(
-            dataset_cls=RequestsDataset,
+            dataset_cls=MonitoringRequestsDataset,
             dataset_kwargs={
                 "request_time_series": time_series,
                 "sequence_length": model_config.seq_len,
@@ -90,9 +90,9 @@ class RequestsPredictor:
     def create_model(
         self,
         model_config: TimeseriesModelConfig,
-        time_series: RequestsTimeSeries,
-    ) -> RequestsModule:
-        return RequestsModule(
+        time_series: MonitoringRequestsTimeSeries,
+    ) -> MonitoringRequestsModule:
+        return MonitoringRequestsModule(
             model_config=model_config,
             target_scaler_mean=time_series.target_scaler_mean.tolist(),
             target_scaler_scale=time_series.target_scaler_scale.tolist(),
@@ -172,7 +172,7 @@ class RequestsPredictor:
 
     def _write_metrics_summary(
         self,
-        training_config: RequestTrainingConfig,
+        training_config: MonitoringRequestTrainingConfig,
         log_dir: str,
         checkpoint_callback: ModelCheckpoint,
         validation_metrics: dict[str, Any],
@@ -203,7 +203,7 @@ class RequestsPredictor:
 
         return summary_path
 
-    def compile_and_train(self, training_config: RequestTrainingConfig) -> dict[str, Any]:
+    def compile_and_train(self, training_config: MonitoringRequestTrainingConfig) -> dict[str, Any]:
         dataset_config = training_config.dataset_config
         model_config = training_config.model_config
 
@@ -275,8 +275,8 @@ def main() -> int:
     try:
         parser = build_parser()
         parsed_args = parser.parse_args()
-        training_config = RequestTrainingConfig.from_json_file(parsed_args.config_path)
-        request_predictor = RequestsPredictor()
+        training_config = MonitoringRequestTrainingConfig.from_json_file(parsed_args.config_path)
+        request_predictor = MonitoringRequestsPredictor()
         request_predictor.compile_and_train(training_config=training_config)
         return 0
     except Exception as error_main_context:
