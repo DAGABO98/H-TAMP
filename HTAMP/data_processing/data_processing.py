@@ -272,7 +272,6 @@ class DataProcessor:
                                   "administered_start", 
                                   "administered_end", 
                                   "Patient ID", 
-                                  "Patient Encounter CSN", 
                                   "Race",
                                   "Age at Admission",
                                   "Order Med ID"], inplace=True)
@@ -414,8 +413,7 @@ class DataProcessor:
         administered_df.drop(columns=["scheduled_start",
                                   "scheduled_end",
                                   "administered_start", 
-                                  "administered_end", 
-                                  "Patient Encounter CSN"], inplace=True)
+                                  "administered_end"], inplace=True)
         return administered_df
     
     def _annotate_blood_pressure_orders_with_room(self) -> pd.DataFrame:
