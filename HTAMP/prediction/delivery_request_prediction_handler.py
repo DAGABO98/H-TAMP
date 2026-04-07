@@ -111,15 +111,20 @@ class DeliveryRequestPredictionManager:
         self,
         probabilities,
         labels: Sequence[str],
+        display_map: Optional[dict[str, str]] = None,
     ) -> list[dict[str, object]]:
         if len(labels) == 0:
             return []
         top_k = min(self.top_k_labels, len(labels))
         top_indices = probabilities.argsort()[::-1][:top_k]
-        return [
-            {"label": labels[int(index)], "probability": float(probabilities[int(index)])}
-            for index in top_indices
-        ]
+        top_labels: list[dict[str, object]] = []
+        for index in top_indices:
+            label = str(labels[int(index)])
+            row = {"label": label, "probability": float(probabilities[int(index)])}
+            if display_map is not None:
+                row["display_name"] = str(display_map.get(label, label))
+            top_labels.append(row)
+        return top_labels
 
     def _generate_split_predictions(
         self,
@@ -168,6 +173,7 @@ class DeliveryRequestPredictionManager:
                             self._top_labels(
                                 probabilities=outputs["med_probs"][batch_offset],
                                 labels=dataset_bundle.med_vocab,
+                                display_map=dataset_bundle.med_code_display_map,
                             )
                         ),
                         "true_event": float(batch["event"][batch_offset].item()),
@@ -186,6 +192,8 @@ class DeliveryRequestPredictionManager:
             "time_bins_hours": dataset_bundle.time_bins_hours.tolist(),
             "vital_vocab": list(dataset_bundle.vital_vocab),
             "med_vocab": list(dataset_bundle.med_vocab),
+            "med_code_display_map": dict(dataset_bundle.med_code_display_map),
+            "medication_mapping": dataset_bundle.metadata.get("medication_mapping", {}),
         }
 
     def _initialize_prediction_df(self) -> pd.DataFrame:

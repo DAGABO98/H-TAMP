@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
+from HTAMP.prediction.medication_mapping import (
+    SUPPORTED_MEDICATION_CODE_STRATEGIES,
+    SUPPORTED_MEDICATION_MAPPING_FALLBACKS,
+)
 
 SUPPORTED_DELIVERY_CONTEXT_TASKS = (
     "blood_pressure",
@@ -217,6 +221,9 @@ class DeliveryRequestDatasetConfig:
     include_order_triggers: bool = True
     use_admin_as_vital_time: bool = True
     medication_code_col: Optional[str] = None
+    medication_mapping_csv: Optional[str] = None
+    medication_code_strategy: str = "raw_name"
+    medication_mapping_fallback: str = "keep_clean_name"
     medication_location_col: str = "scheduled_space_id"
     use_saved_request_data: bool = False
     use_saved_dataset: bool = False
@@ -259,6 +266,24 @@ class DeliveryRequestDatasetConfig:
 
         if self.medication_code_col is not None:
             self.medication_code_col = str(self.medication_code_col).strip() or None
+        if self.medication_mapping_csv is not None:
+            self.medication_mapping_csv = str(self.medication_mapping_csv).strip() or None
+        self.medication_code_strategy = str(self.medication_code_strategy).strip().lower()
+        if self.medication_code_strategy not in SUPPORTED_MEDICATION_CODE_STRATEGIES:
+            raise ValueError(
+                f"Unsupported medication_code_strategy '{self.medication_code_strategy}'. "
+                f"Expected one of {SUPPORTED_MEDICATION_CODE_STRATEGIES}."
+            )
+        self.medication_mapping_fallback = str(self.medication_mapping_fallback).strip().lower()
+        if self.medication_mapping_fallback not in SUPPORTED_MEDICATION_MAPPING_FALLBACKS:
+            raise ValueError(
+                f"Unsupported medication_mapping_fallback '{self.medication_mapping_fallback}'. "
+                f"Expected one of {SUPPORTED_MEDICATION_MAPPING_FALLBACKS}."
+            )
+        if self.medication_code_strategy != "raw_name" and self.medication_mapping_csv is None:
+            raise ValueError(
+                "medication_mapping_csv must be provided when medication_code_strategy is not 'raw_name'."
+            )
         self.medication_location_col = str(self.medication_location_col).strip()
         if not self.medication_location_col:
             raise ValueError("medication_location_col must not be empty.")

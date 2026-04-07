@@ -18,6 +18,10 @@ from HTAMP.prediction.configs.delivery_request_config import (
     DeliveryRequestDatasetConfig,
     DeliveryRequestTrainingConfig,
 )
+from HTAMP.prediction.medication_mapping import (
+    MedicationMappingApplier,
+    resolve_medication_name_column,
+)
 
 SPLITS = ("train", "val", "test")
 TIMESTAMP_COLUMN = "event_time"
@@ -28,7 +32,7 @@ WORKFLOW_IGNORED_CONFIG_FIELDS = (
     "use_saved_request_data",
     "use_saved_dataset",
 )
-DATASET_VERSION = 1
+DATASET_VERSION = 2
 NPZ_FILENAMES = {split: f"{split}.npz" for split in SPLITS}
 METADATA_FILENAMES = {split: f"{split}_metadata.csv" for split in SPLITS}
 TIMELINE_COLUMNS = ["patient_id", ENCOUNTER_ID_COLUMN, TIMESTAMP_COLUMN, "source_type"]
@@ -68,6 +72,7 @@ ENCOUNTER_ID_CANDIDATES = (
     "PAT_ENC_CSN_ID",
 )
 DEFAULT_MEDICATION_CODE_CANDIDATES = (
+    "Medication Generic Name",
     "Medication Name",
     "Medication",
     "Medication Display Name",
@@ -116,6 +121,45 @@ def _duration_to_bin(duration_hours: float, bins: Sequence[float]) -> int:
     if bin_index >= len(bins):
         bin_index = len(bins) - 1
     return bin_index
+
+
+def _build_med_code_display_map(
+    med_vocab: Sequence[str],
+    *frames: pd.DataFrame,
+) -> dict[str, str]:
+    display_map = {str(med_code): str(med_code) for med_code in med_vocab}
+    valid_frames = [
+        frame[["med_code", "med_display_name"]].copy()
+        for frame in frames
+        if not frame.empty and {"med_code", "med_display_name"}.issubset(frame.columns)
+    ]
+    if not valid_frames:
+        return display_map
+
+    combined_df = pd.concat(valid_frames, ignore_index=True)
+    combined_df = combined_df.dropna(subset=["med_code", "med_display_name"]).copy()
+    if combined_df.empty:
+        return display_map
+
+    combined_df["med_code"] = combined_df["med_code"].astype(str)
+    combined_df["med_display_name"] = combined_df["med_display_name"].astype(str)
+    combined_df = combined_df[
+        combined_df["med_code"].isin(display_map)
+        & combined_df["med_display_name"].str.strip().ne("")
+    ]
+    if combined_df.empty:
+        return display_map
+
+    grouped = combined_df.groupby(["med_code", "med_display_name"]).size().reset_index(name="count")
+    grouped = grouped.sort_values(["med_code", "count", "med_display_name"], ascending=[True, False, True])
+    best_names = grouped.drop_duplicates(subset=["med_code"], keep="first")
+    display_map.update(
+        {
+            str(row.med_code): str(row.med_display_name)
+            for row in best_names.itertuples(index=False)
+        }
+    )
+    return display_map
 
 
 def _match_first_column(columns: Sequence[str], candidates: Sequence[str]) -> Optional[str]:
@@ -425,6 +469,7 @@ class DeliveryRequestsDataManager:
         self._warned_missing_measurements: set[str] = set()
         self.admission_windows_df = self._load_admission_windows()
         self.resolved_medication_code_col: Optional[str] = None
+        self.medication_mapping_applier = MedicationMappingApplier.from_dataset_config(dataset_config)
         self.samples: dict[str, dict[str, object]] = {}
         self.metadata: dict[str, object] = {}
 
@@ -681,40 +726,9 @@ class DeliveryRequestsDataManager:
         ).reset_index(drop=True)
 
     def _resolve_medication_code_col(self, med_df: pd.DataFrame) -> str:
-        if self.dataset_config.medication_code_col is not None:
-            explicit_col = _match_first_column(
-                med_df.columns.tolist(),
-                [self.dataset_config.medication_code_col],
-            )
-            if explicit_col is None:
-                raise ValueError(
-                    f"Configured medication_code_col '{self.dataset_config.medication_code_col}' "
-                    "was not found in the medication request data."
-                )
-            return explicit_col
-
-        matched_col = _match_first_column(
-            med_df.columns.tolist(),
-            DEFAULT_MEDICATION_CODE_CANDIDATES,
-        )
-        if matched_col is not None:
-            return matched_col
-
-        heuristic_columns = [
-            column
-            for column in med_df.columns
-            if "med" in _normalize_column_name(column)
-            and "time" not in _normalize_column_name(column)
-            and "dttm" not in _normalize_column_name(column)
-            and "space" not in _normalize_column_name(column)
-            and "room" not in _normalize_column_name(column)
-        ]
-        if heuristic_columns:
-            return heuristic_columns[0]
-
-        raise ValueError(
-            "Could not detect a medication identifier column in the medication request data. "
-            "Please set dataset_config.medication_code_col explicitly."
+        return resolve_medication_name_column(
+            columns=med_df.columns.tolist(),
+            explicit_col=self.dataset_config.medication_code_col,
         )
 
     def _build_medication_frames(
@@ -724,7 +738,14 @@ class DeliveryRequestsDataManager:
         med_df = request_handler.med_df
         if med_df.empty:
             empty_df = pd.DataFrame(
-                columns=["patient_id", ENCOUNTER_ID_COLUMN, TIMESTAMP_COLUMN, "med_code"]
+                columns=[
+                    "patient_id",
+                    ENCOUNTER_ID_COLUMN,
+                    TIMESTAMP_COLUMN,
+                    "med_code",
+                    "med_code_type",
+                    "med_display_name",
+                ]
             )
             return empty_df, empty_df
 
@@ -732,15 +753,39 @@ class DeliveryRequestsDataManager:
 
         order_df = self._prepare_base_event_df(df=med_df, time_col="Medication Order DTTM")
         order_df = order_df.rename(columns={self.patient_id_col: "patient_id"})
-        order_df["med_code"] = _normalize_string_series(order_df[self.resolved_medication_code_col])
+        order_df = self.medication_mapping_applier.apply(
+            order_df,
+            med_name_col=self.resolved_medication_code_col,
+        )
         order_df = order_df.dropna(subset=["med_code"]).copy()
-        order_df = order_df[["patient_id", ENCOUNTER_ID_COLUMN, TIMESTAMP_COLUMN, "med_code"]]
+        order_df = order_df[
+            [
+                "patient_id",
+                ENCOUNTER_ID_COLUMN,
+                TIMESTAMP_COLUMN,
+                "med_code",
+                "med_code_type",
+                "med_display_name",
+            ]
+        ]
 
         admin_df = self._prepare_base_event_df(df=med_df, time_col="Administered DTTM")
         admin_df = admin_df.rename(columns={self.patient_id_col: "patient_id"})
-        admin_df["med_code"] = _normalize_string_series(admin_df[self.resolved_medication_code_col])
+        admin_df = self.medication_mapping_applier.apply(
+            admin_df,
+            med_name_col=self.resolved_medication_code_col,
+        )
         admin_df = admin_df.dropna(subset=["med_code"]).copy()
-        admin_df = admin_df[["patient_id", ENCOUNTER_ID_COLUMN, TIMESTAMP_COLUMN, "med_code"]]
+        admin_df = admin_df[
+            [
+                "patient_id",
+                ENCOUNTER_ID_COLUMN,
+                TIMESTAMP_COLUMN,
+                "med_code",
+                "med_code_type",
+                "med_display_name",
+            ]
+        ]
 
         order_df = order_df.sort_values(
             ["patient_id", TIMESTAMP_COLUMN, "med_code", ENCOUNTER_ID_COLUMN],
@@ -1257,6 +1302,7 @@ class DeliveryRequestsDataManager:
         *,
         vital_vocab: Sequence[str],
         med_vocab: Sequence[str],
+        med_code_display_map: dict[str, str],
         vital_means: dict[str, float],
         vital_stds: dict[str, float],
         split_payloads: dict[str, dict[str, object]],
@@ -1270,6 +1316,7 @@ class DeliveryRequestsDataManager:
             "included_tasks": list(self.dataset_config.included_tasks),
             "vital_vocab": list(vital_vocab),
             "med_vocab": list(med_vocab),
+            "med_code_display_map": {str(key): str(value) for key, value in med_code_display_map.items()},
             "time_bins_hours": list(self.dataset_config.time_bins_hours),
             "vital_value_means": {name: float(vital_means[name]) for name in vital_vocab},
             "vital_value_stds": {name: float(vital_stds[name]) for name in vital_vocab},
@@ -1292,6 +1339,7 @@ class DeliveryRequestsDataManager:
                 for split_name in SPLITS
             },
             "medication_code_col": self.resolved_medication_code_col,
+            "medication_mapping": self.medication_mapping_applier.to_metadata(),
             "config_snapshot": _dataset_config_snapshot(self.dataset_config),
         }
 
@@ -1359,6 +1407,13 @@ class DeliveryRequestsDataManager:
                 "No medication identifiers met the training-vocabulary requirements. "
                 "Adjust top_meds or min_med_count."
             )
+        med_code_display_map = _build_med_code_display_map(
+            med_vocab,
+            train_admin_df,
+            train_orders_df,
+            admin_df,
+            orders_df,
+        )
 
         vital_means = _compute_vital_means(train_vitals_df, vital_vocab)
         vital_stds = _compute_vital_stds(train_vitals_df, vital_vocab)
@@ -1406,6 +1461,7 @@ class DeliveryRequestsDataManager:
         metadata = self._build_metadata(
             vital_vocab=vital_vocab,
             med_vocab=med_vocab,
+            med_code_display_map=med_code_display_map,
             vital_means=vital_means,
             vital_stds=vital_stds,
             split_payloads=split_payloads,
@@ -1499,6 +1555,10 @@ class DeliveryRequestsDatasetBundle:
         self.metadata = metadata
         self.vital_vocab = list(metadata.get("vital_vocab", []))
         self.med_vocab = list(metadata.get("med_vocab", []))
+        self.med_code_display_map = {
+            str(key): str(value)
+            for key, value in dict(metadata.get("med_code_display_map", {})).items()
+        }
         self.time_bins_hours = np.asarray(metadata.get("time_bins_hours", []), dtype=np.float32)
         self.x_mean = np.asarray(metadata.get("scaled_x_mean", []), dtype=np.float32)
 
