@@ -516,12 +516,12 @@ class RequestsDataManager:
         event_windows_df[time_col] = pd.to_datetime(event_windows_df[time_col], errors="coerce")
         event_windows_df = event_windows_df.dropna(
             subset=[self.patient_id_col, time_col]
-        ).sort_values([self.patient_id_col, time_col], kind="mergesort")
+        ).sort_values([time_col, self.patient_id_col], kind="mergesort")
         if event_windows_df.empty:
             return assigned_encounters
 
         admissions_df = self.admission_windows_df.sort_values(
-            [self.patient_id_col, "admission_start"],
+            ["admission_start", self.patient_id_col],
             kind="mergesort",
         ).reset_index(drop=True)
         merged_df = pd.merge_asof(
