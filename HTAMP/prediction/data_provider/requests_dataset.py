@@ -85,6 +85,7 @@ VITAL_OUTPUT_COMPONENTS: dict[str, list[str]] = {
 }
 
 TIMESTAMP_COLUMN = "timestamp"
+ENCOUNTER_ID_COLUMN = "encounter_id"
 TIME_MARK_COLUMNS = ["month", "day", "weekday", "hour", "minute"]
 TIME_FEATURE_SPECS = (
     ("month", 12.0, 1.0),
@@ -98,11 +99,11 @@ TIME_COLUMNS = [
     for component_name, _, _ in TIME_FEATURE_SPECS
     for trig_component in ("sin", "cos")
 ]
-SEGMENT_COLUMNS = ["patient_id", "start_idx", "end_idx", "num_rows"]
+SEGMENT_COLUMNS = ["patient_id", "encounter_id", "start_idx", "end_idx", "num_rows"]
 SPLITS = ("train", "val", "test")
 TASK_NAMES = tuple(SUPPORTED_REQUEST_TASKS)
 TASK_TO_INDEX = {task_name: index for index, task_name in enumerate(TASK_NAMES)}
-REQUESTS_TIME_SERIES_CACHE_VERSION = 3
+REQUESTS_TIME_SERIES_CACHE_VERSION = 4
 REQUESTS_TIME_SERIES_CACHE_DIRNAME = "time_series_cache"
 REQUEST_CACHE_FILENAMES = {
     "medication": "medications_extended.csv",
@@ -127,6 +128,22 @@ REQUESTS_TIME_SERIES_IGNORED_CONFIG_FIELDS = (
     "use_saved_request_data",
     "use_saved_time_series",
 )
+ENCOUNTER_ID_CANDIDATES = (
+    ENCOUNTER_ID_COLUMN,
+    "Patient Encounter CSN",
+    "PAT_ENC_CSN_ID",
+)
+ADMISSION_START_CANDIDATES = (
+    "HOSPITAL_ADMISSION",
+    "Hospital Admission",
+)
+DISCHARGE_END_CANDIDATES = (
+    "HOSPITAL_DISCHARGE",
+    "Hospital Discharge",
+)
+DEFAULT_ADMISSIONS_DISCHARGES_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "processed" / "admissions_discharges.csv"
+)
 
 
 def _normalize_column_name(column_name: str) -> str:
@@ -146,6 +163,26 @@ def _json_safe_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe_value(item) for item in value]
     return value
+
+
+def _normalize_identifier_series(series: pd.Series) -> pd.Series:
+    normalized = series.where(pd.notna(series), pd.NA).astype(str).str.strip()
+    normalized = normalized.str.replace(r"(?<=\d)\.0+$", "", regex=True)
+    return normalized.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
+
+
+def _resolved_admissions_discharges_path(
+    dataset_config: MedicalRequestDatasetConfig,
+) -> Path | None:
+    configured_path = str(
+        getattr(dataset_config.annotated_data_files, "annotated_admissions_discharges", "")
+        or ""
+    ).strip()
+    if configured_path:
+        return Path(configured_path)
+    if DEFAULT_ADMISSIONS_DISCHARGES_PATH.exists():
+        return DEFAULT_ADMISSIONS_DISCHARGES_PATH
+    return None
 
 
 def _path_signature(path_value: str | Path) -> dict[str, object]:
@@ -206,6 +243,10 @@ def _requests_time_series_signature(
     else:
         raise ValueError(f"Unsupported request time-series source kind '{source_kind}'.")
 
+    resolved_admissions_path = _resolved_admissions_discharges_path(
+        dataset_config=dataset_config,
+    )
+
     return {
         "dataset_config": _json_safe_value(dataset_payload),
         "sequence_length": int(sequence_length),
@@ -213,6 +254,9 @@ def _requests_time_series_signature(
         "prediction_length": int(prediction_length),
         "source_kind": source_kind,
         "source_files": source_files,
+        "admissions_discharges_file": _path_signature(
+            resolved_admissions_path if resolved_admissions_path is not None else ""
+        ),
     }
 
 
@@ -321,6 +365,7 @@ class RequestsDataManager:
         self.dataset_dir = Path(self.dataset_config.dataset_dir)
         self.metadata: dict[str, object] = {}
         self._warned_missing_measurements: set[str] = set()
+        self.admission_windows_df = self._load_admission_windows()
 
         if dataset_config.preprocess_data:
             print("Preprocessing request data...")
@@ -369,6 +414,7 @@ class RequestsDataManager:
     def event_cols(self) -> list[str]:
         return [
             self.patient_id_col,
+            ENCOUNTER_ID_COLUMN,
             TIMESTAMP_COLUMN,
             "task_name",
             "task_index",
@@ -376,6 +422,148 @@ class RequestsDataManager:
             "interval_available",
             "time_diff_minutes",
         ]
+
+    def _load_admission_windows(self) -> pd.DataFrame:
+        resolved_path = _resolved_admissions_discharges_path(
+            dataset_config=self.dataset_config,
+        )
+        empty_windows = pd.DataFrame(
+            columns=[self.patient_id_col, ENCOUNTER_ID_COLUMN, "admission_start", "discharge_end"]
+        )
+        if resolved_path is None or not resolved_path.exists():
+            return empty_windows
+
+        try:
+            admissions_df = pd.read_csv(resolved_path)
+        except Exception as read_error:
+            print(
+                f"Warning: could not load admissions/discharges data from {resolved_path}: "
+                f"{read_error}"
+            )
+            return empty_windows
+
+        patient_col = self._match_first_column(
+            admissions_df.columns.tolist(),
+            [self.patient_id_col, "MRN", "PAT_ID"],
+        )
+        admission_col = self._match_first_column(
+            admissions_df.columns.tolist(),
+            list(ADMISSION_START_CANDIDATES),
+        )
+        discharge_col = self._match_first_column(
+            admissions_df.columns.tolist(),
+            list(DISCHARGE_END_CANDIDATES),
+        )
+        encounter_col = self._match_first_column(
+            admissions_df.columns.tolist(),
+            list(ENCOUNTER_ID_CANDIDATES),
+        )
+
+        if patient_col is None or admission_col is None:
+            print(
+                f"Warning: admissions/discharges file at {resolved_path} is missing "
+                "the required patient or admission timestamp columns."
+            )
+            return empty_windows
+
+        windows_df = pd.DataFrame(
+            {
+                self.patient_id_col: _normalize_identifier_series(admissions_df[patient_col]),
+                "admission_start": pd.to_datetime(admissions_df[admission_col], errors="coerce"),
+                "discharge_end": (
+                    pd.to_datetime(admissions_df[discharge_col], errors="coerce")
+                    if discharge_col is not None
+                    else pd.Series(pd.NaT, index=admissions_df.index)
+                ),
+            }
+        )
+        if encounter_col is not None:
+            windows_df[ENCOUNTER_ID_COLUMN] = _normalize_identifier_series(
+                admissions_df[encounter_col]
+            )
+        else:
+            windows_df[ENCOUNTER_ID_COLUMN] = (
+                windows_df.groupby(self.patient_id_col).cumcount().add(1).map(
+                    lambda encounter_index: f"admission_{int(encounter_index):04d}"
+                )
+            )
+
+        windows_df = windows_df.dropna(subset=[self.patient_id_col, "admission_start"]).copy()
+        if windows_df.empty:
+            return empty_windows
+
+        windows_df["discharge_end"] = windows_df["discharge_end"].fillna(pd.Timestamp.max)
+        windows_df = windows_df.sort_values(
+            [self.patient_id_col, "admission_start", "discharge_end", ENCOUNTER_ID_COLUMN],
+            kind="mergesort",
+        ).reset_index(drop=True)
+        return windows_df
+
+    def _assign_encounter_ids_from_admissions(
+        self,
+        task_df: pd.DataFrame,
+        time_col: str,
+    ) -> pd.Series:
+        assigned_encounters = pd.Series(pd.NA, index=task_df.index, dtype="object")
+        if task_df.empty or self.admission_windows_df.empty:
+            return assigned_encounters
+
+        event_windows_df = task_df[[self.patient_id_col, time_col]].copy()
+        event_windows_df["_event_index"] = event_windows_df.index
+        event_windows_df[self.patient_id_col] = _normalize_identifier_series(
+            event_windows_df[self.patient_id_col]
+        )
+        event_windows_df[time_col] = pd.to_datetime(event_windows_df[time_col], errors="coerce")
+        event_windows_df = event_windows_df.dropna(
+            subset=[self.patient_id_col, time_col]
+        ).sort_values([self.patient_id_col, time_col], kind="mergesort")
+        if event_windows_df.empty:
+            return assigned_encounters
+
+        admissions_df = self.admission_windows_df.sort_values(
+            [self.patient_id_col, "admission_start"],
+            kind="mergesort",
+        ).reset_index(drop=True)
+        merged_df = pd.merge_asof(
+            event_windows_df,
+            admissions_df,
+            left_on=time_col,
+            right_on="admission_start",
+            by=self.patient_id_col,
+            direction="backward",
+            allow_exact_matches=True,
+        )
+        valid_window_mask = merged_df[time_col].lt(merged_df["discharge_end"])
+        merged_df.loc[~valid_window_mask, ENCOUNTER_ID_COLUMN] = pd.NA
+        assigned_encounters.loc[merged_df["_event_index"]] = merged_df[
+            ENCOUNTER_ID_COLUMN
+        ].to_numpy()
+        return assigned_encounters
+
+    def _assign_task_encounter_ids(
+        self,
+        task_df: pd.DataFrame,
+        time_col: str,
+    ) -> pd.Series:
+        assigned_encounters = pd.Series(pd.NA, index=task_df.index, dtype="object")
+        encounter_col = self._match_first_column(
+            task_df.columns.tolist(),
+            list(ENCOUNTER_ID_CANDIDATES),
+        )
+        if encounter_col is not None:
+            assigned_encounters = _normalize_identifier_series(task_df[encounter_col])
+
+        if assigned_encounters.isna().any():
+            admissions_encounters = self._assign_encounter_ids_from_admissions(
+                task_df=task_df,
+                time_col=time_col,
+            )
+            assigned_encounters = assigned_encounters.where(
+                assigned_encounters.notna(),
+                admissions_encounters,
+            )
+
+        return assigned_encounters
 
     def _build_request_handler(self) -> GlobalRequestHandler:
         return GlobalRequestHandler(
@@ -472,10 +660,17 @@ class RequestsDataManager:
     def _base_task_df(self, df: pd.DataFrame, time_col: str) -> pd.DataFrame:
         task_df = df.copy()
         task_df = task_df.dropna(subset=[self.patient_id_col, time_col])
-        task_df[self.patient_id_col] = task_df[self.patient_id_col].astype(str)
+        task_df[self.patient_id_col] = _normalize_identifier_series(task_df[self.patient_id_col])
         task_df[TIMESTAMP_COLUMN] = pd.to_datetime(task_df[time_col], errors="coerce")
         task_df = task_df.dropna(subset=[TIMESTAMP_COLUMN])
-        task_df = task_df.sort_values([self.patient_id_col, TIMESTAMP_COLUMN]).reset_index(drop=True)
+        task_df[ENCOUNTER_ID_COLUMN] = self._assign_task_encounter_ids(
+            task_df=task_df,
+            time_col=time_col,
+        )
+        task_df = task_df.sort_values(
+            [self.patient_id_col, TIMESTAMP_COLUMN, ENCOUNTER_ID_COLUMN],
+            kind="mergesort",
+        ).reset_index(drop=True)
         return task_df
 
     def _build_task_events(
@@ -491,7 +686,7 @@ class RequestsDataManager:
         if task_df.empty:
             return self._empty_events_frame()
 
-        event_df = task_df[[self.patient_id_col, TIMESTAMP_COLUMN]].copy()
+        event_df = task_df[[self.patient_id_col, ENCOUNTER_ID_COLUMN, TIMESTAMP_COLUMN]].copy()
         event_df["task_name"] = task_name
         event_df["task_index"] = self.task_to_index[task_name]
         event_df = pd.concat(
@@ -531,7 +726,8 @@ class RequestsDataManager:
             )
 
         events_df = events_df.sort_values(
-            [self.patient_id_col, TIMESTAMP_COLUMN, "task_index"]
+            [self.patient_id_col, TIMESTAMP_COLUMN, "task_index", ENCOUNTER_ID_COLUMN],
+            kind="mergesort",
         ).reset_index(drop=True)
         return events_df[self.event_cols]
 
@@ -772,6 +968,50 @@ class RequestsDataManager:
 
         return split_patient_sets
 
+    def _group_episode_frames(
+        self,
+        events_df: pd.DataFrame,
+    ) -> list[tuple[str, str, pd.DataFrame]]:
+        if events_df.empty:
+            return []
+
+        patient_frames = [
+            (
+                str(patient_id),
+                "",
+                patient_df.sort_values(TIMESTAMP_COLUMN, kind="mergesort").reset_index(drop=True),
+            )
+            for patient_id, patient_df in events_df.groupby(self.patient_id_col, sort=False)
+        ]
+        if ENCOUNTER_ID_COLUMN not in events_df.columns:
+            return patient_frames
+
+        encounter_series = _normalize_identifier_series(events_df[ENCOUNTER_ID_COLUMN])
+        if encounter_series.notna().sum() == 0:
+            return patient_frames
+
+        episode_df = events_df.copy()
+        episode_df[ENCOUNTER_ID_COLUMN] = encounter_series
+        episode_df["_episode_group"] = episode_df[ENCOUNTER_ID_COLUMN].fillna("__unknown_encounter__")
+
+        grouped_frames: list[tuple[str, str, pd.DataFrame]] = []
+        for (patient_id, encounter_group), group_df in episode_df.groupby(
+            [self.patient_id_col, "_episode_group"],
+            sort=False,
+            dropna=False,
+        ):
+            grouped_frames.append(
+                (
+                    str(patient_id),
+                    "" if encounter_group == "__unknown_encounter__" else str(encounter_group),
+                    group_df.drop(columns=["_episode_group"])
+                    .sort_values(TIMESTAMP_COLUMN, kind="mergesort")
+                    .reset_index(drop=True),
+                )
+            )
+
+        return grouped_frames
+
     def _build_split_frames(
         self,
         events_df: pd.DataFrame,
@@ -795,7 +1035,7 @@ class RequestsDataManager:
         split_segments: dict[str, list[dict[str, object]]] = {split: [] for split in SPLITS}
         split_offsets = {split: 0 for split in SPLITS}
 
-        for patient_id, patient_df in patient_events.items():
+        for patient_id, encounter_id, patient_df in self._group_episode_frames(events_df=events_df):
             patient_split_frames = self._split_patient_series(
                 patient_id=str(patient_id),
                 patient_df=patient_df,
@@ -820,6 +1060,7 @@ class RequestsDataManager:
                     split_segments[split_name].append(
                         {
                             "patient_id": patient_id,
+                            "encounter_id": encounter_id,
                             "start_idx": start_idx,
                             "end_idx": end_idx,
                             "num_rows": len(split_df),
@@ -858,9 +1099,11 @@ class RequestsDataManager:
     def _build_metadata(self) -> dict[str, object]:
         return {
             "dataset_representation": "time_aligned_multivariate_request_intervals",
-            "sample_axis_semantics": "unique_anchor_timestamp_per_patient_segment",
+            "sample_axis_semantics": "unique_anchor_timestamp_per_patient_encounter_segment",
+            "segment_axis_semantics": "contiguous_rows_within_split_and_patient_encounter",
             "sequence_axis_semantics": "per_task_history_depth",
             "patient_id_col": self.patient_id_col,
+            "encounter_id_col": ENCOUNTER_ID_COLUMN,
             "timestamp_col": TIMESTAMP_COLUMN,
             "task_names": self.task_names,
             "task_to_index": self.task_to_index,
@@ -935,6 +1178,75 @@ class RequestsDataManager:
         with self._metadata_path().open("w", encoding="utf-8") as metadata_file:
             json.dump(self.metadata, metadata_file, indent=2)
 
+    def _rebuild_loaded_split(
+        self,
+        split_df: pd.DataFrame,
+        segments_df: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        if split_df.empty:
+            return self._empty_events_frame(), self._empty_segments_frame()
+
+        rebuilt_parts: list[pd.DataFrame] = []
+        rebuilt_segments: list[dict[str, object]] = []
+        split_offset = 0
+
+        base_segments_df = segments_df
+        if base_segments_df.empty:
+            base_segments_df = pd.DataFrame(
+                [
+                    {
+                        "patient_id": "",
+                        "encounter_id": "",
+                        "start_idx": 0,
+                        "end_idx": len(split_df),
+                        "num_rows": len(split_df),
+                    }
+                ],
+                columns=SEGMENT_COLUMNS,
+            )
+
+        for segment in base_segments_df.itertuples(index=False):
+            segment_slice_df = split_df.iloc[int(segment.start_idx) : int(segment.end_idx)].copy()
+            if segment_slice_df.empty:
+                continue
+
+            for patient_id, encounter_id, episode_df in self._group_episode_frames(
+                events_df=segment_slice_df
+            ):
+                ordered_episode_df = episode_df.sort_values(
+                    [TIMESTAMP_COLUMN, "task_index"],
+                    kind="mergesort",
+                ).reset_index(drop=True)
+                start_idx = split_offset
+                end_idx = start_idx + len(ordered_episode_df)
+                split_offset = end_idx
+                rebuilt_parts.append(ordered_episode_df[self.event_cols])
+                rebuilt_segments.append(
+                    {
+                        "patient_id": patient_id,
+                        "encounter_id": encounter_id,
+                        "start_idx": start_idx,
+                        "end_idx": end_idx,
+                        "num_rows": len(ordered_episode_df),
+                    }
+                )
+
+        rebuilt_data_df = (
+            pd.concat(rebuilt_parts, ignore_index=True)
+            if rebuilt_parts
+            else self._empty_events_frame()
+        )
+        rebuilt_segments_df = (
+            pd.DataFrame(rebuilt_segments, columns=SEGMENT_COLUMNS)
+            if rebuilt_segments
+            else self._empty_segments_frame()
+        )
+        rebuilt_data_df = self._add_interval_features(
+            split_df=rebuilt_data_df,
+            segments_df=rebuilt_segments_df,
+        )
+        return rebuilt_data_df, rebuilt_segments_df
+
     def _load_split(self, split_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         data_df = pd.read_csv(self.dataset_dir / f"{split_name}_data.csv")
         segments_df = pd.read_csv(self.dataset_dir / f"{split_name}_segments.csv")
@@ -942,14 +1254,38 @@ class RequestsDataManager:
 
         if not data_df.empty:
             data_df[TIMESTAMP_COLUMN] = pd.to_datetime(data_df[TIMESTAMP_COLUMN], errors="coerce")
-            data_df[patient_id_col] = data_df[patient_id_col].astype(str)
+            data_df[patient_id_col] = _normalize_identifier_series(data_df[patient_id_col])
+            if ENCOUNTER_ID_COLUMN not in data_df.columns:
+                data_df[ENCOUNTER_ID_COLUMN] = pd.NA
+            else:
+                data_df[ENCOUNTER_ID_COLUMN] = _normalize_identifier_series(
+                    data_df[ENCOUNTER_ID_COLUMN]
+                )
+            if data_df[ENCOUNTER_ID_COLUMN].isna().any():
+                admissions_encounters = self._assign_encounter_ids_from_admissions(
+                    task_df=data_df,
+                    time_col=TIMESTAMP_COLUMN,
+                )
+                data_df[ENCOUNTER_ID_COLUMN] = data_df[ENCOUNTER_ID_COLUMN].where(
+                    data_df[ENCOUNTER_ID_COLUMN].notna(),
+                    admissions_encounters,
+                )
             data_df["task_name"] = data_df["task_name"].astype(str)
             data_df = _ensure_cyclical_time_columns(data_df, timestamp_col=TIMESTAMP_COLUMN)
 
         if not segments_df.empty:
-            segments_df["patient_id"] = segments_df["patient_id"].astype(str)
+            segments_df["patient_id"] = _normalize_identifier_series(segments_df["patient_id"])
+            if "encounter_id" not in segments_df.columns:
+                segments_df["encounter_id"] = ""
+            else:
+                segments_df["encounter_id"] = _normalize_identifier_series(
+                    segments_df["encounter_id"]
+                ).fillna("")
 
-        return data_df, segments_df
+        if data_df.empty:
+            return data_df, segments_df
+
+        return self._rebuild_loaded_split(split_df=data_df, segments_df=segments_df)
 
     def _filter_loaded_split_to_selected_tasks(
         self,
@@ -958,6 +1294,9 @@ class RequestsDataManager:
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         if data_df.empty or segments_df.empty:
             return self._empty_events_frame(), self._empty_segments_frame()
+        if ENCOUNTER_ID_COLUMN not in data_df.columns:
+            data_df = data_df.copy()
+            data_df[ENCOUNTER_ID_COLUMN] = pd.NA
 
         selected_task_names = set(self.task_names)
         filtered_parts: list[pd.DataFrame] = []
@@ -977,6 +1316,15 @@ class RequestsDataManager:
             segment_df = segment_df.sort_values(
                 [TIMESTAMP_COLUMN, "task_index"]
             ).reset_index(drop=True)
+            encounter_id = ""
+            if ENCOUNTER_ID_COLUMN in segment_df.columns:
+                unique_encounters = (
+                    _normalize_identifier_series(segment_df[ENCOUNTER_ID_COLUMN]).dropna().unique().tolist()
+                )
+                if len(unique_encounters) == 1:
+                    encounter_id = str(unique_encounters[0])
+            if not encounter_id and hasattr(segment, "encounter_id") and not pd.isna(segment.encounter_id):
+                encounter_id = str(segment.encounter_id)
 
             start_idx = split_offset
             end_idx = start_idx + len(segment_df)
@@ -986,6 +1334,7 @@ class RequestsDataManager:
             filtered_segments.append(
                 {
                     "patient_id": str(segment.patient_id),
+                    "encounter_id": encounter_id,
                     "start_idx": start_idx,
                     "end_idx": end_idx,
                     "num_rows": len(segment_df),
@@ -1207,6 +1556,7 @@ class RequestsTimeSeries:
         return [
             "split",
             "patient_id",
+            "encounter_id",
             "segment_id",
             "anchor_step",
             "anchor_index",
@@ -1455,6 +1805,11 @@ class RequestsTimeSeries:
                     {
                         "split": split,
                         "patient_id": str(segment.patient_id),
+                        "encounter_id": (
+                            ""
+                            if pd.isna(getattr(segment, "encounter_id", ""))
+                            else str(segment.encounter_id)
+                        ),
                         "segment_id": int(segment_id),
                         "anchor_step": int(anchor_step),
                         "anchor_index": int(anchor_step),
