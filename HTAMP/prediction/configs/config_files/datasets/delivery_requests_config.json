@@ -1,0 +1,64 @@
+{
+  "dataset_config": {
+    "annotated_data_files": {
+      "annotated_visits": "",
+      "annotated_admissions_discharges": "",
+      "annotated_medications": "data/processed/medication_orders_annotated.csv",
+      "annotated_blood_pressure": "data/processed/blood_pressure_orders_annotated.csv",
+      "annotated_heart_rate": "data/processed/heart_rate_orders_annotated.csv",
+      "annotated_respiratory_rate": "data/processed/respiratory_rate_orders_annotated.csv",
+      "annotated_temperature": "data/processed/temperature_orders_annotated.csv",
+      "annotated_oxygen_saturation": "data/processed/oxygen_saturation_orders_annotated.csv"
+    },
+    "request_dir": "data/requests",
+    "dataset_dir": "data/prediction/delivery_requests_dataset",
+    "start_date": "2024-06-24",
+    "end_date": "2025-06-29",
+    "patient_id_col": "MRN",
+    "included_tasks": [
+      "blood_pressure",
+      "heart_rate",
+      "respiratory_rate",
+      "temperature",
+      "oxygen_saturation"
+    ],
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "test_iso_weeks": [
+      "2024W27",
+      "2024W36",
+      "2024W40",
+      "2024W44",
+      "2025W05",
+      "2025W14"
+    ],
+    "validation_split_strategy": "random_patients",
+    "validation_split_seed": 42,
+    "lookback_hours": 24.0,
+    "med_lookback_hours": 48.0,
+    "med_decay_hours": 12.0,
+    "prediction_horizon_hours": 24.0,
+    "max_seq_len": 48,
+    "time_bins_hours": [
+      0.25,
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      12.0,
+      24.0
+    ],
+    "top_vitals": 16,
+    "top_meds": 128,
+    "min_med_count": 1,
+    "include_order_triggers": true,
+    "use_admin_as_vital_time": true,
+    "medication_code_col": null,
+    "medication_location_col": "scheduled_space_id",
+    "use_saved_request_data": true,
+    "use_saved_dataset": false,
+    "preprocess_data": true,
+    "save_data": true
+  }
+}
