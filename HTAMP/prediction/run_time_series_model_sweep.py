@@ -746,7 +746,7 @@ def _launch_trial(trial: SweepTrial, gpu_id: int | None) -> RunningTrial:
     command = [
         sys.executable,
         "-m",
-        "HTAMP.prediction.module.request_predictor",
+        "HTAMP.prediction.module.monitoring_request_predictor",
         "--config_path",
         str(temp_config_path),
     ]

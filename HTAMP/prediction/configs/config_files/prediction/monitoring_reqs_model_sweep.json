@@ -100,7 +100,7 @@
   "model_overrides": {
     "defaults": {
       "model_config": {
-        "max_epochs": 300,
+        "max_epochs": 200,
         "patience": 30
       }
     },
