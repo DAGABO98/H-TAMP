@@ -6,20 +6,28 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 
+IsoWeek = tuple[int, int]
+
 class TeamCompPlotter:
     """Helper class to extract team composition counts from log files and plot histograms."""
     # (This is just a wrapper around the functions below, which you can also use directly.)
     def __init__(self, 
                     folder: str | Path, 
-                    weeks_to_ignore: list[tuple[int, int]],
+                    weeks_to_ignore: list[IsoWeek] | None = None,
+                    weeks_to_ignore_by_floor: dict[int, set[IsoWeek]] | None = None,
                     pattern="*.out", 
                     out_dir="results/team_comp/plots"):
         os.makedirs(out_dir, exist_ok=True)
         self.out_dir = Path(out_dir)
         self.date_in_name_regex = re.compile(r"(\d{4}-\d{2}-\d{2})")  # extract date from filename
+        self.floor_in_name_regex = re.compile(r"_floor(\d+)", re.IGNORECASE)
         self.df = self.build_counts_df(folder, pattern)
         self.df = self._add_week_columns(self.df)
-        self.df = self.filter_out_weeks(self.df, weeks_to_ignore=weeks_to_ignore)
+        self.df = self.filter_out_weeks(
+            self.df,
+            weeks_to_ignore=weeks_to_ignore,
+            weeks_to_ignore_by_floor=weeks_to_ignore_by_floor,
+        )
     
     def _extract_valid_team_counts(self, path: str | Path):
         path = Path(path)
@@ -52,7 +60,16 @@ class TeamCompPlotter:
             if counts is None:
                 continue
             monitoring, delivery = counts
-            rows.append({"file": f.name, "monitoring_robots": monitoring, "delivery_robots": delivery})
+            floor_match = self.floor_in_name_regex.search(f.stem)
+            floor = int(floor_match.group(1)) if floor_match else None
+            rows.append(
+                {
+                    "file": f.name,
+                    "floor": floor,
+                    "monitoring_robots": monitoring,
+                    "delivery_robots": delivery,
+                }
+            )
         return pd.DataFrame(rows)
 
     def _add_week_columns(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -67,8 +84,10 @@ class TeamCompPlotter:
         df["year_week"] = df["iso_year"].astype(str) + "-W" + df["iso_week"].astype(str).str.zfill(2)
         return df
     
-    def filter_out_weeks(self, df: pd.DataFrame, 
-                            weeks_to_ignore: list[tuple[int, int]]) -> pd.DataFrame:
+    def filter_out_weeks(self,
+                         df: pd.DataFrame,
+                         weeks_to_ignore: list[IsoWeek] | None = None,
+                         weeks_to_ignore_by_floor: dict[int, set[IsoWeek]] | None = None) -> pd.DataFrame:
         """
         weeks_to_ignore can be:
         - [(2024, 26), (2024, 27)]
@@ -78,11 +97,28 @@ class TeamCompPlotter:
 
         df = df.copy()
 
+        if weeks_to_ignore is None:
+            weeks_to_ignore = []
+        if weeks_to_ignore_by_floor is None:
+            weeks_to_ignore_by_floor = {}
+
         if not weeks_to_ignore:
-            return df
+            if not weeks_to_ignore_by_floor:
+                return df
 
         ignore = set(weeks_to_ignore)
-        mask = ~df.apply(lambda r: (int(r["iso_year"]), int(r["iso_week"])) in ignore, axis=1)
+        ignore_by_floor = {int(floor): set(weeks) for floor, weeks in weeks_to_ignore_by_floor.items()}
+
+        def should_keep(row: pd.Series) -> bool:
+            week_key = (int(row["iso_year"]), int(row["iso_week"]))
+            floor = row.get("floor")
+            if pd.notna(floor):
+                floor_ignore = ignore_by_floor.get(int(floor), ignore)
+            else:
+                floor_ignore = ignore
+            return week_key not in floor_ignore
+
+        mask = df.apply(should_keep, axis=1)
         return df[mask]
     
     def _integer_bins(self, series: pd.Series):
@@ -158,8 +194,66 @@ def main():
     (2024, 27),
     (2024, 36)]
 
+    # Optional per-floor override. Any floor omitted here falls back to
+    # weeks_to_ignore above.
+    weeks_to_ignore_by_floor: dict[int, set[IsoWeek]] = {
+        2: {
+            # Weeks with highest demand
+            (2025, 6),
+            (2025, 8),
+            
+            #Weeks with medium demand
+            (2024, 44),
+            (2025, 14),
+
+            #Weeks with lowest demand
+            (2024, 27),
+            (2024, 28)
+        },
+        3: {
+            # Weeks with highest demand
+            (2025, 5),
+            (2025, 10),
+            
+            #Weeks with medium demand
+            (2024, 44),
+            (2025, 14),
+
+            #Weeks with lowest demand
+            (2024, 46),
+            (2025, 2)
+        },
+        7: {
+            # Weeks with highest demand
+            (2024, 39),
+            (2024, 40),
+            
+            #Weeks with medium demand
+            (2024, 44),
+            (2025, 14),
+
+            #Weeks with lowest demand
+            (2024, 46),
+            (2025, 26)
+        },
+        9: {
+            # Weeks with highest demand
+            (2024, 43),
+            (2025, 6),
+            
+            #Weeks with medium demand
+            (2024, 44),
+            (2025, 14),
+
+            #Weeks with lowest demand
+            (2025, 19),
+            (2025, 21)
+        }
+    }
+
     plotter = TeamCompPlotter("results/team_comp/logs", 
-                              weeks_to_ignore=weeks_to_ignore)
+                              weeks_to_ignore=weeks_to_ignore,
+                              weeks_to_ignore_by_floor=weeks_to_ignore_by_floor)
     plotter.plot_histograms()
 
 

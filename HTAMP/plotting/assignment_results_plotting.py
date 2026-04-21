@@ -8,6 +8,37 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 
+IsoWeek = tuple[int, int]
+WeekBucketMap = dict[str, set[IsoWeek]]
+FloorWeekBucketMap = dict[str, dict[int, set[IsoWeek]]]
+
+DEFAULT_WEEK_BUCKETS: WeekBucketMap = {
+    "highest": {(2024, 40), (2025, 5)},
+    "medium": {(2024, 44), (2025, 14)},
+    "lowest": {(2024, 27), (2024, 36)},
+}
+
+DEFAULT_WEEK_BUCKETS_BY_FLOOR: FloorWeekBucketMap = {
+    "highest": {
+        2: {(2025, 6), (2025, 8)},
+        3: {(2025, 5), (2025, 10)},
+        7: {(2024, 39), (2024, 40)},
+        9: {(2024, 43), (2025, 6)},
+    },
+    "medium": {
+        2: {(2024, 44), (2025, 14)},
+        3: {(2024, 44), (2025, 14)},
+        7: {(2024, 44), (2025, 14)},
+        9: {(2024, 44), (2025, 14)},
+    },
+    "lowest": {
+        2: {(2024, 27), (2024, 28)},
+        3: {(2024, 46), (2025, 2)},
+        7: {(2024, 46), (2025, 26)},
+        9: {(2025, 19), (2025, 21)},
+    }
+}
+
 
 class AssignmentResultsPlotter:
     """
@@ -30,7 +61,9 @@ class AssignmentResultsPlotter:
         type_col: str = "request_type",
         daily_stat: str = "p95",
         logs_root_dir: str | Path = "results/policies/logs",
-        file_glob: str = "*.out"
+        file_glob: str = "*.out",
+        week_buckets: WeekBucketMap | None = None,
+        week_buckets_by_floor: FloorWeekBucketMap | None = None,
     ):
         self.policy_order = ["fleet_manager",
                              "tp_d_alpha0.0",
@@ -63,10 +96,18 @@ class AssignmentResultsPlotter:
                                      "adaptive_rollout_nopt_rwt": "#31a354",
                                      "adaptive_rollout_ropt_rwt": "#006837"}
         
-        self.week_buckets: dict[str, set[tuple[int, int]]] = {
-            "highest": {(2024, 40), (2025, 5)},
-            "medium":  {(2024, 44), (2025, 14)},
-            "lowest":  {(2024, 27), (2024, 36)},
+        if week_buckets is None:
+            week_buckets = DEFAULT_WEEK_BUCKETS
+        if week_buckets_by_floor is None:
+            week_buckets_by_floor = DEFAULT_WEEK_BUCKETS_BY_FLOOR
+
+        self.week_buckets: WeekBucketMap = {
+            str(label): set(weeks)
+            for label, weeks in week_buckets.items()
+        }
+        self.week_buckets_by_floor: FloorWeekBucketMap = {
+            str(label): {int(floor): set(weeks) for floor, weeks in floor_map.items()}
+            for label, floor_map in week_buckets_by_floor.items()
         }
         self.root_dir = Path(root_dir)
         self.out_dir = Path(out_dir)
@@ -151,10 +192,51 @@ class AssignmentResultsPlotter:
         return colors
         
     
-    def filter_to_weeks(self, df: pd.DataFrame, weeks: set[tuple[int, int]]) -> pd.DataFrame:
+    def _iter_week_bucket_specs(self) -> list[tuple[str, set[IsoWeek], dict[int, set[IsoWeek]]]]:
+        labels = list(dict.fromkeys(list(self.week_buckets) + list(self.week_buckets_by_floor)))
+        return [
+            (
+                label,
+                self.week_buckets.get(label, set()),
+                self.week_buckets_by_floor.get(label, {}),
+            )
+            for label in labels
+        ]
+
+    @staticmethod
+    def _format_weeks_by_floor(weeks_by_floor: dict[int, set[IsoWeek]]) -> dict[int, list[IsoWeek]]:
+        return {
+            int(floor): sorted(weeks)
+            for floor, weeks in sorted(weeks_by_floor.items())
+        }
+
+    def filter_to_weeks(self,
+                        df: pd.DataFrame,
+                        weeks: set[IsoWeek],
+                        weeks_by_floor: dict[int, set[IsoWeek]] | None = None,
+                        floor_col: str = "floor") -> pd.DataFrame:
         week_set = set(weeks)
-        mask = list(zip(df["iso_year"], df["iso_week"]))
-        return df[pd.Series(mask, index=df.index).isin(week_set)].copy()
+        if weeks_by_floor is None:
+            weeks_by_floor = {}
+        normalized_by_floor = {int(floor): set(values) for floor, values in weeks_by_floor.items()}
+
+        if not week_set and not normalized_by_floor:
+            return df.copy()
+
+        if floor_col not in df.columns:
+            mask = list(zip(df["iso_year"], df["iso_week"]))
+            return df[pd.Series(mask, index=df.index).isin(week_set)].copy()
+
+        def is_selected(row: pd.Series) -> bool:
+            week_key = (int(row["iso_year"]), int(row["iso_week"]))
+            floor_value = row.get(floor_col)
+            if pd.notna(floor_value):
+                selected_weeks = normalized_by_floor.get(int(floor_value), week_set)
+            else:
+                selected_weeks = week_set
+            return week_key in selected_weeks
+
+        return df[df.apply(is_selected, axis=1)].copy()
 
     def _ordered_policies(self, policies: list[str]) -> list[str]:
         rank = {p: i for i, p in enumerate(self.policy_order)}
@@ -289,8 +371,12 @@ class AssignmentResultsPlotter:
         either overall or per week-bucket.
         """
 
-        for label, weeks in self.week_buckets.items():
-            sub = self.filter_to_weeks(self.logs_df, weeks) if label != "ALL_WEEKS" else self.logs_df
+        for label, weeks, weeks_by_floor in self._iter_week_bucket_specs():
+            sub = (
+                self.filter_to_weeks(self.logs_df, weeks, weeks_by_floor, floor_col="floor")
+                if label != "ALL_WEEKS"
+                else self.logs_df
+            )
             if sub.empty:
                 print(f"\n[WARN] No rows for bucket '{label}'.")
                 continue
@@ -306,7 +392,10 @@ class AssignmentResultsPlotter:
 
             print("\n" + "=" * 80)
             print(f"Planning time per request (day-floor): mean ± 1 std — {label}")
-            if self.week_buckets:
+            if weeks_by_floor:
+                print(f"Global weeks: {sorted(weeks)}")
+                print(f"Per-floor weeks: {self._format_weeks_by_floor(weeks_by_floor)}")
+            elif self.week_buckets:
                 print(f"Weeks: {sorted(weeks)}")
             print("=" * 80)
             print(f"{'Policy':30s}  {'N(day-floor)':>12s}  {'Mean (s/req)':>14s}  {'Std (s/req)':>14s}  {'Mean ± Std':>24s}")
@@ -321,11 +410,11 @@ class AssignmentResultsPlotter:
                 )
     
     def plot_box_per_policy_by_week_bucket(self) -> None:
-        for label, weeks in self.week_buckets.items():
+        for label, weeks, weeks_by_floor in self._iter_week_bucket_specs():
             out_subdir = self.out_dir / f"{label}"
             out_subdir.mkdir(parents=True, exist_ok=True)
 
-            sub = self.filter_to_weeks(self.logs_df, weeks)
+            sub = self.filter_to_weeks(self.logs_df, weeks, weeks_by_floor, floor_col="floor")
             if sub.empty:
                 print(f"[WARN] No rows for bucket '{label}'. Skipping.")
                 continue
@@ -529,15 +618,19 @@ class AssignmentResultsPlotter:
         """
         df0 = self.raw_requests_df
 
-        for label, weeks in self.week_buckets.items():
-            df = self.filter_to_weeks(df0, weeks)
+        for label, weeks, weeks_by_floor in self._iter_week_bucket_specs():
+            df = self.filter_to_weeks(df0, weeks, weeks_by_floor, floor_col="_floor")
             if df.empty:
                 print(f"\n[WARN] No requests for bucket '{label}'.")
                 continue
 
             print("\n" + "#" * 90)
             print(f"Counts per policy — {label.upper()} demand weeks")
-            print(f"Weeks: {sorted(weeks)}")
+            if weeks_by_floor:
+                print(f"Global weeks: {sorted(weeks)}")
+                print(f"Per-floor weeks: {self._format_weeks_by_floor(weeks_by_floor)}")
+            else:
+                print(f"Weeks: {sorted(weeks)}")
             print("#" * 90)
 
             pol_tbl = (
@@ -616,17 +709,33 @@ class AssignmentResultsPlotter:
                 print("-" * 72)
                 print(f"{'ALL POLICIES':30s}  {R:10d}  {S:10d}  {T:10d}")
 
-    def plot_wait_time_by_week_bucket(self, week_buckets: dict[str, set[tuple[int,int]]]) -> None:
+    def plot_wait_time_by_week_bucket(self,
+                                      week_buckets: WeekBucketMap,
+                                      week_buckets_by_floor: FloorWeekBucketMap | None = None) -> None:
         df = self.dailyfloor_stats_df.copy()
         iso = df["_day"].dt.isocalendar()
         df["iso_year"] = iso["year"].astype(int)
         df["iso_week"] = iso["week"].astype(int)
 
-        for label, weeks in week_buckets.items():
+        if week_buckets_by_floor is None:
+            week_buckets_by_floor = {}
+
+        labels = list(dict.fromkeys(list(week_buckets) + list(week_buckets_by_floor)))
+        for label in labels:
+            weeks = set(week_buckets.get(label, set()))
+            weeks_by_floor = {
+                int(floor): set(week_values)
+                for floor, week_values in week_buckets_by_floor.get(label, {}).items()
+            }
             out_subdir = self.out_dir / f"{label}"
             out_subdir.mkdir(parents=True, exist_ok=True)
 
-            sub = self.filter_to_weeks(df.rename(columns={"_day":"day"}), weeks)  # reuse helper
+            sub = self.filter_to_weeks(
+                df.rename(columns={"_day":"day"}),
+                weeks,
+                weeks_by_floor,
+                floor_col="_floor",
+            )
             if sub.empty:
                 print(f"[WARN] No rows for bucket '{label}'. Skipping.")
                 continue
@@ -689,7 +798,7 @@ def main():
     )
 
     plotter.print_counts_per_policy_per_request_type()
-    plotter.plot_wait_time_by_week_bucket(plotter.week_buckets)
+    plotter.plot_wait_time_by_week_bucket(plotter.week_buckets, plotter.week_buckets_by_floor)
     plotter.plot_box_per_policy_by_week_bucket()
     plotter.print_policy_mean_pm_std()
 
