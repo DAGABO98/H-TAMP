@@ -35,6 +35,12 @@ class DataStatistics:
         self.u_chart_outdir = self.outdir / "u_charts"
         self.u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
+        self.base_u_chart_outdir = self.u_chart_outdir / "floor_day"
+        self.base_u_chart_outdir.mkdir(parents=True, exist_ok=True)
+
+        self.floor_day_hour_u_chart_outdir = self.u_chart_outdir / "floor_day_hour"
+        self.floor_day_hour_u_chart_outdir.mkdir(parents=True, exist_ok=True)
+
         self.heatmap_outdir = self.outdir / "heatmaps"
         self.heatmap_outdir.mkdir(parents=True, exist_ok=True)
 
@@ -261,7 +267,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -292,7 +298,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -323,7 +329,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day_hour)
 
-        out_png = self.u_chart_outdir / f"{label}_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png"
+        out_png = self.floor_day_hour_u_chart_outdir / f"{label}_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -355,7 +361,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day_hour)
 
-        out_png = self.u_chart_outdir / f"{label}_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.floor_day_hour_u_chart_outdir / f"{label}_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -392,7 +398,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -428,11 +434,89 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
             annotate=annotate_flag
+        )
+
+    def generate_and_plot_online_weekly_floor_day_hour_u_chart(self,
+                                                               original_df: pd.DataFrame,
+                                                               sched_time_col: str,
+                                                               ordered_time_col: str,
+                                                               room_col: str,
+                                                               start_date: str,
+                                                               end_date: str,
+                                                               label: str,
+                                                               annotate_flag: bool) -> None:
+        df_prep = DataHelpers.prepare_df(
+            original_df,
+            time_col=sched_time_col,
+            room_col=room_col,
+        )
+
+        df_filtered = DataHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        df_filtered = DataHelpers.apply_online_requests_filters(
+            df_filtered,
+            sched_time_label=sched_time_col,
+            ordered_time_label=ordered_time_col
+        )
+
+        per_day_hour = DataHelpers.compute_per_day_hour_counts(dff=df_filtered)
+
+        weekly = DataHelpers.weekly_u_chart(per_day_hour)
+
+        out_png = self.floor_day_hour_u_chart_outdir / f"{label}_online_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_weekly_u_chart(
+            weekly=weekly,
+            out_png=out_png,
+            annotate=annotate_flag,
+            unit_label="floor-day-hour"
+        )
+
+    def generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(self,
+                                                                     original_df: pd.DataFrame,
+                                                                     sched_time_col: str,
+                                                                     ordered_time_col: str,
+                                                                     room_col: str,
+                                                                     start_date: str,
+                                                                     end_date: str,
+                                                                     label: str,
+                                                                     annotate_flag: bool) -> None:
+        df_prep = DataHelpers.prepare_df(
+            original_df,
+            time_col=sched_time_col,
+            room_col=room_col,
+        )
+
+        df_filtered = DataHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        df_filtered = DataHelpers.apply_online_requests_filters(
+            df_filtered,
+            sched_time_label=sched_time_col,
+            ordered_time_label=ordered_time_col
+        )
+
+        per_day_hour = DataHelpers.compute_per_day_hour_counts(dff=df_filtered)
+
+        weekly = DataHelpers.weekly_laney_u_chart(per_day_hour)
+
+        out_png = self.floor_day_hour_u_chart_outdir / f"{label}_online_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png"
+        DataStatisticsPlottingHelper.plot_weekly_u_chart(
+            weekly=weekly,
+            out_png=out_png,
+            annotate=annotate_flag,
+            unit_label="floor-day-hour"
         )
     
     def build_per_day_all_tasks(self,
@@ -483,7 +567,7 @@ class DataStatistics:
 
         weekly_std = DataHelpers.equal_task_influence_oe_chart(weekly_df)
 
-        out_png = self.u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_oe_u_chart(weekly=weekly_std,
                                                      out_png=out_png)
     
@@ -521,7 +605,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png
@@ -561,7 +645,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png
@@ -939,6 +1023,71 @@ class DataStatistics:
             label="oxygen_saturation",
             annotate_flag=annotate_flag
         )
+
+    def generate_and_plot_all_online_weekly_floor_day_hour_laney_u_charts(self,
+                                                                           start_date: str,
+                                                                           end_date: str,
+                                                                           annotate_flag: bool) -> None:
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(
+            original_df=self.bp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(
+            original_df=self.medications_df,
+            sched_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(
+            original_df=self.hr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(
+            original_df=self.rr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(
+            original_df=self.temp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(
+            original_df=self.oximetry_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
     
     def generate_and_plot_all_online_weekly_u_charts(self,
                                             start_date: str,
@@ -995,6 +1144,71 @@ class DataStatistics:
             annotate_flag=annotate_flag
         )
         self.generate_and_plot_online_weekly_u_chart(
+            original_df=self.oximetry_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_online_weekly_floor_day_hour_u_charts(self,
+                                                                    start_date: str,
+                                                                    end_date: str,
+                                                                    annotate_flag: bool) -> None:
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
+            original_df=self.bp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
+            original_df=self.medications_df,
+            sched_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
+            original_df=self.hr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
+            original_df=self.rr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
+            original_df=self.temp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
             original_df=self.oximetry_df,
             sched_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -1342,7 +1556,19 @@ def main():
         annotate_flag=args.annotate_u_chart
     )
 
+    data_stats.generate_and_plot_all_online_weekly_floor_day_hour_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
     data_stats.generate_and_plot_all_online_weekly_laney_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
+    data_stats.generate_and_plot_all_online_weekly_floor_day_hour_laney_u_charts(
         start_date="2024-06-24",
         end_date="2025-06-29",
         annotate_flag=args.annotate_u_chart
