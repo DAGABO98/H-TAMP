@@ -3,7 +3,7 @@ import traceback
 
 from pathlib import Path
 from datetime import datetime
-from typing import Sequence, Tuple
+from typing import Callable, Sequence, Tuple
 
 import pandas as pd
 
@@ -58,6 +58,80 @@ class DataStatistics:
         self.temp_df = self._load_temp_data()
         self.oximetry_df = self._load_oximetry_data()
         self.admissions_discharges_df = self._load_admissions_discharges_data()
+
+    def _prepare_filtered_df(self,
+                             original_df: pd.DataFrame,
+                             time_col: str,
+                             room_col: str,
+                             start_date: str,
+                             end_date: str) -> pd.DataFrame:
+        df_prep = DataHelpers.prepare_df(
+            original_df,
+            time_col=time_col,
+            room_col=room_col,
+        )
+
+        df_filtered = DataHelpers.apply_date_filters(
+            df_prep,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return df_filtered
+
+    def _prepare_online_filtered_df(self,
+                                    original_df: pd.DataFrame,
+                                    sched_time_col: str,
+                                    ordered_time_col: str,
+                                    room_col: str,
+                                    start_date: str,
+                                    end_date: str) -> pd.DataFrame:
+        df_filtered = self._prepare_filtered_df(
+            original_df=original_df,
+            time_col=sched_time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        df_filtered = DataHelpers.apply_online_requests_filters(
+            df_filtered,
+            sched_time_label=sched_time_col,
+            ordered_time_label=ordered_time_col
+        )
+        return df_filtered
+
+    def _sorted_floors(self, df: pd.DataFrame) -> list[int]:
+        if df.empty or "__floor__" not in df.columns:
+            return []
+        floors = df["__floor__"].dropna().astype(int).unique().tolist()
+        return sorted(floors)
+
+    def _floor_chart_outdir(self, base_outdir: Path, floor: int) -> Path:
+        floor_outdir = base_outdir / "by_floor" / f"floor_{int(floor)}"
+        floor_outdir.mkdir(parents=True, exist_ok=True)
+        return floor_outdir
+
+    def _plot_weekly_charts_by_floor(self,
+                                     filtered_df: pd.DataFrame,
+                                     count_builder: Callable[[pd.DataFrame], pd.DataFrame],
+                                     weekly_builder: Callable[[pd.DataFrame], pd.DataFrame],
+                                     base_outdir: Path,
+                                     out_png_name: str,
+                                     annotate_flag: bool,
+                                     unit_label: str) -> None:
+        for floor in self._sorted_floors(filtered_df):
+            floor_df = filtered_df[filtered_df["__floor__"] == floor].copy()
+            per_unit = count_builder(floor_df)
+            weekly = weekly_builder(per_unit)
+            outdir = self._floor_chart_outdir(base_outdir=base_outdir, floor=floor)
+            out_png = outdir / out_png_name
+            DataStatisticsPlottingHelper.plot_weekly_u_chart(
+                weekly=weekly,
+                out_png=out_png,
+                annotate=annotate_flag,
+                unit_label=unit_label,
+                title_suffix=f"floor {floor}"
+            )
     
     def _load_bp_data(self) -> pd.DataFrame:
         df = pd.read_csv(self.annotated_data_files.annotated_blood_pressure)
@@ -305,6 +379,58 @@ class DataStatistics:
             annotate=annotate_flag
         )
 
+    def generate_and_plot_weekly_u_chart_by_floor(self,
+                                                  original_df: pd.DataFrame,
+                                                  time_col: str,
+                                                  room_col: str,
+                                                  start_date: str,
+                                                  end_date: str,
+                                                  label: str,
+                                                  annotate_flag: bool) -> None:
+        df_filtered = self._prepare_filtered_df(
+            original_df=original_df,
+            time_col=time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_counts,
+            weekly_builder=DataHelpers.weekly_u_chart,
+            base_outdir=self.base_u_chart_outdir,
+            out_png_name=f"{label}_weekly_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
+            unit_label="floor-day"
+        )
+
+    def generate_and_plot_weekly_laney_u_chart_by_floor(self,
+                                                        original_df: pd.DataFrame,
+                                                        time_col: str,
+                                                        room_col: str,
+                                                        start_date: str,
+                                                        end_date: str,
+                                                        label: str,
+                                                        annotate_flag: bool) -> None:
+        df_filtered = self._prepare_filtered_df(
+            original_df=original_df,
+            time_col=time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_counts,
+            weekly_builder=DataHelpers.weekly_laney_u_chart,
+            base_outdir=self.base_u_chart_outdir,
+            out_png_name=f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
+            unit_label="floor-day"
+        )
+
     def generate_and_plot_weekly_floor_day_hour_u_chart(self,
                                                         original_df: pd.DataFrame,
                                                         time_col: str,
@@ -337,6 +463,32 @@ class DataStatistics:
             unit_label="floor-day-hour"
         )
 
+    def generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(self,
+                                                                 original_df: pd.DataFrame,
+                                                                 time_col: str,
+                                                                 room_col: str,
+                                                                 start_date: str,
+                                                                 end_date: str,
+                                                                 label: str,
+                                                                 annotate_flag: bool) -> None:
+        df_filtered = self._prepare_filtered_df(
+            original_df=original_df,
+            time_col=time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_hour_counts,
+            weekly_builder=DataHelpers.weekly_u_chart,
+            base_outdir=self.floor_day_hour_u_chart_outdir,
+            out_png_name=f"{label}_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
+            unit_label="floor-day-hour"
+        )
+
     def generate_and_plot_weekly_floor_day_hour_laney_u_chart(self,
                                                               original_df: pd.DataFrame,
                                                               time_col: str,
@@ -366,6 +518,32 @@ class DataStatistics:
             weekly=weekly,
             out_png=out_png,
             annotate=annotate_flag,
+            unit_label="floor-day-hour"
+        )
+
+    def generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(self,
+                                                                       original_df: pd.DataFrame,
+                                                                       time_col: str,
+                                                                       room_col: str,
+                                                                       start_date: str,
+                                                                       end_date: str,
+                                                                       label: str,
+                                                                       annotate_flag: bool) -> None:
+        df_filtered = self._prepare_filtered_df(
+            original_df=original_df,
+            time_col=time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_hour_counts,
+            weekly_builder=DataHelpers.weekly_laney_u_chart,
+            base_outdir=self.floor_day_hour_u_chart_outdir,
+            out_png_name=f"{label}_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
             unit_label="floor-day-hour"
         )
     
@@ -441,6 +619,62 @@ class DataStatistics:
             annotate=annotate_flag
         )
 
+    def generate_and_plot_online_weekly_u_chart_by_floor(self,
+                                                         original_df: pd.DataFrame,
+                                                         sched_time_col: str,
+                                                         ordered_time_col: str,
+                                                         room_col: str,
+                                                         start_date: str,
+                                                         end_date: str,
+                                                         label: str,
+                                                         annotate_flag: bool) -> None:
+        df_filtered = self._prepare_online_filtered_df(
+            original_df=original_df,
+            sched_time_col=sched_time_col,
+            ordered_time_col=ordered_time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_counts,
+            weekly_builder=DataHelpers.weekly_u_chart,
+            base_outdir=self.base_u_chart_outdir,
+            out_png_name=f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
+            unit_label="floor-day"
+        )
+
+    def generate_and_plot_online_weekly_laney_u_chart_by_floor(self,
+                                                               original_df: pd.DataFrame,
+                                                               sched_time_col: str,
+                                                               ordered_time_col: str,
+                                                               room_col: str,
+                                                               start_date: str,
+                                                               end_date: str,
+                                                               label: str,
+                                                               annotate_flag: bool) -> None:
+        df_filtered = self._prepare_online_filtered_df(
+            original_df=original_df,
+            sched_time_col=sched_time_col,
+            ordered_time_col=ordered_time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_counts,
+            weekly_builder=DataHelpers.weekly_laney_u_chart,
+            base_outdir=self.base_u_chart_outdir,
+            out_png_name=f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
+            unit_label="floor-day"
+        )
+
     def generate_and_plot_online_weekly_floor_day_hour_u_chart(self,
                                                                original_df: pd.DataFrame,
                                                                sched_time_col: str,
@@ -480,6 +714,34 @@ class DataStatistics:
             unit_label="floor-day-hour"
         )
 
+    def generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(self,
+                                                                        original_df: pd.DataFrame,
+                                                                        sched_time_col: str,
+                                                                        ordered_time_col: str,
+                                                                        room_col: str,
+                                                                        start_date: str,
+                                                                        end_date: str,
+                                                                        label: str,
+                                                                        annotate_flag: bool) -> None:
+        df_filtered = self._prepare_online_filtered_df(
+            original_df=original_df,
+            sched_time_col=sched_time_col,
+            ordered_time_col=ordered_time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_hour_counts,
+            weekly_builder=DataHelpers.weekly_u_chart,
+            base_outdir=self.floor_day_hour_u_chart_outdir,
+            out_png_name=f"{label}_online_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
+            unit_label="floor-day-hour"
+        )
+
     def generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(self,
                                                                      original_df: pd.DataFrame,
                                                                      sched_time_col: str,
@@ -516,6 +778,34 @@ class DataStatistics:
             weekly=weekly,
             out_png=out_png,
             annotate=annotate_flag,
+            unit_label="floor-day-hour"
+        )
+
+    def generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(self,
+                                                                              original_df: pd.DataFrame,
+                                                                              sched_time_col: str,
+                                                                              ordered_time_col: str,
+                                                                              room_col: str,
+                                                                              start_date: str,
+                                                                              end_date: str,
+                                                                              label: str,
+                                                                              annotate_flag: bool) -> None:
+        df_filtered = self._prepare_online_filtered_df(
+            original_df=original_df,
+            sched_time_col=sched_time_col,
+            ordered_time_col=ordered_time_col,
+            room_col=room_col,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        self._plot_weekly_charts_by_floor(
+            filtered_df=df_filtered,
+            count_builder=DataHelpers.compute_per_day_hour_counts,
+            weekly_builder=DataHelpers.weekly_laney_u_chart,
+            base_outdir=self.floor_day_hour_u_chart_outdir,
+            out_png_name=f"{label}_online_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png",
+            annotate_flag=annotate_flag,
             unit_label="floor-day-hour"
         )
     
@@ -805,6 +1095,160 @@ class DataStatistics:
             annotate_flag=annotate_flag
         )
 
+    def generate_and_plot_all_weekly_laney_u_charts_by_floor(self,
+                                                             start_date: str,
+                                                             end_date: str,
+                                                             annotate_flag: bool) -> None:
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_laney_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_weekly_u_charts_by_floor(self,
+                                                       start_date: str,
+                                                       end_date: str,
+                                                       annotate_flag: bool) -> None:
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges",
+            annotate_flag=annotate_flag
+        )
+
     def generate_and_plot_all_weekly_floor_day_hour_laney_u_charts(self,
                                                                    start_date: str,
                                                                    end_date: str,
@@ -950,6 +1394,160 @@ class DataStatistics:
             annotate_flag=annotate_flag
         )
         self.generate_and_plot_weekly_floor_day_hour_u_chart(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_weekly_floor_day_hour_laney_u_charts_by_floor(self,
+                                                                            start_date: str,
+                                                                            end_date: str,
+                                                                            annotate_flag: bool) -> None:
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_DISCHARGE",
+            room_col="OUT_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="discharges",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_weekly_floor_day_hour_u_charts_by_floor(self,
+                                                                      start_date: str,
+                                                                      end_date: str,
+                                                                      annotate_flag: bool) -> None:
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.bp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.medications_df,
+            time_col="Medication Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.hr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.rr_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.temp_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            time_col="Scheduled DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.admissions_discharges_df,
+            time_col="HOSPITAL_ADMISSION",
+            room_col="IN_DEP",
+            start_date=start_date,
+            end_date=end_date,
+            label="admissions",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_weekly_floor_day_hour_u_chart_by_floor(
             original_df=self.admissions_discharges_df,
             time_col="HOSPITAL_DISCHARGE",
             room_col="OUT_DEP",
@@ -1209,6 +1807,266 @@ class DataStatistics:
             annotate_flag=annotate_flag
         )
         self.generate_and_plot_online_weekly_floor_day_hour_u_chart(
+            original_df=self.oximetry_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_online_weekly_laney_u_charts_by_floor(self,
+                                                                    start_date: str,
+                                                                    end_date: str,
+                                                                    annotate_flag: bool) -> None:
+        self.generate_and_plot_online_weekly_laney_u_chart_by_floor(
+            original_df=self.bp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_laney_u_chart_by_floor(
+            original_df=self.medications_df,
+            sched_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_laney_u_chart_by_floor(
+            original_df=self.hr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_laney_u_chart_by_floor(
+            original_df=self.rr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_laney_u_chart_by_floor(
+            original_df=self.temp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_laney_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_online_weekly_u_charts_by_floor(self,
+                                                              start_date: str,
+                                                              end_date: str,
+                                                              annotate_flag: bool) -> None:
+        self.generate_and_plot_online_weekly_u_chart_by_floor(
+            original_df=self.bp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_u_chart_by_floor(
+            original_df=self.medications_df,
+            sched_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_u_chart_by_floor(
+            original_df=self.hr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_u_chart_by_floor(
+            original_df=self.rr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_u_chart_by_floor(
+            original_df=self.temp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_online_weekly_floor_day_hour_laney_u_charts_by_floor(self,
+                                                                                   start_date: str,
+                                                                                   end_date: str,
+                                                                                   annotate_flag: bool) -> None:
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.bp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.medications_df,
+            sched_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.hr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.rr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.temp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_laney_u_chart_by_floor(
+            original_df=self.oximetry_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="oxygen_saturation",
+            annotate_flag=annotate_flag
+        )
+
+    def generate_and_plot_all_online_weekly_floor_day_hour_u_charts_by_floor(self,
+                                                                             start_date: str,
+                                                                             end_date: str,
+                                                                             annotate_flag: bool) -> None:
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.bp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="blood_pressure",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.medications_df,
+            sched_time_col="Medication Scheduled DTTM",
+            ordered_time_col="Medication Order DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="medications",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.hr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="heart_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.rr_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="respiratory_rate",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(
+            original_df=self.temp_df,
+            sched_time_col="Scheduled DTTM",
+            ordered_time_col="Ordered DTTM",
+            room_col="scheduled_room",
+            start_date=start_date,
+            end_date=end_date,
+            label="temperature",
+            annotate_flag=annotate_flag
+        )
+        self.generate_and_plot_online_weekly_floor_day_hour_u_chart_by_floor(
             original_df=self.oximetry_df,
             sched_time_col="Scheduled DTTM",
             ordered_time_col="Ordered DTTM",
@@ -1532,7 +2390,19 @@ def main():
         annotate_flag=args.annotate_u_chart
     )
 
+    data_stats.generate_and_plot_all_weekly_u_charts_by_floor(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
     data_stats.generate_and_plot_all_weekly_laney_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
+    data_stats.generate_and_plot_all_weekly_laney_u_charts_by_floor(
         start_date="2024-06-24",
         end_date="2025-06-29",
         annotate_flag=args.annotate_u_chart
@@ -1544,7 +2414,19 @@ def main():
         annotate_flag=args.annotate_u_chart
     )
 
+    data_stats.generate_and_plot_all_weekly_floor_day_hour_u_charts_by_floor(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
     data_stats.generate_and_plot_all_weekly_floor_day_hour_laney_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
+    data_stats.generate_and_plot_all_weekly_floor_day_hour_laney_u_charts_by_floor(
         start_date="2024-06-24",
         end_date="2025-06-29",
         annotate_flag=args.annotate_u_chart
@@ -1556,7 +2438,19 @@ def main():
         annotate_flag=args.annotate_u_chart
     )
 
+    data_stats.generate_and_plot_all_online_weekly_u_charts_by_floor(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
     data_stats.generate_and_plot_all_online_weekly_floor_day_hour_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
+    data_stats.generate_and_plot_all_online_weekly_floor_day_hour_u_charts_by_floor(
         start_date="2024-06-24",
         end_date="2025-06-29",
         annotate_flag=args.annotate_u_chart
@@ -1568,7 +2462,19 @@ def main():
         annotate_flag=args.annotate_u_chart
     )
 
+    data_stats.generate_and_plot_all_online_weekly_laney_u_charts_by_floor(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
     data_stats.generate_and_plot_all_online_weekly_floor_day_hour_laney_u_charts(
+        start_date="2024-06-24",
+        end_date="2025-06-29",
+        annotate_flag=args.annotate_u_chart
+    )
+
+    data_stats.generate_and_plot_all_online_weekly_floor_day_hour_laney_u_charts_by_floor(
         start_date="2024-06-24",
         end_date="2025-06-29",
         annotate_flag=args.annotate_u_chart

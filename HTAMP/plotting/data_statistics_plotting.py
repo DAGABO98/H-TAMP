@@ -49,6 +49,7 @@ class DataStatisticsPlottingHelper:
         out_png: Path,
         annotate: bool = False,
         unit_label: str = "floor-day",
+        title_suffix: str = "",
     ) -> None:
         """
         Plot u vs time with center line and control limits, and annotate each point
@@ -92,7 +93,10 @@ class DataStatisticsPlottingHelper:
 
         plt.xlabel("Week start date")
         plt.ylabel(f"Average requests per {unit_label} (u)")
-        plt.title(f"Weekly Shewhart u-chart: requests per {unit_label}")
+        title = f"Weekly Shewhart u-chart: requests per {unit_label}"
+        if title_suffix:
+            title += f" ({title_suffix})"
+        plt.title(title)
         plt.tight_layout()
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()
