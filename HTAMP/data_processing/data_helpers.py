@@ -51,9 +51,9 @@ class DataHelpers:
 
         dff = df.copy()
         dff["__day__"] = dff[time_col].dt.date
-        dff["__floor__"] = dff[room_col].apply(lambda x: DataHelpers.extract_floor(x))
         dff["__hour__"] = dff[time_col].dt.hour
-        dff = dff.dropna(subset=["__day__", "__floor__", "__hour__"])
+        dff["__floor__"] = dff[room_col].apply(lambda x: DataHelpers.extract_floor(x))
+        dff = dff.dropna(subset=["__day__", "__floor__"])
 
         return dff
     
@@ -122,22 +122,69 @@ class DataHelpers:
         unique_days = (dff[["__day__", "iso_year", "iso_week"]].drop_duplicates())
         per_day = per_day.merge(unique_days, on="__day__", how="left")
         return per_day
-    
+
     @staticmethod
-    def compute_per_day_hour_counts(dff: pd.DataFrame) -> pd.DataFrame:
+    def compute_per_day_hour_counts(dff: pd.DataFrame,
+                                    floors: Optional[Sequence[int]] = None,
+                                    start_date: Optional[str] = None,
+                                    end_date: Optional[str] = None) -> pd.DataFrame:
         """
         Returns one row per (floor, day, hour) with n_requests and ISO week/year attached.
+        Missing hours are filled with 0 so the result covers the full valid 24-hour day.
         """
-        if dff.empty:
+        if floors is None:
+            if dff.empty or "__floor__" not in dff.columns:
+                floors = []
+            else:
+                floors = sorted(dff["__floor__"].dropna().astype(int).unique().tolist())
+        else:
+            floors = sorted({int(floor) for floor in floors})
+
+        if start_date or end_date:
+            if start_date:
+                start_day = pd.to_datetime(start_date).date()
+            elif dff.empty:
+                start_day = None
+            else:
+                start_day = min(dff["__day__"])
+
+            if end_date:
+                end_day = pd.to_datetime(end_date).date()
+            elif dff.empty:
+                end_day = None
+            else:
+                end_day = max(dff["__day__"])
+
+            if start_day is None or end_day is None:
+                days = []
+            else:
+                days = list(pd.date_range(start=start_day, end=end_day, freq="D").date)
+        elif dff.empty:
+            days = []
+        else:
+            days = sorted(dff["__day__"].unique().tolist())
+
+        if not floors or not days:
             return pd.DataFrame(
                 columns=["__floor__", "__day__", "__hour__", "n_requests", "iso_year", "iso_week"]
             )
 
         g = dff.groupby(["__floor__", "__day__", "__hour__"], as_index=False)
-        per_day_hour = g.size().rename(columns={"size": "n_requests"})
+        observed = g.size().rename(columns={"size": "n_requests"})
 
-        unique_days = dff[["__day__", "iso_year", "iso_week"]].drop_duplicates()
-        per_day_hour = per_day_hour.merge(unique_days, on="__day__", how="left")
+        full_grid = pd.MultiIndex.from_product(
+            [floors, days, range(24)],
+            names=["__floor__", "__day__", "__hour__"]
+        ).to_frame(index=False)
+
+        per_day_hour = full_grid.merge(
+            observed,
+            on=["__floor__", "__day__", "__hour__"],
+            how="left"
+        )
+        per_day_hour["n_requests"] = per_day_hour["n_requests"].fillna(0).astype(int)
+        per_day_hour["iso_year"] = per_day_hour["__day__"].apply(lambda d: d.isocalendar().year)
+        per_day_hour["iso_week"] = per_day_hour["__day__"].apply(lambda d: d.isocalendar().week)
         return per_day_hour
     
     @staticmethod  

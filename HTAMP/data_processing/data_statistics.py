@@ -35,9 +35,6 @@ class DataStatistics:
         self.u_chart_outdir = self.outdir / "u_charts"
         self.u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
-        self.base_u_chart_outdir = self.u_chart_outdir / "floor_day"
-        self.base_u_chart_outdir.mkdir(parents=True, exist_ok=True)
-
         self.floor_day_hour_u_chart_outdir = self.u_chart_outdir / "floor_day_hour"
         self.floor_day_hour_u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
@@ -113,15 +110,17 @@ class DataStatistics:
 
     def _plot_weekly_charts_by_floor(self,
                                      filtered_df: pd.DataFrame,
-                                     count_builder: Callable[[pd.DataFrame], pd.DataFrame],
+                                     count_builder: Callable[[pd.DataFrame, int], pd.DataFrame],
                                      weekly_builder: Callable[[pd.DataFrame], pd.DataFrame],
                                      base_outdir: Path,
                                      out_png_name: str,
                                      annotate_flag: bool,
-                                     unit_label: str) -> None:
-        for floor in self._sorted_floors(filtered_df):
+                                     unit_label: str,
+                                     floor_source_df: pd.DataFrame | None = None) -> None:
+        floors_df = filtered_df if floor_source_df is None else floor_source_df
+        for floor in self._sorted_floors(floors_df):
             floor_df = filtered_df[filtered_df["__floor__"] == floor].copy()
-            per_unit = count_builder(floor_df)
+            per_unit = count_builder(floor_df, floor)
             weekly = weekly_builder(per_unit)
             outdir = self._floor_chart_outdir(base_outdir=base_outdir, floor=floor)
             out_png = outdir / out_png_name
@@ -341,7 +340,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.base_u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -372,7 +371,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.base_u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -397,9 +396,9 @@ class DataStatistics:
 
         self._plot_weekly_charts_by_floor(
             filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_counts,
+            count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_u_chart,
-            base_outdir=self.base_u_chart_outdir,
+            base_outdir=self.u_chart_outdir,
             out_png_name=f"{label}_weekly_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
             unit_label="floor-day"
@@ -423,9 +422,9 @@ class DataStatistics:
 
         self._plot_weekly_charts_by_floor(
             filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_counts,
+            count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_laney_u_chart,
-            base_outdir=self.base_u_chart_outdir,
+            base_outdir=self.u_chart_outdir,
             out_png_name=f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
             unit_label="floor-day"
@@ -451,7 +450,12 @@ class DataStatistics:
             end_date=end_date,
         )
 
-        per_day_hour = DataHelpers.compute_per_day_hour_counts(dff=df_filtered)
+        per_day_hour = DataHelpers.compute_per_day_hour_counts(
+            dff=df_filtered,
+            floors=self._sorted_floors(df_filtered),
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         weekly = DataHelpers.weekly_u_chart(per_day_hour)
 
@@ -481,7 +485,12 @@ class DataStatistics:
 
         self._plot_weekly_charts_by_floor(
             filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_hour_counts,
+            count_builder=lambda dff, floor: DataHelpers.compute_per_day_hour_counts(
+                dff=dff,
+                floors=[floor],
+                start_date=start_date,
+                end_date=end_date,
+            ),
             weekly_builder=DataHelpers.weekly_u_chart,
             base_outdir=self.floor_day_hour_u_chart_outdir,
             out_png_name=f"{label}_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png",
@@ -509,7 +518,12 @@ class DataStatistics:
             end_date=end_date,
         )
 
-        per_day_hour = DataHelpers.compute_per_day_hour_counts(dff=df_filtered)
+        per_day_hour = DataHelpers.compute_per_day_hour_counts(
+            dff=df_filtered,
+            floors=self._sorted_floors(df_filtered),
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day_hour)
 
@@ -539,7 +553,12 @@ class DataStatistics:
 
         self._plot_weekly_charts_by_floor(
             filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_hour_counts,
+            count_builder=lambda dff, floor: DataHelpers.compute_per_day_hour_counts(
+                dff=dff,
+                floors=[floor],
+                start_date=start_date,
+                end_date=end_date,
+            ),
             weekly_builder=DataHelpers.weekly_laney_u_chart,
             base_outdir=self.floor_day_hour_u_chart_outdir,
             out_png_name=f"{label}_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png",
@@ -576,7 +595,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.base_u_chart_outdir / f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -612,7 +631,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.base_u_chart_outdir / f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -628,23 +647,30 @@ class DataStatistics:
                                                          end_date: str,
                                                          label: str,
                                                          annotate_flag: bool) -> None:
-        df_filtered = self._prepare_online_filtered_df(
+        floor_source_df = self._prepare_filtered_df(
             original_df=original_df,
-            sched_time_col=sched_time_col,
-            ordered_time_col=ordered_time_col,
+            time_col=sched_time_col,
             room_col=room_col,
             start_date=start_date,
             end_date=end_date,
         )
 
         self._plot_weekly_charts_by_floor(
-            filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_counts,
+            filtered_df=self._prepare_online_filtered_df(
+                original_df=original_df,
+                sched_time_col=sched_time_col,
+                ordered_time_col=ordered_time_col,
+                room_col=room_col,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_u_chart,
-            base_outdir=self.base_u_chart_outdir,
+            base_outdir=self.u_chart_outdir,
             out_png_name=f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
-            unit_label="floor-day"
+            unit_label="floor-day",
+            floor_source_df=floor_source_df
         )
 
     def generate_and_plot_online_weekly_laney_u_chart_by_floor(self,
@@ -656,23 +682,30 @@ class DataStatistics:
                                                                end_date: str,
                                                                label: str,
                                                                annotate_flag: bool) -> None:
-        df_filtered = self._prepare_online_filtered_df(
+        floor_source_df = self._prepare_filtered_df(
             original_df=original_df,
-            sched_time_col=sched_time_col,
-            ordered_time_col=ordered_time_col,
+            time_col=sched_time_col,
             room_col=room_col,
             start_date=start_date,
             end_date=end_date,
         )
 
         self._plot_weekly_charts_by_floor(
-            filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_counts,
+            filtered_df=self._prepare_online_filtered_df(
+                original_df=original_df,
+                sched_time_col=sched_time_col,
+                ordered_time_col=ordered_time_col,
+                room_col=room_col,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_laney_u_chart,
-            base_outdir=self.base_u_chart_outdir,
+            base_outdir=self.u_chart_outdir,
             out_png_name=f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
-            unit_label="floor-day"
+            unit_label="floor-day",
+            floor_source_df=floor_source_df
         )
 
     def generate_and_plot_online_weekly_floor_day_hour_u_chart(self,
@@ -684,25 +717,26 @@ class DataStatistics:
                                                                end_date: str,
                                                                label: str,
                                                                annotate_flag: bool) -> None:
-        df_prep = DataHelpers.prepare_df(
-            original_df,
+        reference_df = self._prepare_filtered_df(
+            original_df=original_df,
             time_col=sched_time_col,
             room_col=room_col,
-        )
-
-        df_filtered = DataHelpers.apply_date_filters(
-            df_prep,
             start_date=start_date,
             end_date=end_date,
         )
 
         df_filtered = DataHelpers.apply_online_requests_filters(
-            df_filtered,
+            reference_df.copy(),
             sched_time_label=sched_time_col,
             ordered_time_label=ordered_time_col
         )
 
-        per_day_hour = DataHelpers.compute_per_day_hour_counts(dff=df_filtered)
+        per_day_hour = DataHelpers.compute_per_day_hour_counts(
+            dff=df_filtered,
+            floors=self._sorted_floors(reference_df),
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         weekly = DataHelpers.weekly_u_chart(per_day_hour)
 
@@ -723,23 +757,35 @@ class DataStatistics:
                                                                         end_date: str,
                                                                         label: str,
                                                                         annotate_flag: bool) -> None:
-        df_filtered = self._prepare_online_filtered_df(
+        floor_source_df = self._prepare_filtered_df(
             original_df=original_df,
-            sched_time_col=sched_time_col,
-            ordered_time_col=ordered_time_col,
+            time_col=sched_time_col,
             room_col=room_col,
             start_date=start_date,
             end_date=end_date,
         )
 
         self._plot_weekly_charts_by_floor(
-            filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_hour_counts,
+            filtered_df=self._prepare_online_filtered_df(
+                original_df=original_df,
+                sched_time_col=sched_time_col,
+                ordered_time_col=ordered_time_col,
+                room_col=room_col,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            count_builder=lambda dff, floor: DataHelpers.compute_per_day_hour_counts(
+                dff=dff,
+                floors=[floor],
+                start_date=start_date,
+                end_date=end_date,
+            ),
             weekly_builder=DataHelpers.weekly_u_chart,
             base_outdir=self.floor_day_hour_u_chart_outdir,
             out_png_name=f"{label}_online_weekly_floor_day_hour_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
-            unit_label="floor-day-hour"
+            unit_label="floor-day-hour",
+            floor_source_df=floor_source_df
         )
 
     def generate_and_plot_online_weekly_floor_day_hour_laney_u_chart(self,
@@ -751,25 +797,26 @@ class DataStatistics:
                                                                      end_date: str,
                                                                      label: str,
                                                                      annotate_flag: bool) -> None:
-        df_prep = DataHelpers.prepare_df(
-            original_df,
+        reference_df = self._prepare_filtered_df(
+            original_df=original_df,
             time_col=sched_time_col,
             room_col=room_col,
-        )
-
-        df_filtered = DataHelpers.apply_date_filters(
-            df_prep,
             start_date=start_date,
             end_date=end_date,
         )
 
         df_filtered = DataHelpers.apply_online_requests_filters(
-            df_filtered,
+            reference_df.copy(),
             sched_time_label=sched_time_col,
             ordered_time_label=ordered_time_col
         )
 
-        per_day_hour = DataHelpers.compute_per_day_hour_counts(dff=df_filtered)
+        per_day_hour = DataHelpers.compute_per_day_hour_counts(
+            dff=df_filtered,
+            floors=self._sorted_floors(reference_df),
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day_hour)
 
@@ -790,23 +837,35 @@ class DataStatistics:
                                                                               end_date: str,
                                                                               label: str,
                                                                               annotate_flag: bool) -> None:
-        df_filtered = self._prepare_online_filtered_df(
+        floor_source_df = self._prepare_filtered_df(
             original_df=original_df,
-            sched_time_col=sched_time_col,
-            ordered_time_col=ordered_time_col,
+            time_col=sched_time_col,
             room_col=room_col,
             start_date=start_date,
             end_date=end_date,
         )
 
         self._plot_weekly_charts_by_floor(
-            filtered_df=df_filtered,
-            count_builder=DataHelpers.compute_per_day_hour_counts,
+            filtered_df=self._prepare_online_filtered_df(
+                original_df=original_df,
+                sched_time_col=sched_time_col,
+                ordered_time_col=ordered_time_col,
+                room_col=room_col,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            count_builder=lambda dff, floor: DataHelpers.compute_per_day_hour_counts(
+                dff=dff,
+                floors=[floor],
+                start_date=start_date,
+                end_date=end_date,
+            ),
             weekly_builder=DataHelpers.weekly_laney_u_chart,
             base_outdir=self.floor_day_hour_u_chart_outdir,
             out_png_name=f"{label}_online_weekly_floor_day_hour_laney_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
-            unit_label="floor-day-hour"
+            unit_label="floor-day-hour",
+            floor_source_df=floor_source_df
         )
     
     def build_per_day_all_tasks(self,
@@ -857,7 +916,7 @@ class DataStatistics:
 
         weekly_std = DataHelpers.equal_task_influence_oe_chart(weekly_df)
 
-        out_png = self.base_u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_oe_u_chart(weekly=weekly_std,
                                                      out_png=out_png)
     
@@ -895,7 +954,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.base_u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png
@@ -935,7 +994,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.base_u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
+        out_png = self.u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png
