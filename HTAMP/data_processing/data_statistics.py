@@ -35,6 +35,9 @@ class DataStatistics:
         self.u_chart_outdir = self.outdir / "u_charts"
         self.u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
+        self.base_u_chart_outdir = self.u_chart_outdir / "floor_day"
+        self.base_u_chart_outdir.mkdir(parents=True, exist_ok=True)
+
         self.floor_day_hour_u_chart_outdir = self.u_chart_outdir / "floor_day_hour"
         self.floor_day_hour_u_chart_outdir.mkdir(parents=True, exist_ok=True)
 
@@ -340,7 +343,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -371,7 +374,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -398,7 +401,7 @@ class DataStatistics:
             filtered_df=df_filtered,
             count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_u_chart,
-            base_outdir=self.u_chart_outdir,
+            base_outdir=self.base_u_chart_outdir,
             out_png_name=f"{label}_weekly_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
             unit_label="floor-day"
@@ -424,7 +427,7 @@ class DataStatistics:
             filtered_df=df_filtered,
             count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_laney_u_chart,
-            base_outdir=self.u_chart_outdir,
+            base_outdir=self.base_u_chart_outdir,
             out_png_name=f"{label}_weekly_laney_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
             unit_label="floor-day"
@@ -595,7 +598,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -631,7 +634,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png,
@@ -666,7 +669,7 @@ class DataStatistics:
             ),
             count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_u_chart,
-            base_outdir=self.u_chart_outdir,
+            base_outdir=self.base_u_chart_outdir,
             out_png_name=f"{label}_online_weekly_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
             unit_label="floor-day",
@@ -701,7 +704,7 @@ class DataStatistics:
             ),
             count_builder=lambda dff, _floor: DataHelpers.compute_per_day_counts(dff),
             weekly_builder=DataHelpers.weekly_laney_u_chart,
-            base_outdir=self.u_chart_outdir,
+            base_outdir=self.base_u_chart_outdir,
             out_png_name=f"{label}_online_weekly_laney_u_chart_{start_date}_{end_date}.png",
             annotate_flag=annotate_flag,
             unit_label="floor-day",
@@ -916,7 +919,7 @@ class DataStatistics:
 
         weekly_std = DataHelpers.equal_task_influence_oe_chart(weekly_df)
 
-        out_png = self.u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"combined_standardized_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_oe_u_chart(weekly=weekly_std,
                                                      out_png=out_png)
     
@@ -954,7 +957,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_laney_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"combined_laney_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png
@@ -994,7 +997,7 @@ class DataStatistics:
 
         weekly = DataHelpers.weekly_u_chart(per_day)
 
-        out_png = self.u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
+        out_png = self.base_u_chart_outdir / f"combined_u_chart_{start_date}_{end_date}.png"
         DataStatisticsPlottingHelper.plot_weekly_u_chart(
             weekly=weekly,
             out_png=out_png
