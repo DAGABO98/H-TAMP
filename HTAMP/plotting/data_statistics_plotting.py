@@ -44,7 +44,12 @@ class DataStatisticsPlottingHelper:
         plt.close()
     
     @staticmethod
-    def plot_weekly_u_chart(weekly: pd.DataFrame, out_png: Path, annotate:bool = False) -> None:
+    def plot_weekly_u_chart(
+        weekly: pd.DataFrame,
+        out_png: Path,
+        annotate: bool = False,
+        unit_label: str = "floor-day",
+    ) -> None:
         """
         Plot u vs time with center line and control limits, and annotate each point
         with precomputed ISO year/week stored in weekly (e.g., iso_year, iso_week).
@@ -86,8 +91,8 @@ class DataStatisticsPlottingHelper:
                 )
 
         plt.xlabel("Week start date")
-        plt.ylabel("Average requests per floor-day (u)")
-        plt.title("Weekly Shewhart u-chart: requests per floor-day")
+        plt.ylabel(f"Average requests per {unit_label} (u)")
+        plt.title(f"Weekly Shewhart u-chart: requests per {unit_label}")
         plt.tight_layout()
         plt.savefig(out_png, dpi=160, bbox_inches="tight")
         plt.close()

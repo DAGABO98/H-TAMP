@@ -52,7 +52,8 @@ class DataHelpers:
         dff = df.copy()
         dff["__day__"] = dff[time_col].dt.date
         dff["__floor__"] = dff[room_col].apply(lambda x: DataHelpers.extract_floor(x))
-        dff = dff.dropna(subset=["__day__", "__floor__"])
+        dff["__hour__"] = dff[time_col].dt.hour
+        dff = dff.dropna(subset=["__day__", "__floor__", "__hour__"])
 
         return dff
     
@@ -121,6 +122,23 @@ class DataHelpers:
         unique_days = (dff[["__day__", "iso_year", "iso_week"]].drop_duplicates())
         per_day = per_day.merge(unique_days, on="__day__", how="left")
         return per_day
+    
+    @staticmethod
+    def compute_per_day_hour_counts(dff: pd.DataFrame) -> pd.DataFrame:
+        """
+        Returns one row per (floor, day, hour) with n_requests and ISO week/year attached.
+        """
+        if dff.empty:
+            return pd.DataFrame(
+                columns=["__floor__", "__day__", "__hour__", "n_requests", "iso_year", "iso_week"]
+            )
+
+        g = dff.groupby(["__floor__", "__day__", "__hour__"], as_index=False)
+        per_day_hour = g.size().rename(columns={"size": "n_requests"})
+
+        unique_days = dff[["__day__", "iso_year", "iso_week"]].drop_duplicates()
+        per_day_hour = per_day_hour.merge(unique_days, on="__day__", how="left")
+        return per_day_hour
     
     @staticmethod  
     def distribution_of_counts(per_day: pd.DataFrame) -> pd.DataFrame:
