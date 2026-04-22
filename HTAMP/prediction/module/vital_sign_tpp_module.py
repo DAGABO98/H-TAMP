@@ -109,11 +109,18 @@ class VitalSignTPPModule(L.LightningModule):
             "nll_disc": nll_disc,
         }
 
-    def _log_metrics(self, prefix: str, metrics: dict[str, torch.Tensor]) -> None:
+    def _log_metrics(
+        self,
+        prefix: str,
+        metrics: dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+    ) -> None:
         for metric_name, metric_value in metrics.items():
             self.log(
                 f"{prefix}_{metric_name}",
                 metric_value,
+                batch_size=batch_size,
                 sync_dist=True,
                 on_step=False,
                 on_epoch=True,
@@ -122,15 +129,15 @@ class VitalSignTPPModule(L.LightningModule):
 
     def training_step(self, batch: BatchSpec, batch_idx: int) -> torch.Tensor:
         metrics = self._compute_metrics(batch)
-        self._log_metrics("train", metrics)
+        self._log_metrics("train", metrics, batch_size=int(batch.data.shape[0]))
         return metrics["nll"]
 
     def validation_step(self, batch: BatchSpec, batch_idx: int) -> dict[str, torch.Tensor]:
         metrics = self._compute_metrics(batch)
-        self._log_metrics("val", metrics)
+        self._log_metrics("val", metrics, batch_size=int(batch.data.shape[0]))
         return metrics
 
     def test_step(self, batch: BatchSpec, batch_idx: int) -> dict[str, torch.Tensor]:
         metrics = self._compute_metrics(batch)
-        self._log_metrics("test", metrics)
+        self._log_metrics("test", metrics, batch_size=int(batch.data.shape[0]))
         return metrics

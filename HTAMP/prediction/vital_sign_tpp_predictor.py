@@ -10,6 +10,7 @@ from typing import Any
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.loggers import CSVLogger
 
 from HTAMP.prediction.configs.vital_sign_tpp_config import (
     VitalSignTPPModelConfig,
@@ -134,7 +135,13 @@ class VitalSignTPPPredictor:
         log_dir: str,
     ):
         if not model_config.wandb:
-            return None
+            logger = CSVLogger(
+                save_dir=log_dir,
+                name="vital_sign_tpp",
+                version=model_config.run_name,
+            )
+            logger.log_hyperparams(config_payload)
+            return logger
 
         import wandb
         from lightning.pytorch.loggers import WandbLogger
@@ -221,7 +228,7 @@ class VitalSignTPPPredictor:
             devices=model_config.devices,
             strategy=model_config.strategy or "auto",
             callbacks=callbacks,
-            logger=logger if logger is not None else False,
+            logger=logger,
             default_root_dir=log_dir,
             gradient_clip_val=model_config.gradient_clip_val,
             max_epochs=model_config.max_epochs,
