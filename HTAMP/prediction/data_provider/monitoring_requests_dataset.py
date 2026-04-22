@@ -86,6 +86,7 @@ VITAL_OUTPUT_COMPONENTS: dict[str, list[str]] = {
 
 TIMESTAMP_COLUMN = "timestamp"
 ENCOUNTER_ID_COLUMN = "encounter_id"
+FLOOR_COLUMN = "__floor__"
 TIME_MARK_COLUMNS = ["month", "day", "weekday", "hour", "minute"]
 TIME_FEATURE_SPECS = (
     ("month", 12.0, 1.0),
@@ -103,6 +104,7 @@ SEGMENT_COLUMNS = ["patient_id", "encounter_id", "start_idx", "end_idx", "num_ro
 SPLITS = ("train", "val", "test")
 TASK_NAMES = tuple(SUPPORTED_REQUEST_TASKS)
 TASK_TO_INDEX = {task_name: index for index, task_name in enumerate(TASK_NAMES)}
+REQUESTS_DATASET_VERSION = 1
 REQUESTS_TIME_SERIES_CACHE_VERSION = 4
 REQUESTS_TIME_SERIES_CACHE_DIRNAME = "time_series_cache"
 REQUEST_CACHE_FILENAMES = {
@@ -144,6 +146,7 @@ DISCHARGE_END_CANDIDATES = (
 DEFAULT_ADMISSIONS_DISCHARGES_PATH = (
     Path(__file__).resolve().parents[3] / "data" / "processed" / "admissions_discharges.csv"
 )
+SplitWeekSetsByFloor = dict[Optional[int], dict[str, set[tuple[int, int]]]]
 
 
 def _normalize_column_name(column_name: str) -> str:
@@ -169,6 +172,28 @@ def _normalize_identifier_series(series: pd.Series) -> pd.Series:
     normalized = series.where(pd.notna(series), pd.NA).astype(str).str.strip()
     normalized = normalized.str.replace(r"(?<=\d)\.0+$", "", regex=True)
     return normalized.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
+
+
+def _normalize_floor_series(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").astype("Int64")
+
+
+def _requests_dataset_config_snapshot(
+    dataset_config: MonitoringRequestDatasetConfig,
+) -> dict[str, object]:
+    dataset_payload = dataset_config.to_dict()
+    for field_name in REQUESTS_TIME_SERIES_IGNORED_CONFIG_FIELDS:
+        dataset_payload.pop(field_name, None)
+    return _json_safe_value(dataset_payload)
+
+
+def _serialize_split_week_sets_by_floor(
+    split_week_sets_by_floor: dict[int, set[tuple[int, int]]],
+) -> dict[str, list[list[int]]]:
+    return {
+        str(floor): [list(week) for week in sorted(weeks)]
+        for floor, weeks in sorted(split_week_sets_by_floor.items())
+    }
 
 
 def _resolved_admissions_discharges_path(
@@ -209,9 +234,7 @@ def _requests_time_series_signature(
     prediction_length: int,
     source_kind: str,
 ) -> dict[str, object]:
-    dataset_payload = dataset_config.to_dict()
-    for field_name in REQUESTS_TIME_SERIES_IGNORED_CONFIG_FIELDS:
-        dataset_payload.pop(field_name, None)
+    dataset_payload = _requests_dataset_config_snapshot(dataset_config=dataset_config)
 
     source_files: dict[str, object]
     if source_kind == "dataset_files":
@@ -415,6 +438,7 @@ class RequestsDataManager:
         return [
             self.patient_id_col,
             ENCOUNTER_ID_COLUMN,
+            FLOOR_COLUMN,
             TIMESTAMP_COLUMN,
             "task_name",
             "task_index",
@@ -687,6 +711,7 @@ class RequestsDataManager:
             return self._empty_events_frame()
 
         event_df = task_df[[self.patient_id_col, ENCOUNTER_ID_COLUMN, TIMESTAMP_COLUMN]].copy()
+        event_df[FLOOR_COLUMN] = self._floor_series(task_df)
         event_df["task_name"] = task_name
         event_df["task_index"] = self.task_to_index[task_name]
         event_df = pd.concat(
@@ -740,6 +765,16 @@ class RequestsDataManager:
             }
         )
 
+    def _floor_series(self, df: pd.DataFrame) -> pd.Series:
+        if FLOOR_COLUMN not in df.columns:
+            return pd.Series(pd.NA, index=df.index, dtype="Int64")
+        return _normalize_floor_series(df[FLOOR_COLUMN])
+
+    def _floor_key(self, floor_value: object) -> Optional[int]:
+        if pd.isna(floor_value):
+            return None
+        return int(floor_value)
+
     def _validation_ratio_over_non_test_weeks(self) -> float:
         remaining_ratio = self.dataset_config.train_ratio + self.dataset_config.val_ratio
         if remaining_ratio <= 0.0:
@@ -763,19 +798,40 @@ class RequestsDataManager:
 
         return sorted(unique_weeks)
 
-    def _resolve_test_week_set(
+    def _collect_sorted_unique_weeks_by_floor(
         self,
         patient_events: dict[str, pd.DataFrame],
-    ) -> set[tuple[int, int]]:
-        sorted_unique_weeks = self._collect_sorted_unique_weeks(patient_events=patient_events)
-        return set(self.dataset_config.test_iso_weeks).intersection(sorted_unique_weeks)
+    ) -> dict[int, list[tuple[int, int]]]:
+        unique_weeks_by_floor: dict[int, set[tuple[int, int]]] = {}
 
-    def _resolve_week_split_sets(
+        for patient_df in patient_events.values():
+            if patient_df.empty:
+                continue
+            iso_fields = self._derive_iso_week_fields(patient_df[TIMESTAMP_COLUMN])
+            floor_series = self._floor_series(patient_df)
+            for floor_value, iso_year, iso_week in zip(
+                floor_series,
+                iso_fields["iso_year"],
+                iso_fields["iso_week"],
+            ):
+                if pd.isna(floor_value):
+                    continue
+                floor = int(floor_value)
+                unique_weeks_by_floor.setdefault(floor, set()).add(
+                    (int(iso_year), int(iso_week))
+                )
+
+        return {
+            floor: sorted(weeks)
+            for floor, weeks in sorted(unique_weeks_by_floor.items())
+        }
+
+    def _split_weeks_from_sorted_unique_weeks(
         self,
-        patient_events: dict[str, pd.DataFrame],
+        *,
+        sorted_unique_weeks: list[tuple[int, int]],
+        test_weeks: set[tuple[int, int]],
     ) -> dict[str, set[tuple[int, int]]]:
-        sorted_unique_weeks = self._collect_sorted_unique_weeks(patient_events=patient_events)
-        test_weeks = set(self.dataset_config.test_iso_weeks).intersection(sorted_unique_weeks)
         non_test_weeks = [week for week in sorted_unique_weeks if week not in test_weeks]
 
         val_ratio = self._validation_ratio_over_non_test_weeks()
@@ -790,13 +846,81 @@ class RequestsDataManager:
         return {
             "train": train_weeks,
             "val": val_weeks,
-            "test": test_weeks,
+            "test": set(test_weeks),
         }
+
+    def _resolve_test_week_sets_by_floor(
+        self,
+        patient_events: dict[str, pd.DataFrame],
+    ) -> dict[Optional[int], set[tuple[int, int]]]:
+        sorted_unique_weeks = self._collect_sorted_unique_weeks(patient_events=patient_events)
+        sorted_unique_weeks_by_floor = self._collect_sorted_unique_weeks_by_floor(
+            patient_events=patient_events
+        )
+        test_week_sets_by_floor: dict[Optional[int], set[tuple[int, int]]] = {
+            None: set(self.dataset_config.resolved_test_iso_weeks_for_floor(None)).intersection(
+                sorted_unique_weeks
+            )
+        }
+        for floor, floor_weeks in sorted_unique_weeks_by_floor.items():
+            test_week_sets_by_floor[floor] = set(
+                self.dataset_config.resolved_test_iso_weeks_for_floor(floor)
+            ).intersection(floor_weeks)
+        return test_week_sets_by_floor
+
+    def _resolve_week_split_sets_by_floor(
+        self,
+        patient_events: dict[str, pd.DataFrame],
+    ) -> SplitWeekSetsByFloor:
+        sorted_unique_weeks = self._collect_sorted_unique_weeks(patient_events=patient_events)
+        sorted_unique_weeks_by_floor = self._collect_sorted_unique_weeks_by_floor(
+            patient_events=patient_events
+        )
+        split_week_sets_by_floor: SplitWeekSetsByFloor = {
+            None: self._split_weeks_from_sorted_unique_weeks(
+                sorted_unique_weeks=sorted_unique_weeks,
+                test_weeks=set(
+                    self.dataset_config.resolved_test_iso_weeks_for_floor(None)
+                ).intersection(sorted_unique_weeks),
+            )
+        }
+        for floor, floor_weeks in sorted_unique_weeks_by_floor.items():
+            floor_test_weeks = set(
+                self.dataset_config.resolved_test_iso_weeks_for_floor(floor)
+            ).intersection(floor_weeks)
+            split_week_sets_by_floor[floor] = self._split_weeks_from_sorted_unique_weeks(
+                sorted_unique_weeks=floor_weeks,
+                test_weeks=floor_test_weeks,
+            )
+        return split_week_sets_by_floor
+
+    def _resolve_test_week_set(
+        self,
+        patient_events: dict[str, pd.DataFrame],
+    ) -> set[tuple[int, int]]:
+        return set(
+            self._resolve_test_week_sets_by_floor(patient_events=patient_events).get(None, set())
+        )
+
+    def _resolve_week_split_sets(
+        self,
+        patient_events: dict[str, pd.DataFrame],
+    ) -> dict[str, set[tuple[int, int]]]:
+        return self._resolve_week_split_sets_by_floor(patient_events=patient_events)[None]
+
+    def _split_week_sets_for_floor(
+        self,
+        split_week_sets_by_floor: SplitWeekSetsByFloor,
+        floor: Optional[int],
+    ) -> dict[str, set[tuple[int, int]]]:
+        if floor is not None and floor in split_week_sets_by_floor:
+            return split_week_sets_by_floor[floor]
+        return split_week_sets_by_floor[None]
 
     def _resolve_random_patient_split_sets(
         self,
         patient_events: dict[str, pd.DataFrame],
-        test_weeks: set[tuple[int, int]],
+        split_week_sets_by_floor: SplitWeekSetsByFloor,
     ) -> dict[str, set[str]]:
         eligible_patient_ids: list[str] = []
 
@@ -804,11 +928,20 @@ class RequestsDataManager:
             if patient_df.empty:
                 continue
             iso_fields = self._derive_iso_week_fields(patient_df[TIMESTAMP_COLUMN])
-            patient_weeks = {
+            floor_series = self._floor_series(patient_df)
+            has_non_test_rows = any(
                 (int(iso_year), int(iso_week))
-                for iso_year, iso_week in zip(iso_fields["iso_year"], iso_fields["iso_week"])
-            }
-            if any(week not in test_weeks for week in patient_weeks):
+                not in self._split_week_sets_for_floor(
+                    split_week_sets_by_floor=split_week_sets_by_floor,
+                    floor=self._floor_key(floor_value),
+                )["test"]
+                for floor_value, iso_year, iso_week in zip(
+                    floor_series,
+                    iso_fields["iso_year"],
+                    iso_fields["iso_week"],
+                )
+            )
+            if has_non_test_rows:
                 eligible_patient_ids.append(str(patient_id))
 
         eligible_patient_ids = sorted(set(eligible_patient_ids))
@@ -840,9 +973,14 @@ class RequestsDataManager:
         self,
         patient_id: str,
         week_key: tuple[int, int],
-        split_week_sets: dict[str, set[tuple[int, int]]],
+        floor: Optional[int],
+        split_week_sets_by_floor: SplitWeekSetsByFloor,
         split_patient_sets: dict[str, set[str]],
     ) -> Optional[str]:
+        split_week_sets = self._split_week_sets_for_floor(
+            split_week_sets_by_floor=split_week_sets_by_floor,
+            floor=floor,
+        )
         if week_key in split_week_sets["test"]:
             return "test"
 
@@ -862,13 +1000,14 @@ class RequestsDataManager:
         self,
         patient_id: str,
         patient_df: pd.DataFrame,
-        split_week_sets: dict[str, set[tuple[int, int]]],
+        split_week_sets_by_floor: SplitWeekSetsByFloor,
         split_patient_sets: dict[str, set[str]],
     ) -> dict[str, list[pd.DataFrame]]:
         patient_with_iso = patient_df.copy()
         iso_fields = self._derive_iso_week_fields(patient_with_iso[TIMESTAMP_COLUMN])
         patient_with_iso["iso_year"] = iso_fields["iso_year"]
         patient_with_iso["iso_week"] = iso_fields["iso_week"]
+        patient_with_iso[FLOOR_COLUMN] = self._floor_series(patient_with_iso)
 
         split_rows: dict[str, list[pd.DataFrame]] = {split: [] for split in SPLITS}
         current_split: Optional[str] = None
@@ -877,11 +1016,14 @@ class RequestsDataManager:
         resolved_splits = [
             self._resolve_row_split(
                 patient_id=str(patient_id),
-                week_key=(int(row.iso_year), int(row.iso_week)),
-                split_week_sets=split_week_sets,
+                week_key=(int(iso_year), int(iso_week)),
+                floor=self._floor_key(floor_value),
+                split_week_sets_by_floor=split_week_sets_by_floor,
                 split_patient_sets=split_patient_sets,
             )
-            for row in patient_with_iso[["iso_year", "iso_week"]].itertuples(index=False)
+            for iso_year, iso_week, floor_value in patient_with_iso[
+                ["iso_year", "iso_week", FLOOR_COLUMN]
+            ].itertuples(index=False, name=None)
         ]
 
         for row_index, split_name in enumerate(resolved_splits):
@@ -952,6 +1094,34 @@ class RequestsDataManager:
 
         return split_week_sets
 
+    def _derive_split_week_sets_by_floor(
+        self,
+        split_frames: dict[str, pd.DataFrame],
+    ) -> dict[str, dict[int, set[tuple[int, int]]]]:
+        split_week_sets_by_floor: dict[str, dict[int, set[tuple[int, int]]]] = {
+            split: {}
+            for split in SPLITS
+        }
+
+        for split_name, split_df in split_frames.items():
+            if split_df.empty:
+                continue
+            iso_fields = self._derive_iso_week_fields(split_df[TIMESTAMP_COLUMN])
+            floor_series = self._floor_series(split_df)
+            for floor_value, iso_year, iso_week in zip(
+                floor_series,
+                iso_fields["iso_year"],
+                iso_fields["iso_week"],
+            ):
+                if pd.isna(floor_value):
+                    continue
+                floor = int(floor_value)
+                split_week_sets_by_floor[split_name].setdefault(floor, set()).add(
+                    (int(iso_year), int(iso_week))
+                )
+
+        return split_week_sets_by_floor
+
     def _derive_split_patient_sets(
         self,
         split_segments_frames: dict[str, pd.DataFrame],
@@ -1021,16 +1191,25 @@ class RequestsDataManager:
             for patient_id, patient_df in events_df.groupby(self.patient_id_col, sort=False)
         }
         split_strategy = self.dataset_config.validation_split_strategy
-        split_week_sets = {split: set() for split in SPLITS}
+        split_week_sets_by_floor: SplitWeekSetsByFloor = {
+            None: {split: set() for split in SPLITS}
+        }
         split_patient_sets = {split: set() for split in SPLITS}
-        split_week_sets["test"] = self._resolve_test_week_set(patient_events=patient_events)
         if split_strategy == "random_patients":
+            split_week_sets_by_floor = {
+                floor: {"train": set(), "val": set(), "test": set(test_weeks)}
+                for floor, test_weeks in self._resolve_test_week_sets_by_floor(
+                    patient_events=patient_events
+                ).items()
+            }
             split_patient_sets = self._resolve_random_patient_split_sets(
                 patient_events=patient_events,
-                test_weeks=split_week_sets["test"],
+                split_week_sets_by_floor=split_week_sets_by_floor,
             )
         else:
-            split_week_sets = self._resolve_week_split_sets(patient_events=patient_events)
+            split_week_sets_by_floor = self._resolve_week_split_sets_by_floor(
+                patient_events=patient_events
+            )
         split_frame_parts: dict[str, list[pd.DataFrame]] = {split: [] for split in SPLITS}
         split_segments: dict[str, list[dict[str, object]]] = {split: [] for split in SPLITS}
         split_offsets = {split: 0 for split in SPLITS}
@@ -1039,7 +1218,7 @@ class RequestsDataManager:
             patient_split_frames = self._split_patient_series(
                 patient_id=str(patient_id),
                 patient_df=patient_df,
-                split_week_sets=split_week_sets,
+                split_week_sets_by_floor=split_week_sets_by_floor,
                 split_patient_sets=split_patient_sets,
             )
 
@@ -1091,6 +1270,9 @@ class RequestsDataManager:
             )
 
         self.split_week_sets = self._derive_split_week_sets(split_frames=split_frames)
+        self.split_week_sets_by_floor = self._derive_split_week_sets_by_floor(
+            split_frames=split_frames
+        )
         self.split_patient_sets = self._derive_split_patient_sets(
             split_segments_frames=split_segments_frames
         )
@@ -1098,6 +1280,7 @@ class RequestsDataManager:
 
     def _build_metadata(self) -> dict[str, object]:
         return {
+            "version": REQUESTS_DATASET_VERSION,
             "dataset_representation": "time_aligned_multivariate_request_intervals",
             "sample_axis_semantics": "unique_anchor_timestamp_per_patient_encounter_segment",
             "segment_axis_semantics": "contiguous_rows_within_split_and_patient_encounter",
@@ -1121,6 +1304,16 @@ class RequestsDataManager:
             "train_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("train", set()))],
             "val_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("val", set()))],
             "test_iso_weeks": [list(week) for week in sorted(getattr(self, "split_week_sets", {}).get("test", set()))],
+            "train_iso_weeks_by_floor": _serialize_split_week_sets_by_floor(
+                getattr(self, "split_week_sets_by_floor", {}).get("train", {})
+            ),
+            "val_iso_weeks_by_floor": _serialize_split_week_sets_by_floor(
+                getattr(self, "split_week_sets_by_floor", {}).get("val", {})
+            ),
+            "test_iso_weeks_by_floor": _serialize_split_week_sets_by_floor(
+                getattr(self, "split_week_sets_by_floor", {}).get("test", {})
+            ),
+            "config_snapshot": _requests_dataset_config_snapshot(self.dataset_config),
         }
 
     def _preprocess_requests_data(
@@ -1270,6 +1463,10 @@ class RequestsDataManager:
                     data_df[ENCOUNTER_ID_COLUMN].notna(),
                     admissions_encounters,
                 )
+            if FLOOR_COLUMN not in data_df.columns:
+                data_df[FLOOR_COLUMN] = pd.Series(pd.NA, index=data_df.index, dtype="Int64")
+            else:
+                data_df[FLOOR_COLUMN] = _normalize_floor_series(data_df[FLOOR_COLUMN])
             data_df["task_name"] = data_df["task_name"].astype(str)
             data_df = _ensure_cyclical_time_columns(data_df, timestamp_col=TIMESTAMP_COLUMN)
 
@@ -1356,6 +1553,13 @@ class RequestsDataManager:
     def _load_dataframes(self) -> None:
         with self._metadata_path().open("r", encoding="utf-8") as metadata_file:
             self.metadata = json.load(metadata_file)
+
+        if int(self.metadata.get("version", -1)) != REQUESTS_DATASET_VERSION:
+            raise ValueError("Saved monitoring-request split data version mismatch.")
+        if self.metadata.get("config_snapshot") != _requests_dataset_config_snapshot(self.dataset_config):
+            raise ValueError(
+                "Saved monitoring-request split data does not match the current dataset configuration."
+            )
 
         loaded_time_cols = list(self.metadata.get("time_columns", []))
         if not loaded_time_cols or loaded_time_cols == TIME_MARK_COLUMNS:

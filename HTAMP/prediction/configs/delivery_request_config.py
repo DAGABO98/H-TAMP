@@ -35,9 +35,10 @@ DEFAULT_TIME_BINS_HOURS = (
     12.0,
     24.0,
 )
+IsoWeek = tuple[int, int]
 
 
-def _default_test_iso_weeks() -> tuple[tuple[int, int], ...]:
+def _default_test_iso_weeks() -> tuple[IsoWeek, ...]:
     try:
         from HTAMP.assignment.run_test import ALLOWED_ISO_WEEKS
 
@@ -79,7 +80,7 @@ def _deep_merge_dicts(base: Mapping[str, Any], updates: Mapping[str, Any]) -> di
     return merged
 
 
-def _parse_iso_week_value(value: str) -> tuple[int, int]:
+def _parse_iso_week_value(value: str) -> IsoWeek:
     cleaned = value.strip().replace("W", "-").replace(",", "-").replace("_", "-")
     parts = [part for part in cleaned.split("-") if part]
     if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
@@ -92,7 +93,7 @@ def _parse_iso_week_value(value: str) -> tuple[int, int]:
 
 def _normalize_test_iso_weeks(
     raw_weeks: Sequence[str | Sequence[int]] | None,
-) -> tuple[tuple[int, int], ...]:
+) -> tuple[IsoWeek, ...]:
     if raw_weeks is None:
         return _default_test_iso_weeks()
     if isinstance(raw_weeks, str):
@@ -112,6 +113,44 @@ def _normalize_test_iso_weeks(
         normalized_weeks.append((int(entry[0]), int(entry[1])))
 
     return tuple(normalized_weeks)
+
+
+def _normalize_floor_key(raw_floor: Any, *, field_name: str) -> int:
+    if isinstance(raw_floor, bool):
+        raise TypeError(f"{field_name} floor keys must be integers, not booleans.")
+    try:
+        return int(raw_floor)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{field_name} floor keys must be integers.") from exc
+
+
+def _default_test_iso_weeks_by_floor() -> dict[int, tuple[IsoWeek, ...]]:
+    try:
+        from HTAMP.assignment.run_test import ALLOWED_ISO_WEEKS_BY_FLOOR
+
+        return {
+            int(floor): tuple(sorted(set(_normalize_test_iso_weeks(raw_weeks=weeks))))
+            for floor, weeks in ALLOWED_ISO_WEEKS_BY_FLOOR.items()
+        }
+    except Exception:
+        return {}
+
+
+def _normalize_test_iso_weeks_by_floor(
+    raw_weeks_by_floor: Mapping[Any, Sequence[str | Sequence[int]] | None] | None,
+) -> dict[int, tuple[IsoWeek, ...]]:
+    if raw_weeks_by_floor is None:
+        return _default_test_iso_weeks_by_floor()
+
+    normalized_weeks_by_floor: dict[int, tuple[IsoWeek, ...]] = {}
+    for raw_floor, raw_weeks in dict(
+        _coerce_mapping(value=raw_weeks_by_floor, field_name="test_iso_weeks_by_floor")
+    ).items():
+        floor = _normalize_floor_key(raw_floor, field_name="test_iso_weeks_by_floor")
+        normalized_weeks_by_floor[floor] = tuple(
+            sorted(set(_normalize_test_iso_weeks(raw_weeks=raw_weeks)))
+        )
+    return dict(sorted(normalized_weeks_by_floor.items()))
 
 
 def _build_annotated_data_files(raw_value: Any) -> AnnotatedDataFiles:
@@ -206,7 +245,10 @@ class DeliveryRequestDatasetConfig:
     included_tasks: tuple[str, ...] = field(default_factory=lambda: tuple(SUPPORTED_DELIVERY_CONTEXT_TASKS))
     train_ratio: float = 0.70
     val_ratio: float = 0.15
-    test_iso_weeks: tuple[tuple[int, int], ...] = field(default_factory=_default_test_iso_weeks)
+    test_iso_weeks: tuple[IsoWeek, ...] = field(default_factory=_default_test_iso_weeks)
+    test_iso_weeks_by_floor: dict[int, tuple[IsoWeek, ...]] = field(
+        default_factory=_default_test_iso_weeks_by_floor
+    )
     validation_split_strategy: str = "chronological_weeks"
     validation_split_seed: int = 42
     lookback_hours: float = 24.0
@@ -256,6 +298,9 @@ class DeliveryRequestDatasetConfig:
             raise ValueError("min_med_count must be greater than zero.")
 
         self.test_iso_weeks = tuple(sorted(set(_normalize_test_iso_weeks(raw_weeks=self.test_iso_weeks))))
+        self.test_iso_weeks_by_floor = _normalize_test_iso_weeks_by_floor(
+            raw_weeks_by_floor=self.test_iso_weeks_by_floor
+        )
         self.validation_split_strategy = _normalize_validation_split_strategy(
             raw_strategy=self.validation_split_strategy
         )
@@ -304,6 +349,11 @@ class DeliveryRequestDatasetConfig:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+    def resolved_test_iso_weeks_for_floor(self, floor: int | None) -> tuple[IsoWeek, ...]:
+        if floor is None:
+            return self.test_iso_weeks
+        return self.test_iso_weeks_by_floor.get(int(floor), self.test_iso_weeks)
 
 
 @dataclass
