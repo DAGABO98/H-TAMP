@@ -39,7 +39,7 @@ from HTAMP.prediction.point_process_models.flexTPP.dataset.base import (
 
 from HTAMP.prediction.point_process_models.flexTPP.dataset.property_mtpp import PropertyMTTPDataset
 
-DATASET_VERSION = 1
+DATASET_VERSION = 2
 DATASET_REPRESENTATION = "vital_sign_request_flex_tpp"
 DATASET_FILENAME = "vital_sign_tpp_dataset.pt"
 METADATA_FILENAME = "metadata.json"
@@ -137,6 +137,20 @@ def _chunk_indices(length: int, max_chunk_size: Optional[int]) -> list[tuple[int
 
 def _eos_gap_hours(eos_offset_minutes: float) -> float:
     return float(eos_offset_minutes) / 60.0
+
+
+def _split_segment_frame_by_day(segment_df: pd.DataFrame) -> list[pd.DataFrame]:
+    if segment_df.empty:
+        return []
+
+    dated_segment_df = segment_df.copy()
+    dated_segment_df["_sequence_day"] = pd.to_datetime(
+        dated_segment_df[TIMESTAMP_COLUMN]
+    ).dt.normalize()
+    return [
+        daily_df.drop(columns="_sequence_day").reset_index(drop=True)
+        for _, daily_df in dated_segment_df.groupby("_sequence_day", sort=False)
+    ]
 
 
 @dataclass
@@ -354,74 +368,75 @@ class VitalSignTPPDataManager:
                 if segment_df.empty:
                     continue
 
-                for chunk_start, chunk_end in (
-                    _chunk_indices(len(segment_df), self.dataset_config.max_events_per_sequence)
-                ):
-                    chunk_df = segment_df.iloc[chunk_start:chunk_end].reset_index(drop=True)
-                    if len(chunk_df) < self.dataset_config.min_events_per_sequence:
-                        continue
+                for daily_df in _split_segment_frame_by_day(segment_df):
+                    for chunk_start, chunk_end in (
+                        _chunk_indices(len(daily_df), self.dataset_config.max_events_per_sequence)
+                    ):
+                        chunk_df = daily_df.iloc[chunk_start:chunk_end].reset_index(drop=True)
+                        if len(chunk_df) < self.dataset_config.min_events_per_sequence:
+                            continue
 
-                    chunk_start_timestamp = pd.Timestamp(chunk_df[TIMESTAMP_COLUMN].iloc[0])
-                    chunk_end_timestamp = pd.Timestamp(chunk_df[TIMESTAMP_COLUMN].iloc[-1])
-                    encoded_events: list[tuple[float, float, int, dict[str, float]]] = []
-                    raw_events: list[dict[str, object]] = []
+                        chunk_start_timestamp = pd.Timestamp(chunk_df[TIMESTAMP_COLUMN].iloc[0])
+                        chunk_end_timestamp = pd.Timestamp(chunk_df[TIMESTAMP_COLUMN].iloc[-1])
+                        encoded_events: list[tuple[float, float, int, dict[str, float]]] = []
+                        raw_events: list[dict[str, object]] = []
 
-                    for row in chunk_df.to_dict(orient="records"):
-                        task_name = str(row["task_name"])
-                        event_timestamp = pd.Timestamp(row[TIMESTAMP_COLUMN])
-                        start_time_hours = float(
-                            (event_timestamp - chunk_start_timestamp).total_seconds() / 3600.0
-                        )
-                        property_payload = {
-                            property_name: (
-                                float(row[source_column])
-                                if row.get(source_column) is not None
-                                and not pd.isna(row.get(source_column))
-                                else float("nan")
+                        for row in chunk_df.to_dict(orient="records"):
+                            task_name = str(row["task_name"])
+                            event_timestamp = pd.Timestamp(row[TIMESTAMP_COLUMN])
+                            start_time_hours = float(
+                                (event_timestamp - chunk_start_timestamp).total_seconds() / 3600.0
                             )
-                            for property_name, source_column in property_columns_by_task[task_name]
-                        }
-                        encoded_events.append(
-                            (
-                                start_time_hours,
-                                start_time_hours,
-                                event_type_to_index[task_name],
-                                property_payload,
-                            )
-                        )
-                        raw_events.append(
-                            {
-                                "timestamp": event_timestamp.isoformat(),
-                                "task_name": task_name,
-                                "task_index": int(row["task_index"]),
-                                "floor": (
-                                    None
-                                    if row.get(FLOOR_COLUMN) is None or pd.isna(row.get(FLOOR_COLUMN))
-                                    else int(row[FLOOR_COLUMN])
-                                ),
-                                "properties": {
-                                    property_name: _json_safe_float(row.get(source_column))
-                                    for property_name, source_column in property_columns_by_task[task_name]
-                                },
+                            property_payload = {
+                                property_name: (
+                                    float(row[source_column])
+                                    if row.get(source_column) is not None
+                                    and not pd.isna(row.get(source_column))
+                                    else float("nan")
+                                )
+                                for property_name, source_column in property_columns_by_task[task_name]
                             }
-                        )
+                            encoded_events.append(
+                                (
+                                    start_time_hours,
+                                    start_time_hours,
+                                    event_type_to_index[task_name],
+                                    property_payload,
+                                )
+                            )
+                            raw_events.append(
+                                {
+                                    "timestamp": event_timestamp.isoformat(),
+                                    "task_name": task_name,
+                                    "task_index": int(row["task_index"]),
+                                    "floor": (
+                                        None
+                                        if row.get(FLOOR_COLUMN) is None or pd.isna(row.get(FLOOR_COLUMN))
+                                        else int(row[FLOOR_COLUMN])
+                                    ),
+                                    "properties": {
+                                        property_name: _json_safe_float(row.get(source_column))
+                                        for property_name, source_column in property_columns_by_task[task_name]
+                                    },
+                                }
+                            )
 
-                    split_records[split_name].append(
-                        VitalSignTPPSequenceRecord(
-                            split=split_name,
-                            patient_id=str(segment.patient_id),
-                            encounter_id=(
-                                ""
-                                if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
-                                else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
-                            ),
-                            segment_id=len(split_records[split_name]),
-                            sequence_start_timestamp=chunk_start_timestamp.isoformat(),
-                            sequence_end_timestamp=chunk_end_timestamp.isoformat(),
-                            events=encoded_events,
-                            raw_events=raw_events,
+                        split_records[split_name].append(
+                            VitalSignTPPSequenceRecord(
+                                split=split_name,
+                                patient_id=str(segment.patient_id),
+                                encounter_id=(
+                                    ""
+                                    if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+                                    else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+                                ),
+                                segment_id=len(split_records[split_name]),
+                                sequence_start_timestamp=chunk_start_timestamp.isoformat(),
+                                sequence_end_timestamp=chunk_end_timestamp.isoformat(),
+                                events=encoded_events,
+                                raw_events=raw_events,
+                            )
                         )
-                    )
 
         for split_name in SPLITS:
             if not split_records[split_name]:
@@ -460,6 +475,7 @@ class VitalSignTPPDataManager:
             "include_time_features_as_properties": bool(
                 self.dataset_config.include_time_features_as_properties
             ),
+            "sequence_boundary": "calendar_day",
             "eos_offset_minutes": float(self.dataset_config.eos_offset_minutes),
             "split_sequence_counts": {
                 split_name: len(self.split_records[split_name])
