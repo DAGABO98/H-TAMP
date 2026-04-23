@@ -13,6 +13,7 @@
   "accelerator": "auto",
   "devices": 1,
   "strategy": null,
+  "conditioning_network": null,
   "order": "STP",
   "gaussian_except_start_time": false,
   "depth": 6,

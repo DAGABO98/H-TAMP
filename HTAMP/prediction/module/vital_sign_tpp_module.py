@@ -24,6 +24,31 @@ def _coerce_model_config(
         return model_config
     return VitalSignTPPModelConfig.from_dict(model_config)
 
+def _conditioning_network_config(
+    *,
+    model_config: VitalSignTPPModelConfig,
+    condition_dim: int,
+) -> dict[str, Any] | None:
+    if condition_dim <= 0:
+        return None
+
+    if model_config.conditioning_network is not None:
+        conditioning_network = dict(model_config.conditioning_network)
+        conditioning_network.setdefault("window_size", condition_dim)
+        return conditioning_network
+
+    return {
+        "_target_": "flex_tpp.model.EmbeddingTransformer",
+        "dim_k": None,
+        "window_size": condition_dim,
+        "dim_ff": model_config.dim_ff,
+        "depth": min(2, model_config.depth),
+        "normalize": model_config.normalize,
+        "non_linearity": model_config.non_linearity,
+        "dropout": min(float(model_config.dropout), 0.1),
+        "is_causal": False,
+        "positional_encoding_migrated": True,
+    }
 
 class VitalSignTPPModule(L.LightningModule):
     def __init__(
@@ -32,11 +57,13 @@ class VitalSignTPPModule(L.LightningModule):
         model_config: VitalSignTPPModelConfig | dict[str, Any],
         dims: list[int] | tuple[int, ...],
         max_num_classes: int,
+        condition_dim: int = 0,
     ) -> None:
         super().__init__()
         self.model_config = _coerce_model_config(model_config=model_config)
         self.dims = [int(dim_value) for dim_value in dims]
         self.max_num_classes = int(max_num_classes)
+        self.condition_dim = int(condition_dim)
 
         self.flex_tpp_model = PropertyMTPPFlexTPPModel(
             dim=sum(self.dims),
@@ -52,6 +79,10 @@ class VitalSignTPPModule(L.LightningModule):
             param_nets_n_hidden_layer=self.model_config.param_nets_n_hidden_layer,
             param_nets_hidden_dim_factor=self.model_config.param_nets_hidden_dim_factor,
             max_num_classes=self.max_num_classes,
+            conditioning_network=_conditioning_network_config(
+                model_config=self.model_config,
+                condition_dim=self.condition_dim,
+            ),
         )
 
         self.save_hyperparameters(
@@ -59,6 +90,7 @@ class VitalSignTPPModule(L.LightningModule):
                 "model_config": self.model_config.to_dict(),
                 "dims": self.dims,
                 "max_num_classes": self.max_num_classes,
+                "condition_dim": self.condition_dim,
             }
         )
 

@@ -94,6 +94,7 @@ class VitalSignTPPPredictor:
             model_config=model_config,
             dims=dataset_bundle.dims,
             max_num_classes=dataset_bundle.max_num_classes,
+            condition_dim=dataset_bundle.condition_dim,
         )
 
     def create_callbacks(

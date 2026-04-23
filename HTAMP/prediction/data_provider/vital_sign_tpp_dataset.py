@@ -39,11 +39,13 @@ from HTAMP.prediction.point_process_models.flexTPP.dataset.base import (
 
 from HTAMP.prediction.point_process_models.flexTPP.dataset.property_mtpp import PropertyMTTPDataset
 
-DATASET_VERSION = 2
+DATASET_VERSION = 3
 DATASET_REPRESENTATION = "vital_sign_request_flex_tpp"
 DATASET_FILENAME = "vital_sign_tpp_dataset.pt"
 METADATA_FILENAME = "metadata.json"
 EOS_EVENT_TYPE_NAME = "{EOS}"
+NO_CONDITIONING_MODE = "none"
+PREVIOUS_DAY_SUMMARY_CONDITIONING_MODE = "previous_day_summary"
 WORKFLOW_IGNORED_CONFIG_FIELDS = (
     "preprocess_data",
     "save_data",
@@ -152,6 +154,124 @@ def _split_segment_frame_by_day(segment_df: pd.DataFrame) -> list[pd.DataFrame]:
         for _, daily_df in dated_segment_df.groupby("_sequence_day", sort=False)
     ]
 
+def _current_sequence_day(sequence_df: pd.DataFrame) -> pd.Timestamp:
+    return pd.Timestamp(sequence_df[TIMESTAMP_COLUMN].iloc[0]).normalize()
+
+def _measurement_summary_component_columns(
+    included_tasks: Sequence[str],
+) -> list[tuple[str, str, str]]:
+    return [
+        (task_name, component_name, _event_measurement_column(task_name=task_name, component=component_name))
+        for task_name in included_tasks
+        for component_name in VITAL_OUTPUT_COMPONENTS[task_name]
+    ]
+
+
+def _previous_day_condition_feature_names(
+    included_tasks: Sequence[str],
+) -> list[str]:
+    feature_names = [
+        "has_previous_day",
+        "hours_since_previous_day_last_request",
+        "previous_day_total_requests",
+    ]
+    feature_names.extend(
+        f"previous_day_request_count_{task_name}"
+        for task_name in included_tasks
+    )
+    feature_names.extend(
+        f"previous_day_last_request_hour_{task_name}"
+        for task_name in included_tasks
+    )
+    feature_names.extend(
+        f"previous_day_last_{task_name}_{component_name}"
+        for task_name, component_name, _ in _measurement_summary_component_columns(included_tasks)
+    )
+    feature_names.extend(
+        f"previous_day_mean_{task_name}_{component_name}"
+        for task_name, component_name, _ in _measurement_summary_component_columns(included_tasks)
+    )
+    return feature_names
+
+
+def _build_previous_day_condition_vector(
+    *,
+    current_day_df: pd.DataFrame,
+    previous_day_df: pd.DataFrame | None,
+    included_tasks: Sequence[str],
+) -> list[float]:
+    current_start_timestamp = pd.Timestamp(current_day_df[TIMESTAMP_COLUMN].iloc[0])
+    has_previous_day = previous_day_df is not None and not previous_day_df.empty
+
+    if has_previous_day:
+        previous_day_df = previous_day_df.sort_values(
+            [TIMESTAMP_COLUMN, "task_index"],
+            kind="mergesort",
+        ).reset_index(drop=True)
+        previous_day_last_timestamp = pd.Timestamp(previous_day_df[TIMESTAMP_COLUMN].iloc[-1])
+        hours_since_previous_day_last_request = float(
+            max(
+                0.0,
+                (current_start_timestamp - previous_day_last_timestamp).total_seconds() / 3600.0,
+            )
+        )
+        previous_day_total_requests = float(len(previous_day_df))
+    else:
+        hours_since_previous_day_last_request = 0.0
+        previous_day_total_requests = 0.0
+
+    feature_values: list[float] = [
+        1.0 if has_previous_day else 0.0,
+        hours_since_previous_day_last_request,
+        previous_day_total_requests,
+    ]
+
+    previous_day_by_task = {}
+    if has_previous_day:
+        previous_day_by_task = {
+            task_name: task_df.sort_values(
+                [TIMESTAMP_COLUMN, "task_index"],
+                kind="mergesort",
+            ).reset_index(drop=True)
+            for task_name, task_df in previous_day_df.groupby("task_name", sort=False)
+        }
+
+    for task_name in included_tasks:
+        task_df = previous_day_by_task.get(task_name)
+        feature_values.append(float(len(task_df)) if task_df is not None else 0.0)
+
+    for task_name in included_tasks:
+        task_df = previous_day_by_task.get(task_name)
+        if task_df is None or task_df.empty:
+            feature_values.append(0.0)
+            continue
+        task_last_timestamp = pd.Timestamp(task_df[TIMESTAMP_COLUMN].iloc[-1])
+        feature_values.append(
+            float(
+                task_last_timestamp.hour
+                + (task_last_timestamp.minute / 60.0)
+                + (task_last_timestamp.second / 3600.0)
+            )
+        )
+
+    for task_name, _, source_column in _measurement_summary_component_columns(included_tasks):
+        task_df = previous_day_by_task.get(task_name)
+        if task_df is None or task_df.empty or source_column not in task_df.columns:
+            feature_values.append(0.0)
+            continue
+        value_series = pd.to_numeric(task_df[source_column], errors="coerce").dropna()
+        feature_values.append(float(value_series.iloc[-1]) if not value_series.empty else 0.0)
+
+    for task_name, _, source_column in _measurement_summary_component_columns(included_tasks):
+        task_df = previous_day_by_task.get(task_name)
+        if task_df is None or task_df.empty or source_column not in task_df.columns:
+            feature_values.append(0.0)
+            continue
+        value_series = pd.to_numeric(task_df[source_column], errors="coerce").dropna()
+        feature_values.append(float(value_series.mean()) if not value_series.empty else 0.0)
+
+    return feature_values
+
 
 @dataclass
 class VitalSignTPPSequenceRecord:
@@ -163,6 +283,7 @@ class VitalSignTPPSequenceRecord:
     sequence_end_timestamp: str
     events: list[tuple[float, float, int, dict[str, float]]]
     raw_events: list[dict[str, object]]
+    condition: list[float] | None = None
 
     @classmethod
     def from_dict(
@@ -199,6 +320,11 @@ class VitalSignTPPSequenceRecord:
             sequence_end_timestamp=str(payload["sequence_end_timestamp"]),
             events=events,
             raw_events=[dict(event_payload) for event_payload in payload.get("raw_events", [])],
+            condition=(
+                None
+                if payload.get("condition") is None
+                else [float(value) for value in payload.get("condition", [])]
+            ),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -210,6 +336,7 @@ def encode_events_as_item_spec(
     events: Sequence[tuple[float, float, int, Mapping[str, float]]],
     property_types: Mapping[int, Mapping[str, int]],
     order: str,
+    condition: Sequence[float] | np.ndarray | torch.Tensor | None = None,
 ) -> ItemSpec:
     event_vector_parts: list[float] = []
     log_abs_det_vector_parts: list[float] = []
@@ -259,7 +386,11 @@ def encode_events_as_item_spec(
         data=data,
         types=torch.tensor(type_vector_parts, dtype=torch.long),
         log_prob_correction=torch.tensor(log_abs_det_vector_parts, dtype=torch.float32),
-        condition=None,
+        condition=(
+            None
+            if condition is None
+            else torch.as_tensor(condition, dtype=torch.float32)
+        ),
         extras={
             "position_in_event": torch.tensor(position_vector_parts, dtype=torch.long),
             "event_index": torch.tensor(event_index_vector_parts, dtype=torch.long),
@@ -276,7 +407,11 @@ def _single_item_batch_spec(item_spec: ItemSpec, device: torch.device) -> BatchS
             if item_spec.log_prob_correction is not None
             else None
         ),
-        condition=None,
+        condition=(
+            None
+            if item_spec.condition is None
+            else item_spec.condition.unsqueeze(0).to(device)
+        ),
         extras={
             key: value.unsqueeze(0).to(device)
             for key, value in dict(item_spec.extras or {}).items()
@@ -350,6 +485,38 @@ class VitalSignTPPDataManager:
             for task_name in self.dataset_config.included_tasks
         }
 
+        daily_frame_lookup: dict[tuple[str, str, pd.Timestamp], pd.DataFrame] = {}
+        for split_name in SPLITS:
+            split_df = split_frames[split_name]
+            segments_df = split_segments[split_name]
+            if split_df.empty or segments_df.empty:
+                continue
+
+            for segment in segments_df.itertuples(index=False):
+                start_idx = int(segment.start_idx)
+                end_idx = int(segment.end_idx)
+                segment_df = (
+                    split_df.iloc[start_idx:end_idx]
+                    .sort_values([TIMESTAMP_COLUMN, "task_index"], kind="mergesort")
+                    .reset_index(drop=True)
+                )
+                if segment_df.empty:
+                    continue
+
+                encounter_id = (
+                    ""
+                    if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+                    else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+                )
+                for daily_df in _split_segment_frame_by_day(segment_df):
+                    daily_frame_lookup[
+                        (
+                            str(segment.patient_id),
+                            encounter_id,
+                            _current_sequence_day(daily_df),
+                        )
+                    ] = daily_df
+
         split_records: dict[str, list[VitalSignTPPSequenceRecord]] = {split: [] for split in SPLITS}
         for split_name in SPLITS:
             split_df = split_frames[split_name]
@@ -368,7 +535,31 @@ class VitalSignTPPDataManager:
                 if segment_df.empty:
                     continue
 
-                for daily_df in _split_segment_frame_by_day(segment_df):
+                encounter_id = (
+                    ""
+                    if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+                    else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+                )
+                daily_frames = _split_segment_frame_by_day(segment_df)
+                for daily_df in daily_frames:
+                    previous_day_df = None
+                    if self.dataset_config.use_previous_day_summary_conditioning:
+                        previous_day_df = daily_frame_lookup.get(
+                            (
+                                str(segment.patient_id),
+                                encounter_id,
+                                _current_sequence_day(daily_df) - pd.Timedelta(days=1),
+                            )
+                        )
+                    condition_vector = (
+                        _build_previous_day_condition_vector(
+                            current_day_df=daily_df,
+                            previous_day_df=previous_day_df,
+                            included_tasks=self.dataset_config.included_tasks,
+                        )
+                        if self.dataset_config.use_previous_day_summary_conditioning
+                        else None
+                    )
                     for chunk_start, chunk_end in (
                         _chunk_indices(len(daily_df), self.dataset_config.max_events_per_sequence)
                     ):
@@ -425,16 +616,13 @@ class VitalSignTPPDataManager:
                             VitalSignTPPSequenceRecord(
                                 split=split_name,
                                 patient_id=str(segment.patient_id),
-                                encounter_id=(
-                                    ""
-                                    if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
-                                    else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
-                                ),
+                                encounter_id=encounter_id,
                                 segment_id=len(split_records[split_name]),
                                 sequence_start_timestamp=chunk_start_timestamp.isoformat(),
                                 sequence_end_timestamp=chunk_end_timestamp.isoformat(),
                                 events=encoded_events,
                                 raw_events=raw_events,
+                                condition=condition_vector,
                             )
                         )
 
@@ -476,6 +664,21 @@ class VitalSignTPPDataManager:
                 self.dataset_config.include_time_features_as_properties
             ),
             "sequence_boundary": "calendar_day",
+            "conditioning_mode": (
+                PREVIOUS_DAY_SUMMARY_CONDITIONING_MODE
+                if self.dataset_config.use_previous_day_summary_conditioning
+                else NO_CONDITIONING_MODE
+            ),
+            "condition_feature_names": (
+                _previous_day_condition_feature_names(self.dataset_config.included_tasks)
+                if self.dataset_config.use_previous_day_summary_conditioning
+                else []
+            ),
+            "condition_dim": (
+                len(_previous_day_condition_feature_names(self.dataset_config.included_tasks))
+                if self.dataset_config.use_previous_day_summary_conditioning
+                else 0
+            ),
             "eos_offset_minutes": float(self.dataset_config.eos_offset_minutes),
             "split_sequence_counts": {
                 split_name: len(self.split_records[split_name])
@@ -555,10 +758,27 @@ class VitalSignTPPDataset(PropertyMTTPDataset):
             for record in sequence_records
         ]
         self.eos_offset_hours = _eos_gap_hours(eos_offset_minutes)
+        self.condition_dim = max(
+            (
+                len(record.condition)
+                for record in self.sequence_records
+                if record.condition is not None
+            ),
+            default=0,
+        )
+        conditional = self.condition_dim > 0
 
         time_series = [
             (
-                None,
+                (
+                    np.asarray(record.condition, dtype=np.float32)
+                    if conditional and record.condition is not None
+                    else (
+                        np.zeros(self.condition_dim, dtype=np.float32)
+                        if conditional
+                        else None
+                    )
+                ),
                 self._events_with_eos(record.events, eos_event_type=eos_event_type),
             )
             for record in self.sequence_records
@@ -569,7 +789,7 @@ class VitalSignTPPDataset(PropertyMTTPDataset):
             eos_event_type=eos_event_type,
             overlapping=True,
             order=order,
-            conditional=False,
+            conditional=conditional,
             gaussian_except_start_time=gaussian_except_start_time,
         )
 
@@ -650,6 +870,11 @@ class VitalSignTPPDatasetBundle:
                 self.metadata.get("property_schema_by_task", {})
             ).items()
         }
+        self.condition_feature_names = [
+            str(feature_name)
+            for feature_name in self.metadata.get("condition_feature_names", [])
+        ]
+        self.condition_dim = len(self.condition_feature_names)
         self.property_types = {
             self.event_type_to_index[task_name]: {
                 property_name: MODALITY_CONTINUOUS
@@ -679,6 +904,16 @@ class VitalSignTPPDatasetBundle:
             ]
             for split_name in SPLITS
         }
+        if self.condition_dim == 0:
+            self.condition_dim = max(
+                (
+                    len(record.condition)
+                    for records in self.split_records.values()
+                    for record in records
+                    if record.condition is not None
+                ),
+                default=0,
+            )
         self.datasets = {
             split_name: VitalSignTPPDataset(
                 sequence_records=self.split_records[split_name],
@@ -704,11 +939,17 @@ class VitalSignTPPDatasetBundle:
     def length(self, split: str) -> int:
         return len(self.get_raw_records(split))
 
-    def encode_events(self, events: Sequence[tuple[float, float, int, Mapping[str, float]]]) -> ItemSpec:
+    def encode_events(
+        self,
+        events: Sequence[tuple[float, float, int, Mapping[str, float]]],
+        *,
+        condition: Sequence[float] | np.ndarray | torch.Tensor | None = None,
+    ) -> ItemSpec:
         return encode_events_as_item_spec(
             events=events,
             property_types=self.property_types,
             order=self.model_config.order,
+            condition=condition,
         )
 
     def item_to_batch(self, item_spec: ItemSpec, device: torch.device) -> BatchSpec:

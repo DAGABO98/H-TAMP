@@ -254,6 +254,7 @@ class VitalSignTPPDatasetConfig:
     validation_split_strategy: str = "chronological_weeks"
     validation_split_seed: int = 42
     include_time_features_as_properties: bool = True
+    use_previous_day_summary_conditioning: bool = True
     min_events_per_sequence: int = 2
     max_events_per_sequence: Optional[int] = None
     eos_offset_minutes: float = 5.0
@@ -329,6 +330,7 @@ class VitalSignTPPModelConfig:
     accelerator: str = "auto"
     devices: int = 1
     strategy: Optional[str] = None
+    conditioning_network: Optional[dict[str, Any]] = None
     order: str = "STP"
     gaussian_except_start_time: bool = False
     depth: int = 6
@@ -389,6 +391,14 @@ class VitalSignTPPModelConfig:
             self.monitor_mode = str(self.monitor_mode).strip().lower()
             if self.monitor_mode not in {"min", "max"}:
                 raise ValueError("monitor_mode must be either 'min', 'max', or null.")
+        
+        if self.conditioning_network is not None:
+            self.conditioning_network = dict(
+                _coerce_mapping(
+                    value=self.conditioning_network,
+                    field_name="conditioning_network",
+                )
+            )
 
     @classmethod
     def from_dict(

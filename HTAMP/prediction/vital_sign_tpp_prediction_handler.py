@@ -53,7 +53,11 @@ def _single_item_batch(
         data=item_spec.data.unsqueeze(0).to(device),
         types=item_spec.types.unsqueeze(0).to(device),
         log_prob_correction=None,
-        condition=None,
+        condition=(
+            item_spec.condition.unsqueeze(0).to(device)
+            if item_spec.condition is not None
+            else None
+        ),
         extras={
             key: value.unsqueeze(0).to(device)
             for key, value in dict(item_spec.extras or {}).items()
@@ -85,7 +89,7 @@ def _append_token(
         data=torch.cat([batch.data, next_data], dim=1),
         types=torch.cat([batch.types, next_types], dim=1),
         log_prob_correction=None,
-        condition=None,
+        condition=batch.condition,
         extras={
             "position_in_event": torch.cat(
                 [batch.extras["position_in_event"], next_position_tensor],
@@ -105,13 +109,14 @@ def _sample_future_events_from_prefix(
     dataset_bundle: VitalSignTPPDatasetBundle,
     dataset: VitalSignTPPDataset,
     prefix_events: Sequence[tuple[float, float, int, dict[str, float]]],
+    condition: Sequence[float] | None,
     max_future_events: int,
     device: torch.device,
     argmax: bool,
     mean_of: int,
     median: bool,
 ) -> list[tuple[float, float, int, dict[str, float]]]:
-    prefix_item = dataset_bundle.encode_events(prefix_events)
+    prefix_item = dataset_bundle.encode_events(prefix_events, condition=condition)
     batch = _single_item_batch(item_spec=prefix_item, device=device)
     predictor = dataset.determine_position_and_type()
     next_type_position = predictor.send(None)
@@ -165,7 +170,11 @@ def _sample_future_events_from_prefix(
             data=batch.data.detach().cpu(),
             types=batch.types.detach().cpu(),
             log_prob_correction=None,
-            condition=None,
+            condition=(
+                None
+                if batch.condition is None
+                else batch.condition.detach().cpu()
+            ),
             extras={
                 key: value.detach().cpu()
                 for key, value in batch.extras.items()
@@ -364,6 +373,7 @@ class VitalSignTPPPredictionManager:
                     dataset_bundle=dataset_bundle,
                     dataset=split_dataset,
                     prefix_events=prefix_events,
+                    condition=record.condition,
                     max_future_events=self.prediction_event_count,
                     device=device,
                     argmax=self.argmax,
