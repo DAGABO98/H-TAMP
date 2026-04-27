@@ -38,7 +38,7 @@ def _conditioning_network_config(
         return conditioning_network
 
     return {
-        "_target_": "flex_tpp.model.EmbeddingTransformer",
+        "_target_": "HTAMP.prediction.point_process_models.flexTPP.model.EmbeddingTransformer",
         "dim_k": None,
         "window_size": condition_dim,
         "dim_ff": model_config.dim_ff,

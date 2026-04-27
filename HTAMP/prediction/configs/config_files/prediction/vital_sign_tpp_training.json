@@ -40,9 +40,9 @@
     "max_events_per_sequence": null,
     "eos_offset_minutes": 5.0,
     "use_saved_request_data": true,
-    "use_saved_dataset": false,
-    "preprocess_data": true,
-    "save_data": true
+    "use_saved_dataset": true,
+    "preprocess_data": false,
+    "save_data": false
   },
   "model_config": {
     "run_name": "vital_sign_flex_tpp",
