@@ -623,6 +623,19 @@ def _make_otd_config(args: argparse.Namespace, default_tau: float) -> MOTDConfig
     )
 
 
+def _make_type_time_otd_config(args: argparse.Namespace, default_tau: float) -> MOTDConfig:
+    return MOTDConfig(
+        alpha=float(args.time_weight),
+        beta=float(args.type_weight),
+        gamma=0.0,
+        c_del=float(args.delete_cost),
+        c_ins=float(args.insert_cost),
+        default_tau=float(default_tau),
+        mark_mode="categorical",
+        hard_type=not bool(args.soft_type_matching),
+    )
+
+
 def _log(message: str) -> None:
     timestamp = datetime.datetime.now().isoformat(timespec="seconds")
     print(f"[{timestamp}] {message}", flush=True)
@@ -1170,6 +1183,7 @@ def _evaluate_easy_model(
     args: argparse.Namespace,
     device: torch.device,
     otd_config: MOTDConfig,
+    type_time_otd_config: MOTDConfig,
 ) -> list[dict[str, Any]]:
     model = _load_easy_model(spec=spec, args=args, device=device)
     first_event_pool = _first_event_pool(context.easy_bundle)
@@ -1221,6 +1235,13 @@ def _evaluate_easy_model(
                     time_scales=context.time_scales,
                     return_alignment=False,
                 )
+                type_time_result = marked_otd(
+                    pred_seq=predicted,
+                    true_seq=true_future,
+                    config=type_time_otd_config,
+                    time_scales=context.time_scales,
+                    return_alignment=False,
+                )
                 rows.append(
                     _detail_row(
                         spec=spec,
@@ -1232,6 +1253,7 @@ def _evaluate_easy_model(
                         predicted=predicted,
                         inference_seconds=inference_seconds,
                         result=result,
+                        type_time_result=type_time_result,
                     )
                 )
                 completed_samples += 1
@@ -1280,6 +1302,7 @@ def _evaluate_flex_model(
     args: argparse.Namespace,
     device: torch.device,
     otd_config: MOTDConfig,
+    type_time_otd_config: MOTDConfig,
 ) -> list[dict[str, Any]]:
     model, flex_bundle = _load_flex_model_and_bundle(spec=spec, args=args, device=device)
     flex_records = _flex_records_by_key(flex_bundle, args.split)
@@ -1348,6 +1371,13 @@ def _evaluate_flex_model(
                     time_scales=context.time_scales,
                     return_alignment=False,
                 )
+                type_time_result = marked_otd(
+                    pred_seq=predicted,
+                    true_seq=true_future,
+                    config=type_time_otd_config,
+                    time_scales=context.time_scales,
+                    return_alignment=False,
+                )
                 rows.append(
                     _detail_row(
                         spec=spec,
@@ -1359,6 +1389,7 @@ def _evaluate_flex_model(
                         predicted=predicted,
                         inference_seconds=inference_seconds,
                         result=result,
+                        type_time_result=type_time_result,
                     )
                 )
                 completed_samples += 1
@@ -1411,6 +1442,7 @@ def _detail_row(
     predicted: Sequence[Event],
     inference_seconds: float,
     result: Any,
+    type_time_result: Any,
 ) -> dict[str, Any]:
     true_event_count = int(len(true_future))
     predicted_event_count = int(len(predicted))
@@ -1454,6 +1486,12 @@ def _detail_row(
         "otd_mark": float(result.mark_cost),
         "otd_edit": float(result.edit_cost),
         "otd_other": float(result.other_cost),
+        "type_time_otd_total": float(type_time_result.cost),
+        "type_time_otd_time": float(type_time_result.time_cost),
+        "type_time_otd_type": float(type_time_result.type_cost),
+        "type_time_otd_mark": float(type_time_result.mark_cost),
+        "type_time_otd_edit": float(type_time_result.edit_cost),
+        "type_time_otd_other": float(type_time_result.other_cost),
     }
 
 
@@ -1466,6 +1504,7 @@ def _evaluate_model(
     args: argparse.Namespace,
     device: torch.device,
     otd_config: MOTDConfig,
+    type_time_otd_config: MOTDConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     started_at = datetime.datetime.now()
     try:
@@ -1480,6 +1519,7 @@ def _evaluate_model(
                 args=args,
                 device=device,
                 otd_config=otd_config,
+                type_time_otd_config=type_time_otd_config,
             )
         elif spec.family.lower() == "flextpp":
             detail_rows = _evaluate_flex_model(
@@ -1488,6 +1528,7 @@ def _evaluate_model(
                 args=args,
                 device=device,
                 otd_config=otd_config,
+                type_time_otd_config=type_time_otd_config,
             )
         else:
             raise ValueError(f"Unsupported model family '{spec.family}'.")
@@ -1499,7 +1540,7 @@ def _evaluate_model(
             status="success",
             error_message="",
         )
-        _log(f"Finished {spec.run_name}: mean OTD={summary_row['otd_total_mean']:.4f}.")
+        _log(f"Finished {spec.run_name}: mean Type/Time OTD={summary_row['type_time_otd_total_mean']:.4f}.")
         return detail_rows, summary_row
     except Exception as exc:
         traceback.print_exc()
@@ -1552,6 +1593,12 @@ def _summary_row_from_details(
         "otd_type",
         "otd_mark",
         "otd_edit",
+        "type_time_otd_total",
+        "type_time_otd_time",
+        "type_time_otd_other",
+        "type_time_otd_type",
+        "type_time_otd_mark",
+        "type_time_otd_edit",
         "predicted_event_count",
         "inference_seconds",
         "inference_milliseconds",
@@ -1665,6 +1712,53 @@ def _plot_results(*, output_dir: Path, detail_path: Path, summary_path: Path) ->
     plt.close(fig)
     plot_paths.append(boxplot_path)
 
+    if "type_time_otd_total_mean" in summary_df.columns:
+        type_time_component_path = output_dir / "type_time_otd_component_bar.png"
+        type_time_values = summary_df["type_time_otd_time_mean"].to_numpy(dtype=float)
+        type_other_values = summary_df["type_time_otd_other_mean"].to_numpy(dtype=float)
+        type_time_total_std = summary_df["type_time_otd_total_std"].to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(fig_width, 6.0))
+        ax.bar(x_positions, type_time_values, label="Time")
+        ax.bar(x_positions, type_other_values, bottom=type_time_values, label="Type/Edit")
+        ax.errorbar(
+            x_positions,
+            type_time_values + type_other_values,
+            yerr=type_time_total_std,
+            fmt="none",
+            ecolor="black",
+            elinewidth=1,
+            capsize=2,
+        )
+        ax.set_ylabel("Mean type/time OTD")
+        ax.set_title("Vital-sign TPP type/time OTD by model")
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(type_time_component_path, dpi=180)
+        plt.close(fig)
+        plot_paths.append(type_time_component_path)
+
+        type_time_boxplot_path = output_dir / "type_time_otd_distribution_boxplot.png"
+        grouped_type_time_values = [
+            detail_df.loc[
+                detail_df["run_name"] == run_name,
+                "type_time_otd_total",
+            ].to_numpy(dtype=float)
+            for run_name in labels
+        ]
+        fig, ax = plt.subplots(figsize=(fig_width, 6.0))
+        ax.boxplot(grouped_type_time_values, labels=labels, showfliers=False)
+        ax.set_ylabel("Sample type/time OTD")
+        ax.set_title("Type/time OTD distribution across prefixes and samples")
+        ax.tick_params(axis="x", rotation=45)
+        for tick_label in ax.get_xticklabels():
+            tick_label.set_ha("right")
+        fig.tight_layout()
+        fig.savefig(type_time_boxplot_path, dpi=180)
+        plt.close(fig)
+        plot_paths.append(type_time_boxplot_path)
+
     if "inference_milliseconds_mean" in summary_df.columns:
         inference_path = output_dir / "inference_latency_bar.png"
         inference_values = summary_df["inference_milliseconds_mean"].to_numpy(dtype=float)
@@ -1712,6 +1806,12 @@ def _log_wandb(
             "otd_time_std",
             "otd_other_mean",
             "otd_other_std",
+            "type_time_otd_total_mean",
+            "type_time_otd_total_std",
+            "type_time_otd_time_mean",
+            "type_time_otd_time_std",
+            "type_time_otd_other_mean",
+            "type_time_otd_other_std",
             "inference_milliseconds_mean",
             "inference_milliseconds_std",
             "inference_milliseconds_per_true_event_mean",
@@ -2073,6 +2173,10 @@ def main() -> int:
     )
     context = _build_evaluation_context(args=args, model_specs=model_specs)
     otd_config = _make_otd_config(args, default_tau=context.default_tau)
+    type_time_otd_config = _make_type_time_otd_config(
+        args,
+        default_tau=context.default_tau,
+    )
     total_prefixes, samples_per_model, rollout_event_budget_per_model = _prefix_work_for_records(
         args=args,
         records=context.easy_records,
@@ -2096,6 +2200,7 @@ def main() -> int:
             args=args,
             device=device,
             otd_config=otd_config,
+            type_time_otd_config=type_time_otd_config,
         )
         all_detail_rows.extend(detail_rows)
         summary_rows.append(summary_row)
@@ -2105,6 +2210,7 @@ def main() -> int:
         "output_dir": str(output_dir),
         "args": vars(args),
         "otd_config": otd_config.__dict__,
+        "type_time_otd_config": type_time_otd_config.__dict__,
         "num_models": len(model_specs),
         "num_sequences": len(context.easy_records),
         "demand_level": args.demand_level,
