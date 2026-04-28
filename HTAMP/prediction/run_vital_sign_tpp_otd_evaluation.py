@@ -7,6 +7,8 @@ import json
 import math
 import os
 import random
+import subprocess
+import sys
 import time
 import traceback
 from dataclasses import dataclass
@@ -51,6 +53,31 @@ from HTAMP.prediction.vital_sign_tpp_prediction_handler import (
 
 DEFAULT_COMPARISON_SUMMARY_GLOB = "data/prediction/vital_sign_tpp_comparison/*_summary.csv"
 DEFAULT_OUTPUT_DIR = "data/prediction/vital_sign_tpp_otd_evaluation"
+DEMAND_LEVELS = ("high", "medium", "low")
+DEMAND_LEVEL_CHOICES = ("all", *DEMAND_LEVELS)
+DEFAULT_DEMAND_WEEK_SETS_BY_FLOOR: dict[str, dict[int | None, set[tuple[int, int]]]] = {
+    "high": {
+        None: {(2024, 40), (2025, 5)},
+        2: {(2025, 6), (2025, 8)},
+        3: {(2025, 5), (2025, 10)},
+        7: {(2024, 39), (2024, 40)},
+        9: {(2024, 43), (2025, 6)},
+    },
+    "medium": {
+        None: {(2024, 44), (2025, 14)},
+        2: {(2024, 44), (2025, 14)},
+        3: {(2024, 44), (2025, 14)},
+        7: {(2024, 44), (2025, 14)},
+        9: {(2024, 44), (2025, 14)},
+    },
+    "low": {
+        None: {(2024, 27), (2024, 36)},
+        2: {(2024, 27), (2024, 28)},
+        3: {(2024, 46), (2025, 2)},
+        7: {(2024, 46), (2025, 26)},
+        9: {(2025, 19), (2025, 21)},
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -214,6 +241,118 @@ def _finite_float_or_none(value: Any) -> float | None:
     return numeric_value
 
 
+def _floor_or_none(value: Any) -> int | None:
+    numeric_value = _finite_float_or_none(value)
+    if numeric_value is None:
+        return None
+    return int(numeric_value)
+
+
+def _timestamp_iso_week(value: Any) -> tuple[int, int] | None:
+    timestamp_text = str(value or "").strip()
+    if not timestamp_text:
+        return None
+    if timestamp_text.endswith("Z"):
+        timestamp_text = f"{timestamp_text[:-1]}+00:00"
+    try:
+        timestamp = datetime.datetime.fromisoformat(timestamp_text)
+    except ValueError:
+        try:
+            timestamp = datetime.datetime.combine(
+                datetime.date.fromisoformat(timestamp_text[:10]),
+                datetime.time.min,
+            )
+        except ValueError:
+            return None
+    iso_calendar = timestamp.isocalendar()
+    return int(iso_calendar.year), int(iso_calendar.week)
+
+
+def _demand_weeks_for_floor(demand_level: str, floor: int | None) -> set[tuple[int, int]]:
+    weeks_by_floor = DEFAULT_DEMAND_WEEK_SETS_BY_FLOOR[str(demand_level)]
+    if floor is not None and floor in weeks_by_floor:
+        return weeks_by_floor[floor]
+    return weeks_by_floor[None]
+
+
+def _raw_event_demand_level(raw_event: Mapping[str, Any]) -> str | None:
+    if str(raw_event.get("task_name", "")) == EOS_EVENT_TYPE_NAME:
+        return None
+    week_key = _timestamp_iso_week(raw_event.get("timestamp"))
+    if week_key is None:
+        return None
+    floor = _floor_or_none(raw_event.get("floor"))
+    for demand_level in DEMAND_LEVELS:
+        if week_key in _demand_weeks_for_floor(demand_level=demand_level, floor=floor):
+            return demand_level
+    return None
+
+
+def _record_demand_event_counts(
+    record: VitalSignEasyTPPSequenceRecord,
+) -> dict[str, int]:
+    counts = {demand_level: 0 for demand_level in DEMAND_LEVELS}
+    for raw_event in record.raw_events:
+        demand_level = _raw_event_demand_level(raw_event)
+        if demand_level is not None:
+            counts[demand_level] += 1
+    return counts
+
+
+def _record_primary_demand_level(record: VitalSignEasyTPPSequenceRecord) -> str | None:
+    counts = _record_demand_event_counts(record)
+    if not any(counts.values()):
+        return None
+    return max(DEMAND_LEVELS, key=lambda demand_level: counts[demand_level])
+
+
+def _record_matches_demand_level(
+    record: VitalSignEasyTPPSequenceRecord,
+    *,
+    demand_level: str,
+    assignment_strategy: str,
+) -> bool:
+    if demand_level == "all":
+        return True
+    counts = _record_demand_event_counts(record)
+    if assignment_strategy == "any":
+        return counts[demand_level] > 0
+    if assignment_strategy == "strict":
+        return counts[demand_level] > 0 and all(
+            count == 0
+            for other_level, count in counts.items()
+            if other_level != demand_level
+        )
+    return _record_primary_demand_level(record) == demand_level
+
+
+def _demand_sequence_counts(
+    records: Sequence[VitalSignEasyTPPSequenceRecord],
+) -> dict[str, int]:
+    counts = {demand_level: 0 for demand_level in DEMAND_LEVELS}
+    counts["unmatched"] = 0
+    for record in records:
+        demand_level = _record_primary_demand_level(record)
+        if demand_level is None:
+            counts["unmatched"] += 1
+        else:
+            counts[demand_level] += 1
+    return counts
+
+
+def _serializable_demand_week_sets_by_floor() -> dict[str, dict[str, list[str]]]:
+    return {
+        demand_level: {
+            ("default" if floor is None else str(floor)): [
+                f"{year:04d}W{week:02d}"
+                for year, week in sorted(weeks)
+            ]
+            for floor, weeks in weeks_by_floor.items()
+        }
+        for demand_level, weeks_by_floor in DEFAULT_DEMAND_WEEK_SETS_BY_FLOOR.items()
+    }
+
+
 def _safe_name(value: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in value.lower()).strip("_")
 
@@ -362,6 +501,22 @@ def _build_evaluation_context(
         dataset_config=easy_dataset_config,
     )
     easy_records = easy_bundle.get_raw_records(args.split)
+    demand_counts_before_filter = _demand_sequence_counts(easy_records)
+    if args.demand_level != "all":
+        easy_records = [
+            record
+            for record in easy_records
+            if _record_matches_demand_level(
+                record,
+                demand_level=args.demand_level,
+                assignment_strategy=args.demand_sequence_assignment,
+            )
+        ]
+        if not easy_records:
+            raise ValueError(
+                f"No {args.split} sequences matched demand_level='{args.demand_level}' "
+                f"with demand_sequence_assignment='{args.demand_sequence_assignment}'."
+            )
     if args.max_sequences is not None:
         max_sequences = int(args.max_sequences)
         if max_sequences < 0:
@@ -373,6 +528,17 @@ def _build_evaluation_context(
             easy_records = easy_records[:max_sequences]
         else:
             easy_records = easy_records[:max_sequences]
+    _log(
+        "Demand sequence counts before filtering: "
+        + ", ".join(
+            f"{level}={count}"
+            for level, count in demand_counts_before_filter.items()
+        )
+    )
+    _log(
+        f"Selected {len(easy_records)} {args.split} sequences for "
+        f"demand_level='{args.demand_level}'."
+    )
     mark_encoder = DiscreteMarkEncoder(easy_bundle.metadata)
     time_scales, default_tau = _build_time_scales(
         easy_bundle=easy_bundle,
@@ -516,6 +682,25 @@ def _log_model_progress(
         f"rollout-event budget {completed_rollout_event_budget}/{total_rollout_event_budget} | "
         f"elapsed {_format_duration(elapsed_seconds)}, ETA {_format_duration(eta)}"
     )
+
+
+def _sync_device_for_timing(device: torch.device) -> None:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return
+    try:
+        torch.cuda.synchronize(device)
+    except Exception:
+        torch.cuda.synchronize()
+
+
+def _start_inference_timer(device: torch.device) -> float:
+    _sync_device_for_timing(device)
+    return time.perf_counter()
+
+
+def _stop_inference_timer(device: torch.device, started_at: float) -> float:
+    _sync_device_for_timing(device)
+    return float(time.perf_counter() - started_at)
 
 
 def _summary_stats(values: Sequence[float]) -> tuple[float, float]:
@@ -1017,6 +1202,7 @@ def _evaluate_easy_model(
                 continue
             true_future = true_events[prefix_len : prefix_len + future_count]
             for sample_index in range(int(args.num_samples)):
+                inference_started_at = _start_inference_timer(device)
                 predicted = _sample_easy_rollout(
                     model=model,
                     record=record,
@@ -1027,6 +1213,7 @@ def _evaluate_easy_model(
                     rng=rng,
                     device=device,
                 )
+                inference_seconds = _stop_inference_timer(device, inference_started_at)
                 result = marked_otd(
                     pred_seq=predicted,
                     true_seq=true_future,
@@ -1043,6 +1230,7 @@ def _evaluate_easy_model(
                         sample_index=sample_index,
                         true_future=true_future,
                         predicted=predicted,
+                        inference_seconds=inference_seconds,
                         result=result,
                     )
                 )
@@ -1134,6 +1322,7 @@ def _evaluate_flex_model(
             true_future = true_events[prefix_len : prefix_len + future_count]
             prefix_events = matched_flex_events[:prefix_len]
             for sample_index in range(int(args.num_samples)):
+                inference_started_at = _start_inference_timer(device)
                 sampled_flex_events = _sample_future_events_from_prefix(
                     model=model,
                     dataset_bundle=flex_bundle,
@@ -1146,6 +1335,7 @@ def _evaluate_flex_model(
                     mean_of=int(args.flex_mean_of),
                     median=False,
                 )
+                inference_seconds = _stop_inference_timer(device, inference_started_at)
                 predicted = _discrete_events_from_flex_events(
                     events=sampled_flex_events,
                     flex_bundle=flex_bundle,
@@ -1167,6 +1357,7 @@ def _evaluate_flex_model(
                         sample_index=sample_index,
                         true_future=true_future,
                         predicted=predicted,
+                        inference_seconds=inference_seconds,
                         result=result,
                     )
                 )
@@ -1218,8 +1409,22 @@ def _detail_row(
     sample_index: int,
     true_future: Sequence[Event],
     predicted: Sequence[Event],
+    inference_seconds: float,
     result: Any,
 ) -> dict[str, Any]:
+    true_event_count = int(len(true_future))
+    predicted_event_count = int(len(predicted))
+    inference_seconds = float(inference_seconds)
+    inference_seconds_per_true_event = (
+        inference_seconds / float(true_event_count)
+        if true_event_count > 0
+        else float("nan")
+    )
+    inference_seconds_per_predicted_event = (
+        inference_seconds / float(predicted_event_count)
+        if predicted_event_count > 0
+        else float("nan")
+    )
     return {
         "family": spec.family,
         "model_name": spec.model_name,
@@ -1230,10 +1435,19 @@ def _detail_row(
         "patient_id": record.patient_id,
         "encounter_id": record.encounter_id,
         "segment_id": int(record.segment_id),
+        "demand_level": _record_primary_demand_level(record) or "unmatched",
         "prefix_event_count": int(prefix_len),
         "sample_index": int(sample_index),
-        "true_event_count": int(len(true_future)),
-        "predicted_event_count": int(len(predicted)),
+        "true_event_count": true_event_count,
+        "predicted_event_count": predicted_event_count,
+        "inference_seconds": inference_seconds,
+        "inference_milliseconds": inference_seconds * 1000.0,
+        "inference_seconds_per_true_event": inference_seconds_per_true_event,
+        "inference_milliseconds_per_true_event": inference_seconds_per_true_event * 1000.0,
+        "inference_seconds_per_predicted_event": inference_seconds_per_predicted_event,
+        "inference_milliseconds_per_predicted_event": (
+            inference_seconds_per_predicted_event * 1000.0
+        ),
         "otd_total": float(result.cost),
         "otd_time": float(result.time_cost),
         "otd_type": float(result.type_cost),
@@ -1281,6 +1495,7 @@ def _evaluate_model(
             spec=spec,
             detail_rows=detail_rows,
             started_at=started_at,
+            evaluation_demand_level=args.demand_level,
             status="success",
             error_message="",
         )
@@ -1292,6 +1507,7 @@ def _evaluate_model(
             spec=spec,
             detail_rows=[],
             started_at=started_at,
+            evaluation_demand_level=args.demand_level,
             status="failed",
             error_message=str(exc),
         )
@@ -1302,6 +1518,7 @@ def _summary_row_from_details(
     spec: ModelSpec,
     detail_rows: Sequence[Mapping[str, Any]],
     started_at: datetime.datetime,
+    evaluation_demand_level: str,
     status: str,
     error_message: str,
 ) -> dict[str, Any]:
@@ -1311,6 +1528,7 @@ def _summary_row_from_details(
         "model_name": spec.model_name,
         "variant": spec.variant,
         "run_name": spec.run_name,
+        "demand_level": str(evaluation_demand_level),
         "status": status,
         "error_message": error_message,
         "checkpoint_path": str(spec.checkpoint_path),
@@ -1320,6 +1538,13 @@ def _summary_row_from_details(
         "duration_seconds": round((ended_at - started_at).total_seconds(), 3),
         "num_otd_samples": len(detail_rows),
     }
+    row["inference_seconds_total"] = float(
+        sum(
+            float(detail_row.get("inference_seconds", 0.0))
+            for detail_row in detail_rows
+            if math.isfinite(float(detail_row.get("inference_seconds", 0.0)))
+        )
+    )
     for column in (
         "otd_total",
         "otd_time",
@@ -1328,8 +1553,14 @@ def _summary_row_from_details(
         "otd_mark",
         "otd_edit",
         "predicted_event_count",
+        "inference_seconds",
+        "inference_milliseconds",
+        "inference_seconds_per_true_event",
+        "inference_milliseconds_per_true_event",
+        "inference_seconds_per_predicted_event",
+        "inference_milliseconds_per_predicted_event",
     ):
-        values = [float(detail_row[column]) for detail_row in detail_rows]
+        values = [float(detail_row[column]) for detail_row in detail_rows if column in detail_row]
         value_mean, value_std = _summary_stats(values)
         row[f"{column}_mean"] = value_mean
         row[f"{column}_std"] = value_std
@@ -1434,6 +1665,21 @@ def _plot_results(*, output_dir: Path, detail_path: Path, summary_path: Path) ->
     plt.close(fig)
     plot_paths.append(boxplot_path)
 
+    if "inference_milliseconds_mean" in summary_df.columns:
+        inference_path = output_dir / "inference_latency_bar.png"
+        inference_values = summary_df["inference_milliseconds_mean"].to_numpy(dtype=float)
+        inference_std = summary_df["inference_milliseconds_std"].to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(fig_width, 6.0))
+        ax.bar(x_positions, inference_values, yerr=inference_std, capsize=2)
+        ax.set_ylabel("Mean rollout inference latency (ms)")
+        ax.set_title("Vital-sign TPP rollout latency by model")
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        fig.tight_layout()
+        fig.savefig(inference_path, dpi=180)
+        plt.close(fig)
+        plot_paths.append(inference_path)
+
     return plot_paths
 
 
@@ -1466,8 +1712,14 @@ def _log_wandb(
             "otd_time_std",
             "otd_other_mean",
             "otd_other_std",
+            "inference_milliseconds_mean",
+            "inference_milliseconds_std",
+            "inference_milliseconds_per_true_event_mean",
+            "inference_milliseconds_per_true_event_std",
+            "inference_seconds_total",
         ):
-            wandb.summary[f"{metric_prefix}/{metric_name}"] = summary_row[metric_name]
+            if metric_name in summary_row:
+                wandb.summary[f"{metric_prefix}/{metric_name}"] = summary_row[metric_name]
     for plot_path in plot_paths:
         wandb.log({plot_path.stem: wandb.Image(str(plot_path))})
     artifact = wandb.Artifact("vital_sign_tpp_otd_evaluation", type="evaluation")
@@ -1493,6 +1745,161 @@ def _device_from_args(args: argparse.Namespace) -> torch.device:
     if args.device:
         return torch.device(args.device)
     return torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+
+
+def _parse_csv_list(
+    raw_value: str,
+    *,
+    allowed_values: Sequence[str] | None = None,
+) -> list[str]:
+    values = [
+        value.strip()
+        for value in str(raw_value or "").split(",")
+        if value.strip()
+    ]
+    if not values:
+        raise ValueError("Expected at least one comma-separated value.")
+    if allowed_values is not None:
+        allowed = set(allowed_values)
+        unsupported = [value for value in values if value not in allowed]
+        if unsupported:
+            raise ValueError(
+                f"Unsupported values {unsupported}. Expected values from {tuple(allowed_values)}."
+            )
+    return values
+
+
+def _normalize_gpu_device_arg(raw_gpu: str) -> str:
+    gpu = str(raw_gpu).strip()
+    if not gpu:
+        raise ValueError("GPU ids must not be empty.")
+    if gpu.lower() == "cpu" or ":" in gpu:
+        return gpu
+    return f"cuda:{gpu}"
+
+
+def _strip_option(args: list[str], option_names: set[str]) -> list[str]:
+    stripped: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        matched_option = None
+        for option_name in option_names:
+            if token == option_name or token.startswith(f"{option_name}="):
+                matched_option = option_name
+                break
+        if matched_option is None:
+            stripped.append(token)
+            index += 1
+            continue
+        if token == matched_option and index + 1 < len(args) and not args[index + 1].startswith("--"):
+            index += 2
+        else:
+            index += 1
+    return stripped
+
+
+def _demand_child_args(
+    *,
+    parent_argv: Sequence[str],
+    demand_level: str,
+    device_arg: str,
+    output_dir: Path,
+) -> list[str]:
+    parent_only_options = {
+        "--run_demand_strata",
+        "--demand_levels",
+        "--demand_gpu_ids",
+        "--demand_level",
+        "--device",
+        "--output_dir",
+    }
+    child_args = _strip_option(list(parent_argv), parent_only_options)
+    child_args.extend(
+        [
+            "--demand_level",
+            demand_level,
+            "--device",
+            device_arg,
+            "--output_dir",
+            str(output_dir),
+        ]
+    )
+    return child_args
+
+
+def _run_demand_strata(args: argparse.Namespace, parent_argv: Sequence[str]) -> int:
+    demand_levels = _parse_csv_list(args.demand_levels, allowed_values=DEMAND_LEVELS)
+    gpu_args = [
+        _normalize_gpu_device_arg(gpu_id)
+        for gpu_id in _parse_csv_list(args.demand_gpu_ids)
+    ]
+    if len(gpu_args) < len(demand_levels):
+        raise ValueError(
+            f"--run_demand_strata needs at least {len(demand_levels)} GPU ids, "
+            f"but --demand_gpu_ids provided {len(gpu_args)}."
+        )
+    if len(set(gpu_args[: len(demand_levels)])) != len(demand_levels):
+        raise ValueError("--demand_gpu_ids must assign a distinct GPU to each demand level.")
+
+    base_output_dir = _resolve_repo_relative_path(args.output_dir)
+    if base_output_dir is None:
+        base_output_dir = _repo_root() / DEFAULT_OUTPUT_DIR
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+
+    processes: list[tuple[str, str, Path, subprocess.Popen[Any], float]] = []
+    for demand_level, device_arg in zip(demand_levels, gpu_args):
+        child_output_dir = base_output_dir / demand_level
+        child_output_dir.mkdir(parents=True, exist_ok=True)
+        command = [
+            sys.executable,
+            "-m",
+            "HTAMP.prediction.run_vital_sign_tpp_otd_evaluation",
+            *_demand_child_args(
+                parent_argv=parent_argv,
+                demand_level=demand_level,
+                device_arg=device_arg,
+                output_dir=child_output_dir,
+            ),
+        ]
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        _log(
+            f"Launching demand_level='{demand_level}' on {device_arg}; "
+            f"outputs will be written to {child_output_dir}."
+        )
+        process = subprocess.Popen(command, cwd=_repo_root(), env=env)
+        processes.append((demand_level, device_arg, child_output_dir, process, time.perf_counter()))
+
+    summary_rows: list[dict[str, Any]] = []
+    return_code = 0
+    for demand_level, device_arg, child_output_dir, process, started_at in processes:
+        child_return_code = process.wait()
+        duration_seconds = round(time.perf_counter() - started_at, 3)
+        status = "success" if child_return_code == 0 else "failed"
+        if child_return_code != 0:
+            return_code = 1
+        _log(
+            f"Finished demand_level='{demand_level}' on {device_arg} with "
+            f"status={status} in {_format_duration(duration_seconds)}."
+        )
+        summary_rows.append(
+            {
+                "demand_level": demand_level,
+                "device": device_arg,
+                "status": status,
+                "returncode": int(child_return_code),
+                "duration_seconds": duration_seconds,
+                "output_dir": str(child_output_dir),
+                "summary_path": str(child_output_dir / "otd_summary.csv"),
+                "detail_path": str(child_output_dir / "otd_prefix_samples.csv"),
+            }
+        )
+
+    strata_summary_path = base_output_dir / "demand_strata_summary.csv"
+    _write_csv_rows(strata_summary_path, summary_rows)
+    _log(f"Demand-stratified OTD launch summary saved to {strata_summary_path}")
+    return return_code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1523,6 +1930,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stf_log_dir", default=None)
     parser.add_argument("--output_dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--split", default="test", choices=("train", "val", "test"))
+    parser.add_argument(
+        "--demand_level",
+        choices=DEMAND_LEVEL_CHOICES,
+        default="all",
+        help=(
+            "Filter canonical sequences by the demand tier implied by the "
+            "test floor/week mapping before applying --max_sequences."
+        ),
+    )
+    parser.add_argument(
+        "--demand_sequence_assignment",
+        choices=("majority", "any", "strict"),
+        default="majority",
+        help=(
+            "How to assign a sequence with events from multiple demand tiers: "
+            "majority uses the tier with the most events, any allows overlap, "
+            "and strict keeps only sequences with no events from other tiers."
+        ),
+    )
+    parser.add_argument(
+        "--run_demand_strata",
+        action="store_true",
+        help=(
+            "Launch one child OTD evaluation per demand tier, assigning each "
+            "tier to a GPU from --demand_gpu_ids and writing separate outputs."
+        ),
+    )
+    parser.add_argument(
+        "--demand_levels",
+        default=",".join(DEMAND_LEVELS),
+        help="Comma-separated demand tiers to launch with --run_demand_strata.",
+    )
+    parser.add_argument(
+        "--demand_gpu_ids",
+        default="0,1,2",
+        help=(
+            "Comma-separated GPU ids or device strings used by --run_demand_strata. "
+            "Examples: 0,1,2 or cuda:0,cuda:1,cuda:2."
+        ),
+    )
     parser.add_argument("--num_samples", type=int, default=16)
     parser.add_argument(
         "--max_future_events",
@@ -1604,6 +2051,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.run_demand_strata:
+        return _run_demand_strata(args=args, parent_argv=sys.argv[1:])
+
     torch.manual_seed(int(args.seed))
     np.random.seed(int(args.seed))
     random.seed(int(args.seed))
@@ -1657,6 +2107,10 @@ def main() -> int:
         "otd_config": otd_config.__dict__,
         "num_models": len(model_specs),
         "num_sequences": len(context.easy_records),
+        "demand_level": args.demand_level,
+        "demand_sequence_assignment": args.demand_sequence_assignment,
+        "demand_sequence_counts": _demand_sequence_counts(context.easy_records),
+        "demand_week_sets_by_floor": _serializable_demand_week_sets_by_floor(),
         "mark_names": context.easy_bundle.mark_names,
     }
     detail_path, summary_path, metadata_path = _write_outputs(
