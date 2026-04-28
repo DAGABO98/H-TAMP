@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any, Mapping
 
 import lightning as L
@@ -8,6 +9,26 @@ import torch
 from HTAMP.prediction.configs.vital_sign_easy_tpp_config import (
     VitalSignEasyTPPModelConfig,
 )
+
+EASY_TPP_MODEL_MODULES = (
+    "torch_anhn",
+    "torch_attnhp",
+    "torch_fullynn",
+    "torch_intensity_free",
+    "torch_nhp",
+    "torch_ode_tpp",
+    "torch_rmtpp",
+    "torch_s2p2",
+    "torch_sahp",
+    "torch_thp",
+    "torch_wsm_thp",
+)
+EASY_TPP_PACKAGE = "HTAMP.prediction.point_process_models.easyTPP"
+
+
+def _import_easy_tpp_model_registry() -> None:
+    for module_name in EASY_TPP_MODEL_MODULES:
+        import_module(f"{EASY_TPP_PACKAGE}.{module_name}")
 
 
 class _ThinningConfigAdapter:
@@ -113,6 +134,7 @@ class VitalSignEasyTPPModule(L.LightningModule):
         self.std_log_inter_time = std_log_inter_time
         self.max_observed_time = max_observed_time
 
+        _import_easy_tpp_model_registry()
         from HTAMP.prediction.point_process_models.easyTPP.torch_basemodel import TorchBaseModel
 
         adapter = _EasyTPPModelConfigAdapter(
