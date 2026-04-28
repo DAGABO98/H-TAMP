@@ -159,7 +159,9 @@ class VitalSignEasyTPPPredictor:
         from lightning.pytorch.loggers import WandbLogger
 
         experiment = wandb.init(
-            project="vital_sign_easy_tpp",
+            project=os.getenv("WANDB_PROJECT", "vital_sign_easy_tpp"),
+            group=os.getenv("WANDB_GROUP"),
+            job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
         )
@@ -250,7 +252,11 @@ class VitalSignEasyTPPPredictor:
         )
 
         trainer.fit(model, datamodule=data_module)
-        validation_results = trainer.validate(datamodule=data_module, ckpt_path="best", verbose=False)
+        validation_results = trainer.validate(
+            datamodule=data_module,
+            ckpt_path="best",
+            verbose=False,
+        )
         test_results = trainer.test(datamodule=data_module, ckpt_path="best", verbose=False)
         metrics_summary_path = self._write_metrics_summary(
             training_config=training_config,
