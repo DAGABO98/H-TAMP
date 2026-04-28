@@ -183,16 +183,29 @@ def _sample_future_events_from_prefix(
     )
     parsed_events = list(parsed_batch[0][1])
     future_events = parsed_events[len(prefix_events):]
-    return [
-        (
-            float(start_time),
-            float(end_time),
-            int(event_type),
-            {str(key): float(value) for key, value in event_props.items()},
+    normalized_future_events: list[tuple[float, float, int, dict[str, float]]] = []
+    for start_time, end_time, event_type, event_props in future_events:
+        if int(event_type) == dataset_bundle.eos_event_type:
+            continue
+
+        start_time_value = float(start_time)
+        end_time_value = (
+            start_time_value
+            if end_time is None
+            else float(end_time)
         )
-        for start_time, end_time, event_type, event_props in future_events
-        if int(event_type) != dataset_bundle.eos_event_type
-    ]
+        normalized_future_events.append(
+            (
+                start_time_value,
+                end_time_value,
+                int(event_type),
+                {
+                    str(key): float(value)
+                    for key, value in dict(event_props or {}).items()
+                },
+            )
+        )
+    return normalized_future_events
 
 
 def _encoded_event_payload(
