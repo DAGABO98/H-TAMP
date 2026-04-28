@@ -1,0 +1,1414 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime
+import json
+import math
+import os
+import random
+import traceback
+from dataclasses import dataclass
+from pathlib import Path
+from statistics import mean, stdev
+from typing import Any, Mapping, Sequence
+
+import numpy as np
+import torch
+
+from HTAMP.prediction.configs.vital_sign_easy_tpp_config import (
+    VitalSignEasyTPPTrainingConfig,
+)
+from HTAMP.prediction.configs.vital_sign_tpp_config import (
+    VitalSignTPPTrainingConfig,
+)
+from HTAMP.prediction.data_provider.vital_sign_easy_tpp_dataset import (
+    VitalSignEasyTPPDatasetBundle,
+    VitalSignEasyTPPSequenceRecord,
+    build_vital_sign_easy_tpp_dataset_bundle,
+)
+from HTAMP.prediction.data_provider.vital_sign_tpp_dataset import (
+    EOS_EVENT_TYPE_NAME,
+    VitalSignTPPDatasetBundle,
+    VitalSignTPPSequenceRecord,
+    build_vital_sign_tpp_dataset_bundle,
+)
+from HTAMP.prediction.module.vital_sign_easy_tpp_module import (
+    VitalSignEasyTPPModule,
+    _ThinningConfigAdapter,
+)
+from HTAMP.prediction.module.vital_sign_tpp_module import VitalSignTPPModule
+from HTAMP.prediction.otd_metric import Event, MOTDConfig, marked_otd
+from HTAMP.prediction.point_process_models.easyTPP.torch_intensity_free import (
+    LogNormalMixtureDistribution,
+    clamp_preserve_gradients,
+)
+from HTAMP.prediction.point_process_models.easyTPP.torch_thinning import EventSampler
+from HTAMP.prediction.vital_sign_tpp_prediction_handler import (
+    _sample_future_events_from_prefix,
+)
+
+DEFAULT_COMPARISON_SUMMARY_GLOB = "data/prediction/vital_sign_tpp_comparison/*_summary.csv"
+DEFAULT_OUTPUT_DIR = "data/prediction/vital_sign_tpp_otd_evaluation"
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    family: str
+    model_name: str
+    variant: str
+    run_name: str
+    checkpoint_path: Path
+    metrics_summary_path: Path | None
+    training_config: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class EvaluationContext:
+    easy_bundle: VitalSignEasyTPPDatasetBundle
+    easy_records: list[VitalSignEasyTPPSequenceRecord]
+    mark_encoder: "DiscreteMarkEncoder"
+    time_scales: dict[str, list[float]]
+    default_tau: float
+
+
+class DiscreteMarkEncoder:
+    """Label raw vital-sign events with the EasyTPP discrete joint mark schema."""
+
+    def __init__(self, metadata: Mapping[str, Any]) -> None:
+        self.metadata = dict(metadata)
+        self.included_tasks = [
+            str(task_name)
+            for task_name in self.metadata.get("included_tasks", [])
+        ]
+        self.mark_names = [
+            str(mark_name)
+            for mark_name in self.metadata.get("mark_names", [])
+        ]
+        self.mark_name_set = set(self.mark_names)
+        self.label_names = tuple(
+            str(label_name)
+            for label_name in self.metadata.get("label_names", ("low", "medium", "high"))
+        )
+        if len(self.label_names) != 3:
+            raise ValueError("Expected exactly three EasyTPP label names.")
+        self.missing_label = str(self.metadata.get("missing_label", "unknown"))
+        self.mark_label_mode = str(self.metadata.get("mark_label_mode", "task_label"))
+        config_snapshot = dict(self.metadata.get("config_snapshot", {}))
+        self.drop_missing_measurement_events = bool(
+            self.metadata.get(
+                "drop_missing_measurement_events",
+                config_snapshot.get("drop_missing_measurement_events", False),
+            )
+        )
+        self.label_component_by_task = {
+            str(task_name): [str(component) for component in component_names]
+            for task_name, component_names in dict(
+                self.metadata.get("label_component_by_task", {})
+            ).items()
+        }
+        self.thresholds_by_task_component = {
+            str(task_name): {
+                str(component): (float(pair[0]), float(pair[1]))
+                for component, pair in dict(component_thresholds).items()
+            }
+            for task_name, component_thresholds in dict(
+                self.metadata.get("thresholds_by_task_component", {})
+            ).items()
+        }
+
+    def base_task(self, mark_name: str) -> str:
+        for task_name in sorted(self.included_tasks, key=len, reverse=True):
+            if mark_name == task_name or mark_name.startswith(f"{task_name}__"):
+                return task_name
+        return str(mark_name).split("__", 1)[0]
+
+    def label_value(self, value: Any, lower: float, upper: float) -> str:
+        numeric_value = _finite_float_or_none(value)
+        if numeric_value is None:
+            return self.missing_label
+        if not lower < upper:
+            return self.label_names[1]
+        if numeric_value <= lower:
+            return self.label_names[0]
+        if numeric_value >= upper:
+            return self.label_names[2]
+        return self.label_names[1]
+
+    def mark_name(self, *, task_name: str, component_labels: Sequence[tuple[str, str]]) -> str:
+        if len(component_labels) > 1:
+            label_suffix = "__".join(
+                f"{component_name}_{label_name}"
+                for component_name, label_name in component_labels
+            )
+            return f"{task_name}__{label_suffix}"
+
+        component_name, label_name = component_labels[0]
+        if self.mark_label_mode == "task_component_label":
+            return f"{task_name}__{component_name}__{label_name}"
+        return f"{task_name}__{label_name}"
+
+    def label_event(self, *, task_name: str, properties: Mapping[str, Any]) -> str | None:
+        if task_name == EOS_EVENT_TYPE_NAME:
+            return EOS_EVENT_TYPE_NAME
+
+        component_names = self.label_component_by_task.get(task_name)
+        component_thresholds = self.thresholds_by_task_component.get(task_name)
+        if not component_names or not component_thresholds:
+            return None
+
+        component_labels: list[tuple[str, str]] = []
+        for component_name in component_names:
+            numeric_value = _finite_float_or_none(properties.get(component_name))
+            if numeric_value is None and self.drop_missing_measurement_events:
+                return None
+            lower, upper = component_thresholds[component_name]
+            component_labels.append(
+                (
+                    component_name,
+                    self.label_value(numeric_value, lower=lower, upper=upper),
+                )
+            )
+
+        mark_name = self.mark_name(
+            task_name=task_name,
+            component_labels=component_labels,
+        )
+        return mark_name if mark_name in self.mark_name_set else None
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _resolve_repo_relative_path(path_str: str | Path | None) -> Path | None:
+    if path_str in (None, ""):
+        return None
+    path = Path(path_str)
+    if path.is_absolute():
+        return path
+    return _repo_root() / path
+
+
+def _load_json(path: str | Path) -> dict[str, Any]:
+    resolved_path = _resolve_repo_relative_path(path)
+    if resolved_path is None:
+        raise ValueError("Missing JSON path.")
+    with resolved_path.open("r", encoding="utf-8") as json_file:
+        payload = json.load(json_file)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected '{resolved_path}' to contain a JSON object.")
+    return payload
+
+
+def _finite_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric_value):
+        return None
+    return numeric_value
+
+
+def _safe_name(value: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in value.lower()).strip("_")
+
+
+def _latest_comparison_summary() -> Path | None:
+    candidates = sorted(
+        _repo_root().glob(DEFAULT_COMPARISON_SUMMARY_GLOB),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _coerce_comparison_summary_path(raw_path: str | None) -> Path:
+    if raw_path:
+        resolved = _resolve_repo_relative_path(raw_path)
+        if resolved is None:
+            raise ValueError("Missing comparison summary path.")
+        return resolved
+    latest_path = _latest_comparison_summary()
+    if latest_path is None:
+        raise ValueError(
+            "No comparison summary was provided and no default summary was found under "
+            f"'{DEFAULT_COMPARISON_SUMMARY_GLOB}'."
+        )
+    return latest_path
+
+
+def _metrics_summary_path_from_row(row: Mapping[str, str], stf_log_dir: str | None) -> Path | None:
+    raw_metrics_path = row.get("metrics_summary_path")
+    if raw_metrics_path:
+        return _resolve_repo_relative_path(raw_metrics_path)
+    run_name = row.get("run_name")
+    if not run_name:
+        return None
+    log_dir = Path(stf_log_dir or os.getenv("STF_LOG_DIR", "./data/STF_LOG_DIR"))
+    return _resolve_repo_relative_path(log_dir / run_name / "metrics_summary.json")
+
+
+def _read_training_config_from_metrics(metrics_summary_path: Path | None) -> dict[str, Any]:
+    if metrics_summary_path is None or not metrics_summary_path.exists():
+        return {}
+    payload = _load_json(metrics_summary_path)
+    training_config = payload.get("training_config", {})
+    return dict(training_config) if isinstance(training_config, Mapping) else {}
+
+
+def _checkpoint_path_from_row(
+    row: Mapping[str, str],
+    metrics_summary_path: Path | None,
+) -> Path | None:
+    raw_checkpoint_path = row.get("best_checkpoint_path")
+    if raw_checkpoint_path:
+        return _resolve_repo_relative_path(raw_checkpoint_path)
+    if metrics_summary_path is None or not metrics_summary_path.exists():
+        return None
+    payload = _load_json(metrics_summary_path)
+    raw_checkpoint_path = payload.get("best_checkpoint_path")
+    return _resolve_repo_relative_path(raw_checkpoint_path)
+
+
+def _load_model_specs(
+    *,
+    comparison_summary_path: Path,
+    stf_log_dir: str | None,
+    selected_runs: set[str] | None,
+) -> list[ModelSpec]:
+    specs: list[ModelSpec] = []
+    with comparison_summary_path.open("r", newline="", encoding="utf-8") as summary_file:
+        reader = csv.DictReader(summary_file)
+        for row in reader:
+            run_name = str(row.get("run_name", "")).strip()
+            if not run_name:
+                continue
+            if selected_runs is not None and run_name not in selected_runs:
+                continue
+            if str(row.get("status", "")).strip().lower() != "success":
+                continue
+
+            metrics_summary_path = _metrics_summary_path_from_row(row, stf_log_dir)
+            training_config = _read_training_config_from_metrics(metrics_summary_path)
+            checkpoint_path = _checkpoint_path_from_row(row, metrics_summary_path)
+            if checkpoint_path is None or not checkpoint_path.exists():
+                print(f"Skipping {run_name}: checkpoint not found at {checkpoint_path}.")
+                continue
+            if not training_config:
+                print(f"Skipping {run_name}: metrics summary has no training_config.")
+                continue
+
+            specs.append(
+                ModelSpec(
+                    family=str(row.get("family", "")),
+                    model_name=str(row.get("model_name", "")),
+                    variant=str(row.get("variant", "")),
+                    run_name=run_name,
+                    checkpoint_path=checkpoint_path,
+                    metrics_summary_path=metrics_summary_path,
+                    training_config=training_config,
+                )
+            )
+    if not specs:
+        raise ValueError(f"No successful model specs were found in {comparison_summary_path}.")
+    return specs
+
+
+def _apply_dataset_load_flags(dataset_config: Any, *, use_saved_datasets: bool) -> Any:
+    dataset_config.use_saved_dataset = bool(use_saved_datasets)
+    dataset_config.preprocess_data = not bool(use_saved_datasets)
+    dataset_config.save_data = not bool(use_saved_datasets)
+    return dataset_config
+
+
+def _canonical_easy_training_config(
+    *,
+    args: argparse.Namespace,
+    model_specs: Sequence[ModelSpec],
+) -> VitalSignEasyTPPTrainingConfig:
+    if args.easy_config_path:
+        return VitalSignEasyTPPTrainingConfig.from_json_file(args.easy_config_path)
+
+    for spec in model_specs:
+        if spec.family.lower() == "easytpp":
+            return VitalSignEasyTPPTrainingConfig.from_dict(spec.training_config)
+
+    raise ValueError(
+        "The OTD evaluator needs an EasyTPP dataset config to define the discrete "
+        "low/medium/high joint marks. Provide --easy_config_path when evaluating "
+        "FlexTPP-only summaries."
+    )
+
+
+def _build_evaluation_context(
+    *,
+    args: argparse.Namespace,
+    model_specs: Sequence[ModelSpec],
+) -> EvaluationContext:
+    easy_training_config = _canonical_easy_training_config(
+        args=args,
+        model_specs=model_specs,
+    )
+    easy_dataset_config = _apply_dataset_load_flags(
+        easy_training_config.dataset_config,
+        use_saved_datasets=args.use_saved_datasets,
+    )
+    easy_bundle = build_vital_sign_easy_tpp_dataset_bundle(
+        dataset_config=easy_dataset_config,
+    )
+    easy_records = easy_bundle.get_raw_records(args.split)
+    if args.max_sequences is not None:
+        easy_records = easy_records[: args.max_sequences]
+    mark_encoder = DiscreteMarkEncoder(easy_bundle.metadata)
+    time_scales, default_tau = _build_time_scales(
+        easy_bundle=easy_bundle,
+        mark_encoder=mark_encoder,
+    )
+    return EvaluationContext(
+        easy_bundle=easy_bundle,
+        easy_records=easy_records,
+        mark_encoder=mark_encoder,
+        time_scales=time_scales,
+        default_tau=default_tau,
+    )
+
+
+def _easy_record_events(
+    *,
+    record: VitalSignEasyTPPSequenceRecord,
+    mark_encoder: DiscreteMarkEncoder,
+) -> list[Event]:
+    events: list[Event] = []
+    for event_time, mark_name in zip(record.time_seqs, record.mark_names):
+        if mark_name == EOS_EVENT_TYPE_NAME:
+            continue
+        events.append(
+            Event(
+                time=float(event_time),
+                event_type=mark_encoder.base_task(mark_name),
+                mark=str(mark_name),
+            )
+        )
+    return events
+
+
+def _easy_record_non_eos_raw_events(
+    record: VitalSignEasyTPPSequenceRecord,
+) -> list[dict[str, object]]:
+    return [
+        dict(raw_event)
+        for raw_event, mark_name in zip(record.raw_events, record.mark_names)
+        if mark_name != EOS_EVENT_TYPE_NAME
+    ]
+
+
+def _build_time_scales(
+    *,
+    easy_bundle: VitalSignEasyTPPDatasetBundle,
+    mark_encoder: DiscreteMarkEncoder,
+) -> tuple[dict[str, list[float]], float]:
+    scales: dict[str, list[float]] = {}
+    all_gaps: list[float] = []
+    for record in easy_bundle.get_raw_records("train"):
+        events = _easy_record_events(record=record, mark_encoder=mark_encoder)
+        previous_time_by_type: dict[str, float] = {}
+        previous_time: float | None = None
+        for event in events:
+            if previous_time is not None:
+                gap = max(0.0, float(event.time) - previous_time)
+                if gap > 0.0:
+                    all_gaps.append(gap)
+            previous_type_time = previous_time_by_type.get(str(event.event_type))
+            if previous_type_time is not None:
+                gap = max(0.0, float(event.time) - previous_type_time)
+                if gap > 0.0:
+                    scales.setdefault(str(event.event_type), []).append(gap)
+            previous_time_by_type[str(event.event_type)] = float(event.time)
+            previous_time = float(event.time)
+
+    default_tau = float(np.median(np.asarray(all_gaps, dtype=np.float64))) if all_gaps else 1.0
+    return scales, max(default_tau, 1e-12)
+
+
+def _make_otd_config(args: argparse.Namespace, default_tau: float) -> MOTDConfig:
+    return MOTDConfig(
+        alpha=float(args.time_weight),
+        beta=float(args.type_weight),
+        gamma=float(args.mark_weight),
+        c_del=float(args.delete_cost),
+        c_ins=float(args.insert_cost),
+        default_tau=float(default_tau),
+        mark_mode="categorical",
+        hard_type=not bool(args.soft_type_matching),
+    )
+
+
+def _summary_stats(values: Sequence[float]) -> tuple[float, float]:
+    finite_values = [float(value) for value in values if math.isfinite(float(value))]
+    if not finite_values:
+        return float("nan"), float("nan")
+    if len(finite_values) == 1:
+        return finite_values[0], 0.0
+    return mean(finite_values), stdev(finite_values)
+
+
+def _raw_event_key(raw_event: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(raw_event.get("timestamp", "")),
+        str(raw_event.get("task_name", "")),
+        str(raw_event.get("task_index", "")),
+    )
+
+
+def _flex_record_key(record: VitalSignTPPSequenceRecord) -> tuple[str, str, str, str]:
+    return (
+        str(record.patient_id),
+        str(record.encounter_id),
+        str(record.sequence_start_timestamp),
+        str(record.sequence_end_timestamp),
+    )
+
+
+def _easy_record_key(record: VitalSignEasyTPPSequenceRecord) -> tuple[str, str, str, str]:
+    return (
+        str(record.patient_id),
+        str(record.encounter_id),
+        str(record.sequence_start_timestamp),
+        str(record.sequence_end_timestamp),
+    )
+
+
+def _flex_records_by_key(
+    flex_bundle: VitalSignTPPDatasetBundle,
+    split: str,
+) -> dict[tuple[str, str, str, str], VitalSignTPPSequenceRecord]:
+    return {
+        _flex_record_key(record): record
+        for record in flex_bundle.get_raw_records(split)
+    }
+
+
+def _matched_flex_events_for_easy_record(
+    *,
+    easy_record: VitalSignEasyTPPSequenceRecord,
+    flex_record: VitalSignTPPSequenceRecord,
+) -> list[tuple[float, float, int, dict[str, float]]]:
+    matched_events: list[tuple[float, float, int, dict[str, float]]] = []
+    target_events = _easy_record_non_eos_raw_events(easy_record)
+    flex_index = 0
+    for target_event in target_events:
+        target_key = _raw_event_key(target_event)
+        found_match = False
+        while flex_index < len(flex_record.raw_events):
+            if _raw_event_key(flex_record.raw_events[flex_index]) == target_key:
+                start_time, end_time, event_type, event_props = flex_record.events[flex_index]
+                matched_events.append(
+                    (
+                        float(start_time),
+                        float(end_time),
+                        int(event_type),
+                        {
+                            str(key): float(value)
+                            for key, value in dict(event_props).items()
+                        },
+                    )
+                )
+                flex_index += 1
+                found_match = True
+                break
+            flex_index += 1
+        if not found_match:
+            raise ValueError(
+                "Could not align EasyTPP canonical event to the FlexTPP record: "
+                f"{target_key}."
+            )
+    return matched_events
+
+
+def _future_event_count(args: argparse.Namespace, true_events: Sequence[Event], prefix_len: int) -> int:
+    remaining = max(0, len(true_events) - prefix_len)
+    if remaining <= 0:
+        return 0
+    if args.max_future_events is None or int(args.max_future_events) <= 0:
+        return remaining
+    return int(args.max_future_events)
+
+
+def _prefix_lengths(args: argparse.Namespace, true_events: Sequence[Event]) -> list[int]:
+    max_prefix = len(true_events) - 1
+    if max_prefix < args.min_prefix_events:
+        return []
+    prefix_lengths = list(range(int(args.min_prefix_events), max_prefix + 1))
+    if args.max_prefixes_per_sequence is not None:
+        prefix_lengths = prefix_lengths[: int(args.max_prefixes_per_sequence)]
+    return prefix_lengths
+
+
+def _first_event_pool(easy_bundle: VitalSignEasyTPPDatasetBundle) -> list[tuple[float, int]]:
+    first_events: list[tuple[float, int]] = []
+    for record in easy_bundle.get_raw_records("train"):
+        for event_time, type_id, mark_name in zip(
+            record.time_seqs,
+            record.type_seqs,
+            record.mark_names,
+        ):
+            if mark_name == EOS_EVENT_TYPE_NAME:
+                continue
+            first_events.append((float(event_time), int(type_id)))
+            break
+    if not first_events:
+        raise ValueError("The EasyTPP training split has no first events to seed empty prefixes.")
+    return first_events
+
+
+def _easy_batch_from_prefix(
+    *,
+    times: Sequence[float],
+    type_ids: Sequence[int],
+    device: torch.device,
+) -> tuple[torch.Tensor, ...]:
+    if not times or not type_ids:
+        raise ValueError("EasyTPP sampling needs at least one conditioning event.")
+    if len(times) != len(type_ids):
+        raise ValueError("times and type_ids must have the same length.")
+
+    time_values = [float(value) for value in times]
+    deltas = [0.0]
+    for previous_time, current_time in zip(time_values[:-1], time_values[1:]):
+        deltas.append(max(0.0, float(current_time) - float(previous_time)))
+
+    time_seqs = torch.as_tensor([time_values], dtype=torch.float32, device=device)
+    time_delta_seqs = torch.as_tensor([deltas], dtype=torch.float32, device=device)
+    type_seqs = torch.as_tensor([[int(value) for value in type_ids]], dtype=torch.long, device=device)
+    seq_non_pad_mask = torch.ones_like(type_seqs, dtype=torch.bool, device=device)
+    seq_len = int(type_seqs.shape[1])
+    attention_mask = torch.triu(
+        torch.ones((seq_len, seq_len), dtype=torch.bool, device=device),
+        diagonal=1,
+    ).unsqueeze(0)
+    return time_seqs, time_delta_seqs, type_seqs, seq_non_pad_mask, attention_mask
+
+
+def _ensure_easy_event_sampler(
+    *,
+    model: VitalSignEasyTPPModule,
+    thinning_payload: Mapping[str, Any],
+    device: torch.device,
+) -> None:
+    easy_model = model.easy_tpp_model
+    thinning = _ThinningConfigAdapter(thinning_payload)
+    easy_model.gen_config = thinning
+    easy_model.device = device
+    easy_model.event_sampler = EventSampler(
+        num_sample=thinning.num_sample,
+        num_exp=thinning.num_exp,
+        over_sample_rate=thinning.over_sample_rate,
+        patience_counter=thinning.patience_counter,
+        num_samples_boundary=thinning.num_samples_boundary,
+        dtime_max=thinning.dtime_max,
+        device=device,
+    )
+
+
+@torch.no_grad()
+def _sample_intensity_free_next(
+    *,
+    easy_model: torch.nn.Module,
+    times: Sequence[float],
+    type_ids: Sequence[int],
+    device: torch.device,
+) -> tuple[float, int]:
+    _, time_delta_seqs, type_seqs, _, _ = _easy_batch_from_prefix(
+        times=times,
+        type_ids=type_ids,
+        device=device,
+    )
+    context = easy_model.forward(time_delta_seqs, type_seqs)
+    raw_params = easy_model.linear(context[:, -1:, :])
+    locs = raw_params[..., : easy_model.num_mix_components]
+    log_scales = raw_params[
+        ...,
+        easy_model.num_mix_components : (2 * easy_model.num_mix_components),
+    ]
+    log_weights = raw_params[..., (2 * easy_model.num_mix_components) :]
+    log_scales = clamp_preserve_gradients(log_scales, -5.0, 3.0)
+    log_weights = torch.log_softmax(log_weights, dim=-1)
+    inter_time_dist = LogNormalMixtureDistribution(
+        locs=locs,
+        log_scales=log_scales,
+        log_weights=log_weights,
+        mean_log_inter_time=easy_model.mean_log_inter_time,
+        std_log_inter_time=easy_model.std_log_inter_time,
+    )
+    dtime = float(inter_time_dist.sample().reshape(-1)[0].item())
+    mark_logits = easy_model.mark_linear(context[:, -1, :])[:, : easy_model.num_event_types]
+    probs = torch.softmax(mark_logits, dim=-1).squeeze(0)
+    type_id = int(torch.multinomial(probs, 1).item())
+    return max(0.0, dtime), type_id
+
+
+@torch.no_grad()
+def _sample_easy_next_event(
+    *,
+    model: VitalSignEasyTPPModule,
+    times: Sequence[float],
+    type_ids: Sequence[int],
+    device: torch.device,
+) -> tuple[float, int]:
+    easy_model = model.easy_tpp_model
+    if easy_model.__class__.__name__ == "IntensityFree":
+        return _sample_intensity_free_next(
+            easy_model=easy_model,
+            times=times,
+            type_ids=type_ids,
+            device=device,
+        )
+
+    time_seq, time_delta_seq, event_seq, _, _ = _easy_batch_from_prefix(
+        times=times,
+        type_ids=type_ids,
+        device=device,
+    )
+    dtime_boundary = time_delta_seq + easy_model.event_sampler.dtime_max
+    accepted_dtimes, _ = easy_model.event_sampler.draw_next_time_one_step(
+        time_seq,
+        time_delta_seq,
+        event_seq,
+        dtime_boundary,
+        easy_model.compute_intensities_at_sample_times,
+        compute_last_step_only=True,
+    )
+    accepted_last = accepted_dtimes[0, -1]
+    accepted_index = torch.randint(
+        low=0,
+        high=int(accepted_last.numel()),
+        size=(1,),
+        device=device,
+    )
+    dtime_tensor = accepted_last[accepted_index].reshape(1, 1, 1).clamp_min(0.0)
+    intensities = easy_model.compute_intensities_at_sample_times(
+        time_seq,
+        time_delta_seq,
+        event_seq,
+        dtime_tensor,
+        max_steps=int(event_seq.shape[1]),
+        compute_last_step_only=True,
+    )
+    mark_scores = intensities[0, -1, 0, :].clamp_min(0.0)
+    if not torch.isfinite(mark_scores).all() or float(mark_scores.sum().item()) <= 0.0:
+        mark_scores = torch.ones_like(mark_scores)
+    probs = mark_scores / mark_scores.sum()
+    type_id = int(torch.multinomial(probs, 1).item())
+    return float(dtime_tensor.reshape(-1)[0].item()), type_id
+
+
+def _sample_easy_rollout(
+    *,
+    model: VitalSignEasyTPPModule,
+    record: VitalSignEasyTPPSequenceRecord,
+    prefix_len: int,
+    max_future_events: int,
+    easy_bundle: VitalSignEasyTPPDatasetBundle,
+    first_event_pool: Sequence[tuple[float, int]],
+    rng: random.Random,
+    device: torch.device,
+) -> list[Event]:
+    non_eos = [
+        (float(event_time), int(type_id), str(mark_name))
+        for event_time, type_id, mark_name in zip(
+            record.time_seqs,
+            record.type_seqs,
+            record.mark_names,
+        )
+        if mark_name != EOS_EVENT_TYPE_NAME
+    ]
+    times = [event_time for event_time, _, _ in non_eos[:prefix_len]]
+    type_ids = [type_id for _, type_id, _ in non_eos[:prefix_len]]
+    generated: list[Event] = []
+
+    for _ in range(max_future_events):
+        if not times:
+            sampled_time, sampled_type_id = rng.choice(list(first_event_pool))
+        else:
+            sampled_dtime, sampled_type_id = _sample_easy_next_event(
+                model=model,
+                times=times,
+                type_ids=type_ids,
+                device=device,
+            )
+            if not math.isfinite(sampled_dtime):
+                break
+            sampled_time = times[-1] + max(0.0, sampled_dtime)
+
+        if sampled_type_id < 0 or sampled_type_id >= len(easy_bundle.mark_names):
+            break
+        mark_name = easy_bundle.mark_names[sampled_type_id]
+        if mark_name == EOS_EVENT_TYPE_NAME:
+            break
+
+        generated.append(
+            Event(
+                time=float(sampled_time),
+                event_type=_base_task_from_mark_name(mark_name, easy_bundle.metadata),
+                mark=mark_name,
+            )
+        )
+        times.append(float(sampled_time))
+        type_ids.append(int(sampled_type_id))
+
+    return generated
+
+
+def _base_task_from_mark_name(mark_name: str, metadata: Mapping[str, Any]) -> str:
+    included_tasks = [str(task_name) for task_name in metadata.get("included_tasks", [])]
+    for task_name in sorted(included_tasks, key=len, reverse=True):
+        if mark_name == task_name or mark_name.startswith(f"{task_name}__"):
+            return task_name
+    return str(mark_name).split("__", 1)[0]
+
+
+def _load_easy_model(
+    *,
+    spec: ModelSpec,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> VitalSignEasyTPPModule:
+    model = VitalSignEasyTPPModule.load_from_checkpoint(
+        checkpoint_path=str(spec.checkpoint_path),
+        map_location=device,
+    )
+    model.to(device)
+    model.eval()
+    _ensure_easy_event_sampler(
+        model=model,
+        thinning_payload={
+            "num_sample": args.easy_thinning_num_sample,
+            "num_exp": args.easy_thinning_num_exp,
+            "over_sample_rate": args.easy_thinning_over_sample_rate,
+            "patience_counter": args.easy_thinning_patience_counter,
+            "num_samples_boundary": args.easy_thinning_num_samples_boundary,
+            "dtime_max": args.easy_thinning_dtime_max,
+        },
+        device=device,
+    )
+    return model
+
+
+def _flex_training_config(spec: ModelSpec, args: argparse.Namespace) -> VitalSignTPPTrainingConfig:
+    training_config = VitalSignTPPTrainingConfig.from_dict(spec.training_config)
+    training_config.dataset_config = _apply_dataset_load_flags(
+        training_config.dataset_config,
+        use_saved_datasets=args.use_saved_datasets,
+    )
+    return training_config
+
+
+def _load_flex_model_and_bundle(
+    *,
+    spec: ModelSpec,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[VitalSignTPPModule, VitalSignTPPDatasetBundle]:
+    training_config = _flex_training_config(spec, args)
+    flex_bundle = build_vital_sign_tpp_dataset_bundle(
+        dataset_config=training_config.dataset_config,
+        model_config=training_config.model_config,
+    )
+    model = VitalSignTPPModule.load_from_checkpoint(
+        checkpoint_path=str(spec.checkpoint_path),
+        map_location=device,
+        model_config=training_config.model_config,
+        dims=flex_bundle.dims,
+        max_num_classes=flex_bundle.max_num_classes,
+        condition_dim=flex_bundle.condition_dim,
+    )
+    model.to(device)
+    model.eval()
+    return model, flex_bundle
+
+
+def _discrete_events_from_flex_events(
+    *,
+    events: Sequence[tuple[float, float, int, Mapping[str, float]]],
+    flex_bundle: VitalSignTPPDatasetBundle,
+    mark_encoder: DiscreteMarkEncoder,
+) -> list[Event]:
+    discrete_events: list[Event] = []
+    for start_time, _, event_type, event_props in events:
+        event_type_index = int(event_type)
+        if event_type_index == flex_bundle.eos_event_type:
+            break
+        if event_type_index < 0 or event_type_index >= len(flex_bundle.event_types):
+            continue
+        task_name = flex_bundle.event_types[event_type_index]
+        mark_name = mark_encoder.label_event(
+            task_name=task_name,
+            properties=event_props,
+        )
+        if mark_name is None or mark_name == EOS_EVENT_TYPE_NAME:
+            continue
+        discrete_events.append(
+            Event(
+                time=float(start_time),
+                event_type=mark_encoder.base_task(mark_name),
+                mark=mark_name,
+            )
+        )
+    return discrete_events
+
+
+def _evaluate_easy_model(
+    *,
+    spec: ModelSpec,
+    context: EvaluationContext,
+    args: argparse.Namespace,
+    device: torch.device,
+    otd_config: MOTDConfig,
+) -> list[dict[str, Any]]:
+    model = _load_easy_model(spec=spec, args=args, device=device)
+    first_event_pool = _first_event_pool(context.easy_bundle)
+    rng = random.Random(args.seed)
+    rows: list[dict[str, Any]] = []
+
+    for sequence_index, record in enumerate(context.easy_records):
+        true_events = _easy_record_events(record=record, mark_encoder=context.mark_encoder)
+        for prefix_len in _prefix_lengths(args, true_events):
+            future_count = _future_event_count(args, true_events, prefix_len)
+            if future_count <= 0:
+                continue
+            true_future = true_events[prefix_len : prefix_len + future_count]
+            for sample_index in range(int(args.num_samples)):
+                predicted = _sample_easy_rollout(
+                    model=model,
+                    record=record,
+                    prefix_len=prefix_len,
+                    max_future_events=future_count,
+                    easy_bundle=context.easy_bundle,
+                    first_event_pool=first_event_pool,
+                    rng=rng,
+                    device=device,
+                )
+                result = marked_otd(
+                    pred_seq=predicted,
+                    true_seq=true_future,
+                    config=otd_config,
+                    time_scales=context.time_scales,
+                    return_alignment=False,
+                )
+                rows.append(
+                    _detail_row(
+                        spec=spec,
+                        record=record,
+                        sequence_index=sequence_index,
+                        prefix_len=prefix_len,
+                        sample_index=sample_index,
+                        true_future=true_future,
+                        predicted=predicted,
+                        result=result,
+                    )
+                )
+        if (sequence_index + 1) % int(args.progress_every) == 0:
+            print(f"{spec.run_name}: evaluated {sequence_index + 1} test sequences.")
+    return rows
+
+
+def _evaluate_flex_model(
+    *,
+    spec: ModelSpec,
+    context: EvaluationContext,
+    args: argparse.Namespace,
+    device: torch.device,
+    otd_config: MOTDConfig,
+) -> list[dict[str, Any]]:
+    model, flex_bundle = _load_flex_model_and_bundle(spec=spec, args=args, device=device)
+    flex_records = _flex_records_by_key(flex_bundle, args.split)
+    flex_dataset = flex_bundle.get_dataset(args.split)
+    rows: list[dict[str, Any]] = []
+
+    for sequence_index, easy_record in enumerate(context.easy_records):
+        flex_record = flex_records.get(_easy_record_key(easy_record))
+        if flex_record is None:
+            raise ValueError(
+                f"No matching FlexTPP record for EasyTPP test sequence {sequence_index}."
+            )
+        matched_flex_events = _matched_flex_events_for_easy_record(
+            easy_record=easy_record,
+            flex_record=flex_record,
+        )
+        true_events = _easy_record_events(record=easy_record, mark_encoder=context.mark_encoder)
+        for prefix_len in _prefix_lengths(args, true_events):
+            future_count = _future_event_count(args, true_events, prefix_len)
+            if future_count <= 0:
+                continue
+            true_future = true_events[prefix_len : prefix_len + future_count]
+            prefix_events = matched_flex_events[:prefix_len]
+            for sample_index in range(int(args.num_samples)):
+                sampled_flex_events = _sample_future_events_from_prefix(
+                    model=model,
+                    dataset_bundle=flex_bundle,
+                    dataset=flex_dataset,
+                    prefix_events=prefix_events,
+                    condition=flex_record.condition,
+                    max_future_events=future_count,
+                    device=device,
+                    argmax=False,
+                    mean_of=int(args.flex_mean_of),
+                    median=False,
+                )
+                predicted = _discrete_events_from_flex_events(
+                    events=sampled_flex_events,
+                    flex_bundle=flex_bundle,
+                    mark_encoder=context.mark_encoder,
+                )
+                result = marked_otd(
+                    pred_seq=predicted,
+                    true_seq=true_future,
+                    config=otd_config,
+                    time_scales=context.time_scales,
+                    return_alignment=False,
+                )
+                rows.append(
+                    _detail_row(
+                        spec=spec,
+                        record=easy_record,
+                        sequence_index=sequence_index,
+                        prefix_len=prefix_len,
+                        sample_index=sample_index,
+                        true_future=true_future,
+                        predicted=predicted,
+                        result=result,
+                    )
+                )
+        if (sequence_index + 1) % int(args.progress_every) == 0:
+            print(f"{spec.run_name}: evaluated {sequence_index + 1} test sequences.")
+    return rows
+
+
+def _detail_row(
+    *,
+    spec: ModelSpec,
+    record: VitalSignEasyTPPSequenceRecord,
+    sequence_index: int,
+    prefix_len: int,
+    sample_index: int,
+    true_future: Sequence[Event],
+    predicted: Sequence[Event],
+    result: Any,
+) -> dict[str, Any]:
+    return {
+        "family": spec.family,
+        "model_name": spec.model_name,
+        "variant": spec.variant,
+        "run_name": spec.run_name,
+        "split": record.split,
+        "sequence_index": int(sequence_index),
+        "patient_id": record.patient_id,
+        "encounter_id": record.encounter_id,
+        "segment_id": int(record.segment_id),
+        "prefix_event_count": int(prefix_len),
+        "sample_index": int(sample_index),
+        "true_event_count": int(len(true_future)),
+        "predicted_event_count": int(len(predicted)),
+        "otd_total": float(result.cost),
+        "otd_time": float(result.time_cost),
+        "otd_type": float(result.type_cost),
+        "otd_mark": float(result.mark_cost),
+        "otd_edit": float(result.edit_cost),
+        "otd_other": float(result.other_cost),
+    }
+
+
+def _evaluate_model(
+    *,
+    spec: ModelSpec,
+    context: EvaluationContext,
+    args: argparse.Namespace,
+    device: torch.device,
+    otd_config: MOTDConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    started_at = datetime.datetime.now()
+    try:
+        print(f"Evaluating {spec.run_name} [{spec.family}/{spec.variant}] ...")
+        if spec.family.lower() == "easytpp":
+            detail_rows = _evaluate_easy_model(
+                spec=spec,
+                context=context,
+                args=args,
+                device=device,
+                otd_config=otd_config,
+            )
+        elif spec.family.lower() == "flextpp":
+            detail_rows = _evaluate_flex_model(
+                spec=spec,
+                context=context,
+                args=args,
+                device=device,
+                otd_config=otd_config,
+            )
+        else:
+            raise ValueError(f"Unsupported model family '{spec.family}'.")
+        summary_row = _summary_row_from_details(
+            spec=spec,
+            detail_rows=detail_rows,
+            started_at=started_at,
+            status="success",
+            error_message="",
+        )
+        print(f"Finished {spec.run_name}: mean OTD={summary_row['otd_total_mean']:.4f}.")
+        return detail_rows, summary_row
+    except Exception as exc:
+        traceback.print_exc()
+        return [], _summary_row_from_details(
+            spec=spec,
+            detail_rows=[],
+            started_at=started_at,
+            status="failed",
+            error_message=str(exc),
+        )
+
+
+def _summary_row_from_details(
+    *,
+    spec: ModelSpec,
+    detail_rows: Sequence[Mapping[str, Any]],
+    started_at: datetime.datetime,
+    status: str,
+    error_message: str,
+) -> dict[str, Any]:
+    ended_at = datetime.datetime.now()
+    row: dict[str, Any] = {
+        "family": spec.family,
+        "model_name": spec.model_name,
+        "variant": spec.variant,
+        "run_name": spec.run_name,
+        "status": status,
+        "error_message": error_message,
+        "checkpoint_path": str(spec.checkpoint_path),
+        "metrics_summary_path": "" if spec.metrics_summary_path is None else str(spec.metrics_summary_path),
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "ended_at": ended_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((ended_at - started_at).total_seconds(), 3),
+        "num_otd_samples": len(detail_rows),
+    }
+    for column in (
+        "otd_total",
+        "otd_time",
+        "otd_other",
+        "otd_type",
+        "otd_mark",
+        "otd_edit",
+        "predicted_event_count",
+    ):
+        values = [float(detail_row[column]) for detail_row in detail_rows]
+        value_mean, value_std = _summary_stats(values)
+        row[f"{column}_mean"] = value_mean
+        row[f"{column}_std"] = value_std
+    return row
+
+
+def _write_outputs(
+    *,
+    output_dir: Path,
+    detail_rows: Sequence[Mapping[str, Any]],
+    summary_rows: Sequence[Mapping[str, Any]],
+    config_payload: Mapping[str, Any],
+) -> tuple[Path, Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    detail_path = output_dir / "otd_prefix_samples.csv"
+    summary_path = output_dir / "otd_summary.csv"
+    metadata_path = output_dir / "otd_evaluation_metadata.json"
+
+    _write_csv_rows(detail_path, detail_rows)
+    _write_csv_rows(summary_path, summary_rows)
+    with metadata_path.open("w", encoding="utf-8") as metadata_file:
+        json.dump(dict(config_payload), metadata_file, indent=2, default=str)
+    return detail_path, summary_path, metadata_path
+
+
+def _write_csv_rows(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        if not rows:
+            return
+        fieldnames = list(rows[0].keys())
+        for row in rows:
+            for field_name in row.keys():
+                if field_name not in fieldnames:
+                    fieldnames.append(field_name)
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _plot_results(*, output_dir: Path, detail_path: Path, summary_path: Path) -> list[Path]:
+    try:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+    except Exception as exc:
+        print(f"Skipping plots because plotting dependencies could not be imported: {exc}")
+        return []
+
+    detail_df = pd.read_csv(detail_path)
+    summary_df = pd.read_csv(summary_path)
+    summary_df = summary_df[summary_df["status"] == "success"].copy()
+    if detail_df.empty or summary_df.empty:
+        return []
+
+    plot_paths: list[Path] = []
+    label_column = "run_name"
+    summary_df = summary_df.sort_values("otd_total_mean", ascending=True)
+
+    component_path = output_dir / "otd_component_bar.png"
+    labels = summary_df[label_column].tolist()
+    x_positions = np.arange(len(labels))
+    time_values = summary_df["otd_time_mean"].to_numpy(dtype=float)
+    other_values = summary_df["otd_other_mean"].to_numpy(dtype=float)
+    total_std = summary_df["otd_total_std"].to_numpy(dtype=float)
+    fig_width = max(10.0, 0.55 * len(labels))
+    fig, ax = plt.subplots(figsize=(fig_width, 6.0))
+    ax.bar(x_positions, time_values, label="Time")
+    ax.bar(x_positions, other_values, bottom=time_values, label="Other")
+    ax.errorbar(
+        x_positions,
+        time_values + other_values,
+        yerr=total_std,
+        fmt="none",
+        ecolor="black",
+        elinewidth=1,
+        capsize=2,
+    )
+    ax.set_ylabel("Mean OTD")
+    ax.set_title("Vital-sign TPP OTD by model")
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(component_path, dpi=180)
+    plt.close(fig)
+    plot_paths.append(component_path)
+
+    boxplot_path = output_dir / "otd_distribution_boxplot.png"
+    detail_df = detail_df[detail_df["run_name"].isin(labels)].copy()
+    grouped_values = [
+        detail_df.loc[detail_df["run_name"] == run_name, "otd_total"].to_numpy(dtype=float)
+        for run_name in labels
+    ]
+    fig, ax = plt.subplots(figsize=(fig_width, 6.0))
+    ax.boxplot(grouped_values, labels=labels, showfliers=False)
+    ax.set_ylabel("Sample OTD")
+    ax.set_title("OTD distribution across prefixes and samples")
+    ax.tick_params(axis="x", rotation=45)
+    for tick_label in ax.get_xticklabels():
+        tick_label.set_ha("right")
+    fig.tight_layout()
+    fig.savefig(boxplot_path, dpi=180)
+    plt.close(fig)
+    plot_paths.append(boxplot_path)
+
+    return plot_paths
+
+
+def _log_wandb(
+    *,
+    args: argparse.Namespace,
+    output_paths: Sequence[Path],
+    plot_paths: Sequence[Path],
+    summary_rows: Sequence[Mapping[str, Any]],
+) -> None:
+    if not args.wandb:
+        return
+    import wandb
+
+    run = wandb.init(
+        project=args.wandb_project,
+        group=args.wandb_group,
+        job_type="otd_eval",
+        config={key: value for key, value in vars(args).items()},
+        dir=str(_resolve_repo_relative_path(args.output_dir) or Path(args.output_dir)),
+    )
+    for summary_row in summary_rows:
+        if summary_row.get("status") != "success":
+            continue
+        metric_prefix = _safe_name(str(summary_row["run_name"]))
+        for metric_name in (
+            "otd_total_mean",
+            "otd_total_std",
+            "otd_time_mean",
+            "otd_time_std",
+            "otd_other_mean",
+            "otd_other_std",
+        ):
+            wandb.summary[f"{metric_prefix}/{metric_name}"] = summary_row[metric_name]
+    for plot_path in plot_paths:
+        wandb.log({plot_path.stem: wandb.Image(str(plot_path))})
+    artifact = wandb.Artifact("vital_sign_tpp_otd_evaluation", type="evaluation")
+    for output_path in output_paths:
+        artifact.add_file(str(output_path))
+    for plot_path in plot_paths:
+        artifact.add_file(str(plot_path))
+    run.log_artifact(artifact)
+    run.finish()
+
+
+def _parse_selected_runs(raw_value: str | None) -> set[str] | None:
+    if raw_value is None or not raw_value.strip():
+        return None
+    return {
+        run_name.strip()
+        for run_name in raw_value.split(",")
+        if run_name.strip()
+    }
+
+
+def _device_from_args(args: argparse.Namespace) -> torch.device:
+    if args.device:
+        return torch.device(args.device)
+    return torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="VitalSignTPPOTDEvaluation",
+        description=(
+            "Evaluate trained EasyTPP and FlexTPP vital-sign request models with "
+            "Monte Carlo marked Optimal Transport Distance."
+        ),
+    )
+    parser.add_argument(
+        "--comparison_summary_path",
+        default=None,
+        help=(
+            "CSV summary produced by run_vital_sign_tpp_model_comparison. "
+            "Defaults to the most recent summary under data/prediction."
+        ),
+    )
+    parser.add_argument(
+        "--easy_config_path",
+        default=None,
+        help=(
+            "Optional EasyTPP training JSON to define the canonical discrete "
+            "low/medium/high mark schema."
+        ),
+    )
+    parser.add_argument("--selected_runs", default=None, help="Comma-separated run names to evaluate.")
+    parser.add_argument("--stf_log_dir", default=None)
+    parser.add_argument("--output_dir", default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--split", default="test", choices=("train", "val", "test"))
+    parser.add_argument("--num_samples", type=int, default=16)
+    parser.add_argument(
+        "--max_future_events",
+        type=int,
+        default=5,
+        help="Maximum rollout length per prefix; use 0 to compare against all remaining events.",
+    )
+    parser.add_argument("--min_prefix_events", type=int, default=0)
+    parser.add_argument("--max_prefixes_per_sequence", type=int, default=None)
+    parser.add_argument("--max_sequences", type=int, default=None)
+    parser.add_argument(
+        "--use_saved_datasets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Load the cached FlexTPP/EasyTPP datasets by default.",
+    )
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--time_weight", type=float, default=1.0)
+    parser.add_argument("--type_weight", type=float, default=2.0)
+    parser.add_argument("--mark_weight", type=float, default=1.0)
+    parser.add_argument("--delete_cost", type=float, default=1.0)
+    parser.add_argument("--insert_cost", type=float, default=1.0)
+    parser.add_argument(
+        "--soft_type_matching",
+        action="store_true",
+        help="Allow cross-task substitutions with --type_weight instead of hard task matching.",
+    )
+    parser.add_argument("--flex_mean_of", type=int, default=1)
+    parser.add_argument("--easy_thinning_num_sample", type=int, default=16)
+    parser.add_argument("--easy_thinning_num_exp", type=int, default=200)
+    parser.add_argument("--easy_thinning_over_sample_rate", type=float, default=5.0)
+    parser.add_argument("--easy_thinning_patience_counter", type=int, default=5)
+    parser.add_argument("--easy_thinning_num_samples_boundary", type=int, default=5)
+    parser.add_argument("--easy_thinning_dtime_max", type=float, default=24.0)
+    parser.add_argument("--progress_every", type=int, default=50)
+    parser.add_argument("--skip_plots", action="store_true")
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb_project", default="vital_sign_tpp_comparison")
+    parser.add_argument("--wandb_group", default=None)
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    torch.manual_seed(int(args.seed))
+    np.random.seed(int(args.seed))
+    random.seed(int(args.seed))
+
+    comparison_summary_path = _coerce_comparison_summary_path(args.comparison_summary_path)
+    output_dir = _resolve_repo_relative_path(args.output_dir)
+    if output_dir is None:
+        output_dir = _repo_root() / DEFAULT_OUTPUT_DIR
+    device = _device_from_args(args)
+    print(f"Using comparison summary: {comparison_summary_path}")
+    print(f"Using device: {device}")
+
+    model_specs = _load_model_specs(
+        comparison_summary_path=comparison_summary_path,
+        stf_log_dir=args.stf_log_dir,
+        selected_runs=_parse_selected_runs(args.selected_runs),
+    )
+    context = _build_evaluation_context(args=args, model_specs=model_specs)
+    otd_config = _make_otd_config(args, default_tau=context.default_tau)
+
+    all_detail_rows: list[dict[str, Any]] = []
+    summary_rows: list[dict[str, Any]] = []
+    for spec in model_specs:
+        detail_rows, summary_row = _evaluate_model(
+            spec=spec,
+            context=context,
+            args=args,
+            device=device,
+            otd_config=otd_config,
+        )
+        all_detail_rows.extend(detail_rows)
+        summary_rows.append(summary_row)
+
+    config_payload = {
+        "comparison_summary_path": str(comparison_summary_path),
+        "output_dir": str(output_dir),
+        "args": vars(args),
+        "otd_config": otd_config.__dict__,
+        "num_models": len(model_specs),
+        "num_sequences": len(context.easy_records),
+        "mark_names": context.easy_bundle.mark_names,
+    }
+    detail_path, summary_path, metadata_path = _write_outputs(
+        output_dir=output_dir,
+        detail_rows=all_detail_rows,
+        summary_rows=summary_rows,
+        config_payload=config_payload,
+    )
+    plot_paths: list[Path] = []
+    if not args.skip_plots and all_detail_rows:
+        plot_paths = _plot_results(
+            output_dir=output_dir,
+            detail_path=detail_path,
+            summary_path=summary_path,
+        )
+    _log_wandb(
+        args=args,
+        output_paths=[detail_path, summary_path, metadata_path],
+        plot_paths=plot_paths,
+        summary_rows=summary_rows,
+    )
+    print(f"OTD detail rows saved to {detail_path}")
+    print(f"OTD summary saved to {summary_path}")
+    for plot_path in plot_paths:
+        print(f"Plot saved to {plot_path}")
+    return 1 if any(row["status"] == "failed" for row in summary_rows) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

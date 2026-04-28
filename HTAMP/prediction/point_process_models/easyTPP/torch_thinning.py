@@ -154,7 +154,15 @@ class EventSampler(nn.Module):
         result_non_accepted_unfiltered = torch.gather(exp_numbers, 3, first_accepted_indexer.unsqueeze(3))
         
         # [batch_size, max_len, num_sample,1]
-        result = torch.where(non_accepted_filter.unsqueeze(3), torch.tensor(self.dtime_max), result_non_accepted_unfiltered)
+        result = torch.where(
+            non_accepted_filter.unsqueeze(3),
+            torch.tensor(
+                self.dtime_max,
+                dtype=result_non_accepted_unfiltered.dtype,
+                device=result_non_accepted_unfiltered.device,
+            ),
+            result_non_accepted_unfiltered,
+        )
         
         # [batch_size, max_len, num_sample]
         result = result.squeeze(dim=-1)
