@@ -56,6 +56,145 @@ BASE_SUMMARY_FIELDS = [
     "best_checkpoint_path",
     "best_checkpoint_score",
 ]
+EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "NHP": {
+        "model_config": {
+            "hidden_size": 64,
+            "num_layers": 1,
+            "dropout_rate": 0.05,
+            "learning_rate": 0.001,
+            "loss_integral_num_sample_per_step": 20,
+        },
+    },
+    "RMTPP": {
+        "model_config": {
+            "hidden_size": 64,
+            "num_layers": 1,
+            "dropout_rate": 0.05,
+            "learning_rate": 0.001,
+        },
+    },
+    "FullyNN": {
+        "model_config": {
+            "hidden_size": 64,
+            "num_layers": 1,
+            "dropout_rate": 0.05,
+            "learning_rate": 0.001,
+            "model_specs": {
+                "num_mlp_layers": 2,
+                "proper_marked_intensities": True,
+            },
+        },
+    },
+    "IntensityFree": {
+        "model_config": {
+            "hidden_size": 64,
+            "num_layers": 1,
+            "dropout_rate": 0.05,
+            "learning_rate": 0.001,
+            "model_specs": {
+                "num_mix_components": 64,
+            },
+        },
+    },
+    "ODETPP": {
+        "model_config": {
+            "hidden_size": 64,
+            "num_layers": 1,
+            "dropout_rate": 0.05,
+            "learning_rate": 0.0005,
+            "model_specs": {
+                "ode_num_sample_per_step": 10,
+            },
+        },
+    },
+    "THP": {
+        "model_config": {
+            "hidden_size": 128,
+            "time_emb_size": 16,
+            "num_layers": 2,
+            "num_heads": 4,
+            "dropout_rate": 0.1,
+            "learning_rate": 0.0003,
+        },
+    },
+    "AttNHP": {
+        "model_config": {
+            "hidden_size": 128,
+            "time_emb_size": 16,
+            "num_layers": 2,
+            "num_heads": 4,
+            "dropout_rate": 0.1,
+            "learning_rate": 0.0003,
+        },
+    },
+    "SAHP": {
+        "model_config": {
+            "hidden_size": 128,
+            "time_emb_size": 16,
+            "num_layers": 2,
+            "num_heads": 4,
+            "dropout_rate": 0.1,
+            "learning_rate": 0.0003,
+        },
+    },
+    "ANHN": {
+        "model_config": {
+            "hidden_size": 128,
+            "time_emb_size": 16,
+            "num_layers": 2,
+            "num_heads": 4,
+            "dropout_rate": 0.1,
+            "learning_rate": 0.0003,
+        },
+    },
+    "S2P2": {
+        "model_config": {
+            "hidden_size": 64,
+            "num_layers": 2,
+            "dropout_rate": 0.05,
+            "learning_rate": 0.0005,
+            "model_specs": {
+                "P": 64,
+            },
+        },
+    },
+    "WSMTHP": {
+        "model_config": {
+            "hidden_size": 128,
+            "num_layers": 2,
+            "num_heads": 4,
+            "dropout_rate": 0.1,
+            "learning_rate": 0.0003,
+            "model_specs": {
+                "CE_coef": 10.0,
+                "T_mode": "train_global",
+            },
+        },
+    },
+}
+FLEX_TPP_VARIANT_DEFAULTS: dict[str, dict[str, Any]] = {
+    "ST": {
+        "model_config": {
+            "depth": 4,
+            "dim_k": 16,
+            "n_head": 4,
+            "dim_ff": 128,
+            "dropout": 0.1,
+            "learning_rate": 0.001,
+        },
+    },
+    "STP": {
+        "model_config": {
+            "depth": 6,
+            "dim_k": 24,
+            "n_head": 4,
+            "dim_ff": 256,
+            "dropout": 0.15,
+            "learning_rate": 0.001,
+        },
+    },
+}
 
 
 @dataclass
@@ -236,6 +375,17 @@ def _apply_common_model_overrides(
     return updated_payload
 
 
+def _apply_architecture_defaults(
+    payload: dict[str, Any],
+    *,
+    defaults: Mapping[str, Any],
+    enabled: bool,
+) -> dict[str, Any]:
+    if not enabled:
+        return copy.deepcopy(payload)
+    return _deep_merge_dicts(base=payload, updates=defaults)
+
+
 def _build_flex_job_payload(
     *,
     base_payload: Mapping[str, Any],
@@ -248,13 +398,18 @@ def _build_flex_job_payload(
         copy.deepcopy(dict(base_payload)),
         use_prepared_dataset=args.prepare_datasets,
     )
+    payload["model_config"]["order"] = order
+    payload = _apply_architecture_defaults(
+        payload,
+        defaults=FLEX_TPP_VARIANT_DEFAULTS.get(order, {}),
+        enabled=not args.no_model_defaults,
+    )
     payload = _apply_common_model_overrides(
         payload,
         args=args,
         run_name=run_name,
         wandb=not args.no_wandb,
     )
-    payload["model_config"]["order"] = order
     return ComparisonJob(
         family="FlexTPP",
         model_name="FlexTPP",
@@ -277,13 +432,18 @@ def _build_easy_job_payload(
         copy.deepcopy(dict(base_payload)),
         use_prepared_dataset=args.prepare_datasets,
     )
+    payload["model_config"]["model_id"] = model_id
+    payload = _apply_architecture_defaults(
+        payload,
+        defaults=EASY_TPP_MODEL_DEFAULTS.get(model_id, {}),
+        enabled=not args.no_model_defaults,
+    )
     payload = _apply_common_model_overrides(
         payload,
         args=args,
         run_name=run_name,
         wandb=not args.no_wandb,
     )
-    payload["model_config"]["model_id"] = model_id
     return ComparisonJob(
         family="EasyTPP",
         model_name=model_id,
@@ -745,6 +905,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument(
+        "--no_model_defaults",
+        action="store_true",
+        help=(
+            "Use the base JSON configs as-is, instead of applying the runner's "
+            "per-architecture starting hyperparameters."
+        ),
+    )
+    parser.add_argument(
         "--prepare_datasets",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -767,6 +935,7 @@ def main() -> int:
     print(f"Prepared {len(jobs)} training job(s).")
     print(f"W&B project: {args.wandb_project}")
     print(f"W&B group: {args.wandb_group or run_prefix}")
+    print(f"Per-architecture defaults: {not args.no_model_defaults}")
     print(f"Summary path: {summary_path}")
     for job in jobs:
         print(f"  - {job.run_name} [{job.family}/{job.variant}]")
