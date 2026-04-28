@@ -7,6 +7,7 @@ import json
 import math
 import os
 import random
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -296,10 +297,10 @@ def _load_model_specs(
             training_config = _read_training_config_from_metrics(metrics_summary_path)
             checkpoint_path = _checkpoint_path_from_row(row, metrics_summary_path)
             if checkpoint_path is None or not checkpoint_path.exists():
-                print(f"Skipping {run_name}: checkpoint not found at {checkpoint_path}.")
+                _log(f"Skipping {run_name}: checkpoint not found at {checkpoint_path}.")
                 continue
             if not training_config:
-                print(f"Skipping {run_name}: metrics summary has no training_config.")
+                _log(f"Skipping {run_name}: metrics summary has no training_config.")
                 continue
 
             specs.append(
@@ -447,6 +448,67 @@ def _make_otd_config(args: argparse.Namespace, default_tau: float) -> MOTDConfig
     )
 
 
+def _log(message: str) -> None:
+    timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None or not math.isfinite(float(seconds)) or float(seconds) < 0.0:
+        return "unknown"
+    total_seconds = int(round(float(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes:d}m {secs:02d}s"
+    return f"{secs:d}s"
+
+
+def _progress_fraction(completed: int, total: int) -> float:
+    if total <= 0:
+        return 1.0
+    return min(1.0, max(0.0, float(completed) / float(total)))
+
+
+def _eta_seconds(*, completed: int, total: int, elapsed_seconds: float) -> float | None:
+    fraction = _progress_fraction(completed, total)
+    if fraction <= 0.0 or total <= 0:
+        return None
+    return elapsed_seconds * (1.0 - fraction) / fraction
+
+
+def _log_model_progress(
+    *,
+    run_name: str,
+    completed_sequences: int,
+    total_sequences: int,
+    completed_prefixes: int,
+    total_prefixes: int,
+    completed_samples: int,
+    total_samples: int,
+    completed_rollout_event_budget: int,
+    total_rollout_event_budget: int,
+    started_at: float,
+) -> None:
+    elapsed_seconds = time.perf_counter() - started_at
+    fraction = _progress_fraction(completed_samples, total_samples)
+    eta = _eta_seconds(
+        completed=completed_samples,
+        total=total_samples,
+        elapsed_seconds=elapsed_seconds,
+    )
+    _log(
+        f"{run_name}: {fraction:.1%} complete | "
+        f"sequences {completed_sequences}/{total_sequences}, "
+        f"prefixes {completed_prefixes}/{total_prefixes}, "
+        f"OTD samples {completed_samples}/{total_samples}, "
+        f"rollout-event budget {completed_rollout_event_budget}/{total_rollout_event_budget} | "
+        f"elapsed {_format_duration(elapsed_seconds)}, ETA {_format_duration(eta)}"
+    )
+
+
 def _summary_stats(values: Sequence[float]) -> tuple[float, float]:
     finite_values = [float(value) for value in values if math.isfinite(float(value))]
     if not finite_values:
@@ -535,7 +597,7 @@ def _future_event_count(args: argparse.Namespace, true_events: Sequence[Event], 
         return 0
     if args.max_future_events is None or int(args.max_future_events) <= 0:
         return remaining
-    return int(args.max_future_events)
+    return min(remaining, int(args.max_future_events))
 
 
 def _prefix_lengths(args: argparse.Namespace, true_events: Sequence[Event]) -> list[int]:
@@ -543,9 +605,55 @@ def _prefix_lengths(args: argparse.Namespace, true_events: Sequence[Event]) -> l
     if max_prefix < args.min_prefix_events:
         return []
     prefix_lengths = list(range(int(args.min_prefix_events), max_prefix + 1))
+    prefix_stride = max(1, int(args.prefix_stride))
+    if prefix_stride > 1 and prefix_lengths:
+        last_prefix = prefix_lengths[-1]
+        prefix_lengths = prefix_lengths[::prefix_stride]
+        if prefix_lengths[-1] != last_prefix:
+            prefix_lengths.append(last_prefix)
+
     if args.max_prefixes_per_sequence is not None:
-        prefix_lengths = prefix_lengths[: int(args.max_prefixes_per_sequence)]
+        max_prefix_count = int(args.max_prefixes_per_sequence)
+        if max_prefix_count <= 0:
+            return []
+        if len(prefix_lengths) > max_prefix_count:
+            if args.prefix_subset_strategy == "first":
+                prefix_lengths = prefix_lengths[:max_prefix_count]
+            else:
+                selected_indices = np.linspace(
+                    0,
+                    len(prefix_lengths) - 1,
+                    num=max_prefix_count,
+                    dtype=int,
+                )
+                prefix_lengths = [
+                    prefix_lengths[index]
+                    for index in sorted(set(int(index) for index in selected_indices))
+                ]
     return prefix_lengths
+
+
+def _prefix_work_for_records(
+    *,
+    args: argparse.Namespace,
+    records: Sequence[VitalSignEasyTPPSequenceRecord],
+    mark_encoder: DiscreteMarkEncoder,
+) -> tuple[int, int, int]:
+    total_prefixes = 0
+    total_rollout_event_budget = 0
+    for record in records:
+        true_events = _easy_record_events(record=record, mark_encoder=mark_encoder)
+        for prefix_len in _prefix_lengths(args, true_events):
+            future_count = _future_event_count(args, true_events, prefix_len)
+            if future_count <= 0:
+                continue
+            total_prefixes += 1
+            total_rollout_event_budget += int(future_count) * int(args.num_samples)
+    return (
+        total_prefixes,
+        total_prefixes * int(args.num_samples),
+        total_rollout_event_budget,
+    )
 
 
 def _first_event_pool(easy_bundle: VitalSignEasyTPPDatasetBundle) -> list[tuple[float, int]]:
@@ -873,6 +981,24 @@ def _evaluate_easy_model(
     first_event_pool = _first_event_pool(context.easy_bundle)
     rng = random.Random(args.seed)
     rows: list[dict[str, Any]] = []
+    total_prefixes, total_samples, total_rollout_event_budget = _prefix_work_for_records(
+        args=args,
+        records=context.easy_records,
+        mark_encoder=context.mark_encoder,
+    )
+    total_sequences = len(context.easy_records)
+    started_at = time.perf_counter()
+    completed_prefixes = 0
+    completed_samples = 0
+    completed_rollout_event_budget = 0
+    last_sample_log = 0
+    sequence_interval = max(1, int(args.progress_every))
+    sample_interval = max(0, int(args.progress_sample_interval))
+    _log(
+        f"{spec.run_name}: starting EasyTPP OTD evaluation with "
+        f"{total_sequences} sequences, {total_prefixes} prefixes, "
+        f"{total_samples} Monte Carlo OTD samples."
+    )
 
     for sequence_index, record in enumerate(context.easy_records):
         true_events = _easy_record_events(record=record, mark_encoder=context.mark_encoder)
@@ -911,8 +1037,42 @@ def _evaluate_easy_model(
                         result=result,
                     )
                 )
-        if (sequence_index + 1) % int(args.progress_every) == 0:
-            print(f"{spec.run_name}: evaluated {sequence_index + 1} test sequences.")
+                completed_samples += 1
+                completed_rollout_event_budget += int(future_count)
+                if (
+                    sample_interval > 0
+                    and completed_samples - last_sample_log >= sample_interval
+                ):
+                    _log_model_progress(
+                        run_name=spec.run_name,
+                        completed_sequences=sequence_index,
+                        total_sequences=total_sequences,
+                        completed_prefixes=completed_prefixes,
+                        total_prefixes=total_prefixes,
+                        completed_samples=completed_samples,
+                        total_samples=total_samples,
+                        completed_rollout_event_budget=completed_rollout_event_budget,
+                        total_rollout_event_budget=total_rollout_event_budget,
+                        started_at=started_at,
+                    )
+                    last_sample_log = completed_samples
+            completed_prefixes += 1
+        if (
+            (sequence_index + 1) % sequence_interval == 0
+            or (sequence_index + 1) == total_sequences
+        ):
+            _log_model_progress(
+                run_name=spec.run_name,
+                completed_sequences=sequence_index + 1,
+                total_sequences=total_sequences,
+                completed_prefixes=completed_prefixes,
+                total_prefixes=total_prefixes,
+                completed_samples=completed_samples,
+                total_samples=total_samples,
+                completed_rollout_event_budget=completed_rollout_event_budget,
+                total_rollout_event_budget=total_rollout_event_budget,
+                started_at=started_at,
+            )
     return rows
 
 
@@ -928,6 +1088,24 @@ def _evaluate_flex_model(
     flex_records = _flex_records_by_key(flex_bundle, args.split)
     flex_dataset = flex_bundle.get_dataset(args.split)
     rows: list[dict[str, Any]] = []
+    total_prefixes, total_samples, total_rollout_event_budget = _prefix_work_for_records(
+        args=args,
+        records=context.easy_records,
+        mark_encoder=context.mark_encoder,
+    )
+    total_sequences = len(context.easy_records)
+    started_at = time.perf_counter()
+    completed_prefixes = 0
+    completed_samples = 0
+    completed_rollout_event_budget = 0
+    last_sample_log = 0
+    sequence_interval = max(1, int(args.progress_every))
+    sample_interval = max(0, int(args.progress_sample_interval))
+    _log(
+        f"{spec.run_name}: starting FlexTPP OTD evaluation with "
+        f"{total_sequences} sequences, {total_prefixes} prefixes, "
+        f"{total_samples} Monte Carlo OTD samples."
+    )
 
     for sequence_index, easy_record in enumerate(context.easy_records):
         flex_record = flex_records.get(_easy_record_key(easy_record))
@@ -983,8 +1161,42 @@ def _evaluate_flex_model(
                         result=result,
                     )
                 )
-        if (sequence_index + 1) % int(args.progress_every) == 0:
-            print(f"{spec.run_name}: evaluated {sequence_index + 1} test sequences.")
+                completed_samples += 1
+                completed_rollout_event_budget += int(future_count)
+                if (
+                    sample_interval > 0
+                    and completed_samples - last_sample_log >= sample_interval
+                ):
+                    _log_model_progress(
+                        run_name=spec.run_name,
+                        completed_sequences=sequence_index,
+                        total_sequences=total_sequences,
+                        completed_prefixes=completed_prefixes,
+                        total_prefixes=total_prefixes,
+                        completed_samples=completed_samples,
+                        total_samples=total_samples,
+                        completed_rollout_event_budget=completed_rollout_event_budget,
+                        total_rollout_event_budget=total_rollout_event_budget,
+                        started_at=started_at,
+                    )
+                    last_sample_log = completed_samples
+            completed_prefixes += 1
+        if (
+            (sequence_index + 1) % sequence_interval == 0
+            or (sequence_index + 1) == total_sequences
+        ):
+            _log_model_progress(
+                run_name=spec.run_name,
+                completed_sequences=sequence_index + 1,
+                total_sequences=total_sequences,
+                completed_prefixes=completed_prefixes,
+                total_prefixes=total_prefixes,
+                completed_samples=completed_samples,
+                total_samples=total_samples,
+                completed_rollout_event_budget=completed_rollout_event_budget,
+                total_rollout_event_budget=total_rollout_event_budget,
+                started_at=started_at,
+            )
     return rows
 
 
@@ -1025,6 +1237,8 @@ def _detail_row(
 def _evaluate_model(
     *,
     spec: ModelSpec,
+    model_index: int,
+    total_models: int,
     context: EvaluationContext,
     args: argparse.Namespace,
     device: torch.device,
@@ -1032,7 +1246,10 @@ def _evaluate_model(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     started_at = datetime.datetime.now()
     try:
-        print(f"Evaluating {spec.run_name} [{spec.family}/{spec.variant}] ...")
+        _log(
+            f"Evaluating model {model_index}/{total_models}: "
+            f"{spec.run_name} [{spec.family}/{spec.variant}]"
+        )
         if spec.family.lower() == "easytpp":
             detail_rows = _evaluate_easy_model(
                 spec=spec,
@@ -1058,7 +1275,7 @@ def _evaluate_model(
             status="success",
             error_message="",
         )
-        print(f"Finished {spec.run_name}: mean OTD={summary_row['otd_total_mean']:.4f}.")
+        _log(f"Finished {spec.run_name}: mean OTD={summary_row['otd_total_mean']:.4f}.")
         return detail_rows, summary_row
     except Exception as exc:
         traceback.print_exc()
@@ -1148,7 +1365,7 @@ def _plot_results(*, output_dir: Path, detail_path: Path, summary_path: Path) ->
         import matplotlib.pyplot as plt
         import pandas as pd
     except Exception as exc:
-        print(f"Skipping plots because plotting dependencies could not be imported: {exc}")
+        _log(f"Skipping plots because plotting dependencies could not be imported: {exc}")
         return []
 
     detail_df = pd.read_csv(detail_path)
@@ -1305,7 +1522,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum rollout length per prefix; use 0 to compare against all remaining events.",
     )
     parser.add_argument("--min_prefix_events", type=int, default=0)
+    parser.add_argument(
+        "--prefix_stride",
+        type=int,
+        default=1,
+        help=(
+            "Evaluate every Nth prefix within each sequence, while still including "
+            "the final prefix. Increase this for a direct runtime reduction."
+        ),
+    )
     parser.add_argument("--max_prefixes_per_sequence", type=int, default=None)
+    parser.add_argument(
+        "--prefix_subset_strategy",
+        choices=("evenly_spaced", "first"),
+        default="evenly_spaced",
+        help=(
+            "When --max_prefixes_per_sequence is set, choose prefixes across the "
+            "whole day or take only the earliest prefixes."
+        ),
+    )
     parser.add_argument("--max_sequences", type=int, default=None)
     parser.add_argument(
         "--use_saved_datasets",
@@ -1333,6 +1568,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--easy_thinning_num_samples_boundary", type=int, default=5)
     parser.add_argument("--easy_thinning_dtime_max", type=float, default=24.0)
     parser.add_argument("--progress_every", type=int, default=50)
+    parser.add_argument(
+        "--progress_sample_interval",
+        type=int,
+        default=250,
+        help=(
+            "Log model progress every N completed Monte Carlo OTD samples. "
+            "Set to 0 to disable sample-interval progress logs."
+        ),
+    )
     parser.add_argument("--skip_plots", action="store_true")
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb_project", default="vital_sign_tpp_comparison")
@@ -1351,8 +1595,8 @@ def main() -> int:
     if output_dir is None:
         output_dir = _repo_root() / DEFAULT_OUTPUT_DIR
     device = _device_from_args(args)
-    print(f"Using comparison summary: {comparison_summary_path}")
-    print(f"Using device: {device}")
+    _log(f"Using comparison summary: {comparison_summary_path}")
+    _log(f"Using device: {device}")
 
     model_specs = _load_model_specs(
         comparison_summary_path=comparison_summary_path,
@@ -1361,12 +1605,25 @@ def main() -> int:
     )
     context = _build_evaluation_context(args=args, model_specs=model_specs)
     otd_config = _make_otd_config(args, default_tau=context.default_tau)
+    total_prefixes, samples_per_model, rollout_event_budget_per_model = _prefix_work_for_records(
+        args=args,
+        records=context.easy_records,
+        mark_encoder=context.mark_encoder,
+    )
+    _log(
+        f"Prepared OTD evaluation for {len(model_specs)} models on "
+        f"{len(context.easy_records)} canonical {args.split} sequences: "
+        f"{total_prefixes} prefixes/model, {samples_per_model} OTD samples/model, "
+        f"{rollout_event_budget_per_model} rollout-event budget/model."
+    )
 
     all_detail_rows: list[dict[str, Any]] = []
     summary_rows: list[dict[str, Any]] = []
-    for spec in model_specs:
+    for model_index, spec in enumerate(model_specs, start=1):
         detail_rows, summary_row = _evaluate_model(
             spec=spec,
+            model_index=model_index,
+            total_models=len(model_specs),
             context=context,
             args=args,
             device=device,
@@ -1403,10 +1660,10 @@ def main() -> int:
         plot_paths=plot_paths,
         summary_rows=summary_rows,
     )
-    print(f"OTD detail rows saved to {detail_path}")
-    print(f"OTD summary saved to {summary_path}")
+    _log(f"OTD detail rows saved to {detail_path}")
+    _log(f"OTD summary saved to {summary_path}")
     for plot_path in plot_paths:
-        print(f"Plot saved to {plot_path}")
+        _log(f"Plot saved to {plot_path}")
     return 1 if any(row["status"] == "failed" for row in summary_rows) else 0
 
 
