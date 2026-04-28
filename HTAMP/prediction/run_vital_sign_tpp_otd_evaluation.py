@@ -363,7 +363,16 @@ def _build_evaluation_context(
     )
     easy_records = easy_bundle.get_raw_records(args.split)
     if args.max_sequences is not None:
-        easy_records = easy_records[: args.max_sequences]
+        max_sequences = int(args.max_sequences)
+        if max_sequences < 0:
+            raise ValueError("max_sequences must be non-negative when provided.")
+        if args.sequence_subset_strategy == "random":
+            rng = random.Random(int(args.seed))
+            easy_records = list(easy_records)
+            rng.shuffle(easy_records)
+            easy_records = easy_records[:max_sequences]
+        else:
+            easy_records = easy_records[:max_sequences]
     mark_encoder = DiscreteMarkEncoder(easy_bundle.metadata)
     time_scales, default_tau = _build_time_scales(
         easy_bundle=easy_bundle,
@@ -1542,6 +1551,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--max_sequences", type=int, default=None)
+    parser.add_argument(
+        "--sequence_subset_strategy",
+        choices=("first", "random"),
+        default="first",
+        help=(
+            "When --max_sequences is set, choose the first N canonical sequences "
+            "or a reproducible random subset controlled by --seed."
+        ),
+    )
     parser.add_argument(
         "--use_saved_datasets",
         action=argparse.BooleanOptionalAction,
