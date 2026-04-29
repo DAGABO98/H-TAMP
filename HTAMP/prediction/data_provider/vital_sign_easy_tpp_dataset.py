@@ -36,6 +36,7 @@ WORKFLOW_IGNORED_CONFIG_FIELDS = (
     "save_data",
     "use_saved_request_data",
     "use_saved_dataset",
+    "event_type_mark_mode",
 )
 
 
@@ -93,12 +94,19 @@ def _components_for_task(
     return (components[0],)
 
 
+def _uses_enhanced_marks(dataset_config: VitalSignEasyTPPDatasetConfig) -> bool:
+    return dataset_config.mark_label_mode != "task_only"
+
+
 def _mark_name(
     *,
     task_name: str,
     component_labels: Sequence[tuple[str, str]],
     mark_label_mode: str,
 ) -> str:
+    if mark_label_mode == "task_only":
+        return task_name
+
     if len(component_labels) > 1:
         label_suffix = "__".join(
             f"{component_name}_{label_name}"
@@ -273,13 +281,17 @@ class VitalSignEasyTPPDataManager:
                 save_data=False
             )
         )
-        component_by_task = {
-            task_name: _components_for_task(
-                task_name=task_name,
-                dataset_config=self.dataset_config,
-            )
-            for task_name in self.dataset_config.included_tasks
-        }
+        component_by_task = (
+            {
+                task_name: _components_for_task(
+                    task_name=task_name,
+                    dataset_config=self.dataset_config,
+                )
+                for task_name in self.dataset_config.included_tasks
+            }
+            if _uses_enhanced_marks(self.dataset_config)
+            else {task_name: tuple() for task_name in self.dataset_config.included_tasks}
+        )
         thresholds = self._build_thresholds(
             split_records=sequence_manager.split_records,
             component_by_task=component_by_task,
@@ -309,6 +321,11 @@ class VitalSignEasyTPPDataManager:
         component_by_task: Mapping[str, Sequence[str]],
     ) -> dict[str, dict[str, tuple[float, float]]]:
         thresholds: dict[str, dict[str, tuple[float, float]]] = {}
+        if not _uses_enhanced_marks(self.dataset_config):
+            return {
+                task_name: {}
+                for task_name in self.dataset_config.included_tasks
+            }
         if self.dataset_config.label_strategy == "threshold":
             for task_name, component_names in component_by_task.items():
                 for component_name in component_names:
@@ -364,6 +381,12 @@ class VitalSignEasyTPPDataManager:
         component_by_task: Mapping[str, Sequence[str]],
     ) -> list[str]:
         mark_names: list[str] = []
+        if not _uses_enhanced_marks(self.dataset_config):
+            mark_names.extend(self.dataset_config.included_tasks)
+            if self.dataset_config.include_eos_event:
+                mark_names.append(EOS_EVENT_TYPE_NAME)
+            return mark_names
+
         for task_name in self.dataset_config.included_tasks:
             component_names = component_by_task[task_name]
             for component_labels in _joint_mark_label_combinations(
@@ -390,6 +413,9 @@ class VitalSignEasyTPPDataManager:
         thresholds: Mapping[str, Mapping[str, tuple[float, float]]],
     ) -> str | None:
         task_name = str(raw_event.get("task_name", ""))
+        if not _uses_enhanced_marks(self.dataset_config):
+            return task_name if task_name in self.dataset_config.included_tasks else None
+
         component_names = component_by_task.get(task_name)
         if component_names is None:
             return None
@@ -529,6 +555,9 @@ class VitalSignEasyTPPDataManager:
             "eos_event_type_name": EOS_EVENT_TYPE_NAME,
             "include_eos_event": bool(self.dataset_config.include_eos_event),
             "label_strategy": self.dataset_config.label_strategy,
+            "mark_schema": (
+                "enhanced" if _uses_enhanced_marks(self.dataset_config) else "task_only"
+            ),
             "label_names": list(self.dataset_config.label_names),
             "missing_label": self.dataset_config.missing_label,
             "mark_label_mode": self.dataset_config.mark_label_mode,

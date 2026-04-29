@@ -36,6 +36,12 @@ SUPPORTED_EASY_TPP_MODELS = (
     "WSMTHP",
 )
 DEFAULT_FLEX_ORDERS = ("ST", "STP")
+DEFAULT_FLEX_ST_MARK_SCHEMAS = ("standard", "enhanced")
+SUPPORTED_FLEX_ST_MARK_SCHEMAS = ("standard", "enhanced")
+DEFAULT_FLEX_CONDITIONING_MODES = ("conditioned", "no_conditioning")
+SUPPORTED_FLEX_CONDITIONING_MODES = ("conditioned", "no_conditioning")
+DEFAULT_EASY_MARK_SCHEMAS = ("enhanced", "plain")
+SUPPORTED_EASY_MARK_SCHEMAS = ("enhanced", "plain")
 DEFAULT_SELECTION_METRIC = "val_nll"
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 BASE_SUMMARY_FIELDS = [
@@ -289,6 +295,183 @@ def _safe_name(value: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in value.lower()).strip("_")
 
 
+def _parse_easy_mark_schemas(raw_value: str) -> tuple[str, ...]:
+    aliases = {
+        "enhanced_marks": "enhanced",
+        "enhanced": "enhanced",
+        "labels": "enhanced",
+        "labeled": "enhanced",
+        "plain": "plain",
+        "task_only": "plain",
+        "no_labels": "plain",
+        "unlabeled": "plain",
+    }
+    schemas: list[str] = []
+    seen: set[str] = set()
+    for raw_schema in _parse_csv_strings(raw_value):
+        schema = aliases.get(raw_schema.strip().lower())
+        if schema is None:
+            raise ValueError(
+                f"Unsupported EasyTPP mark schema '{raw_schema}'. "
+                f"Expected one of {SUPPORTED_EASY_MARK_SCHEMAS}, with aliases "
+                "'task_only' or 'no_labels' for plain."
+            )
+        if schema in seen:
+            continue
+        schemas.append(schema)
+        seen.add(schema)
+    return tuple(schemas)
+
+
+def _parse_flex_st_mark_schemas(raw_value: str) -> tuple[str, ...]:
+    aliases = {
+        "standard": "standard",
+        "plain": "standard",
+        "task": "standard",
+        "task_only": "standard",
+        "base_task": "standard",
+        "enhanced": "enhanced",
+        "enhanced_marks": "enhanced",
+        "labels": "enhanced",
+        "labeled": "enhanced",
+    }
+    schemas: list[str] = []
+    seen: set[str] = set()
+    for raw_schema in _parse_csv_strings(raw_value):
+        schema = aliases.get(raw_schema.strip().lower())
+        if schema is None:
+            raise ValueError(
+                f"Unsupported FlexTPP ST mark schema '{raw_schema}'. "
+                f"Expected one of {SUPPORTED_FLEX_ST_MARK_SCHEMAS}, with aliases "
+                "'plain' for standard and 'labels' for enhanced."
+            )
+        if schema in seen:
+            continue
+        schemas.append(schema)
+        seen.add(schema)
+    return tuple(schemas)
+
+
+def _parse_flex_conditioning_modes(raw_value: str) -> tuple[str, ...]:
+    aliases = {
+        "conditioned": "conditioned",
+        "with_conditioning": "conditioned",
+        "conditioning": "conditioned",
+        "previous_day": "conditioned",
+        "previous_day_summary": "conditioned",
+        "no_conditioning": "no_conditioning",
+        "unconditioned": "no_conditioning",
+        "without_conditioning": "no_conditioning",
+        "none": "no_conditioning",
+        "off": "no_conditioning",
+    }
+    modes: list[str] = []
+    seen: set[str] = set()
+    for raw_mode in _parse_csv_strings(raw_value):
+        mode = aliases.get(raw_mode.strip().lower())
+        if mode is None:
+            raise ValueError(
+                f"Unsupported FlexTPP conditioning mode '{raw_mode}'. "
+                f"Expected one of {SUPPORTED_FLEX_CONDITIONING_MODES}, with aliases "
+                "'unconditioned' or 'none' for no_conditioning."
+            )
+        if mode in seen:
+            continue
+        modes.append(mode)
+        seen.add(mode)
+    return tuple(modes)
+
+
+def _flex_st_schema_suffix(mark_schema: str) -> str:
+    return "enhanced_marks" if mark_schema == "enhanced" else "standard_marks"
+
+
+def _flex_conditioning_suffix(conditioning_mode: str) -> str:
+    return "no_conditioning" if conditioning_mode == "no_conditioning" else "conditioned"
+
+
+def _easy_schema_suffix(mark_schema: str) -> str:
+    return "enhanced_marks" if mark_schema == "enhanced" else "plain_marks"
+
+
+def _apply_flex_event_type_schema(
+    payload: Mapping[str, Any],
+    *,
+    order: str,
+    mark_schema: str,
+) -> dict[str, Any]:
+    updated_payload = copy.deepcopy(dict(payload))
+    dataset_config = updated_payload.setdefault("dataset_config", {})
+    if mark_schema == "standard":
+        dataset_config["event_type_mark_mode"] = "task"
+    elif mark_schema == "enhanced":
+        if order != "ST":
+            raise ValueError("Enhanced FlexTPP marks are currently defined for ST jobs.")
+        dataset_config["event_type_mark_mode"] = "task_label"
+        dataset_dir = Path(str(dataset_config.get("dataset_dir", "data/prediction/vital_sign_tpp_dataset")))
+        dataset_config["dataset_dir"] = str(dataset_dir / f"flex_st_{_flex_st_schema_suffix(mark_schema)}")
+    else:
+        raise ValueError(f"Unsupported FlexTPP ST mark schema '{mark_schema}'.")
+    return updated_payload
+
+
+def _apply_flex_conditioning_mode(
+    payload: Mapping[str, Any],
+    *,
+    conditioning_mode: str,
+) -> dict[str, Any]:
+    updated_payload = copy.deepcopy(dict(payload))
+    dataset_config = updated_payload.setdefault("dataset_config", {})
+    if conditioning_mode == "conditioned":
+        dataset_config["use_previous_day_summary_conditioning"] = True
+    elif conditioning_mode == "no_conditioning":
+        dataset_config["use_previous_day_summary_conditioning"] = False
+        dataset_dir = Path(str(dataset_config.get("dataset_dir", "data/prediction/vital_sign_tpp_dataset")))
+        dataset_config["dataset_dir"] = str(dataset_dir / _flex_conditioning_suffix(conditioning_mode))
+    else:
+        raise ValueError(f"Unsupported FlexTPP conditioning mode '{conditioning_mode}'.")
+    return updated_payload
+
+
+def _apply_flex_dataset_variant(
+    payload: Mapping[str, Any],
+    *,
+    order: str,
+    mark_schema: str,
+    conditioning_mode: str,
+) -> dict[str, Any]:
+    return _apply_flex_conditioning_mode(
+        _apply_flex_event_type_schema(
+            payload,
+            order=order,
+            mark_schema=mark_schema,
+        ),
+        conditioning_mode=conditioning_mode,
+    )
+
+
+def _apply_easy_mark_schema(
+    payload: Mapping[str, Any],
+    *,
+    mark_schema: str,
+    separate_dataset_dir: bool,
+) -> dict[str, Any]:
+    updated_payload = copy.deepcopy(dict(payload))
+    dataset_config = updated_payload.setdefault("dataset_config", {})
+    if mark_schema == "plain":
+        dataset_config["mark_label_mode"] = "task_only"
+    elif mark_schema == "enhanced":
+        dataset_config.setdefault("mark_label_mode", "task_label")
+    else:
+        raise ValueError(f"Unsupported EasyTPP mark schema '{mark_schema}'.")
+
+    if separate_dataset_dir:
+        dataset_dir = Path(str(dataset_config.get("dataset_dir", "data/prediction/vital_sign_easy_tpp_dataset")))
+        dataset_config["dataset_dir"] = str(dataset_dir / _easy_schema_suffix(mark_schema))
+
+    return updated_payload
+
+
 def _log_dir(args: argparse.Namespace) -> Path:
     return Path(args.stf_log_dir or os.getenv("STF_LOG_DIR", "./data/STF_LOG_DIR"))
 
@@ -392,10 +575,27 @@ def _build_flex_job_payload(
     args: argparse.Namespace,
     run_prefix: str,
     order: str,
+    mark_schema: str,
+    conditioning_mode: str,
 ) -> ComparisonJob:
-    run_name = f"{run_prefix}_flex_tpp_{order.lower()}"
+    schema_suffix = (
+        f"_{_flex_st_schema_suffix(mark_schema)}"
+        if order == "ST" and mark_schema == "enhanced"
+        else ""
+    )
+    conditioning_suffix = (
+        f"_{_flex_conditioning_suffix(conditioning_mode)}"
+        if conditioning_mode == "no_conditioning"
+        else ""
+    )
+    run_name = f"{run_prefix}_flex_tpp_{order.lower()}{schema_suffix}{conditioning_suffix}"
     payload = _apply_dataset_training_flags(
-        copy.deepcopy(dict(base_payload)),
+        _apply_flex_dataset_variant(
+            base_payload,
+            order=order,
+            mark_schema=mark_schema,
+            conditioning_mode=conditioning_mode,
+        ),
         use_prepared_dataset=args.prepare_datasets,
     )
     payload["model_config"]["order"] = order
@@ -413,7 +613,14 @@ def _build_flex_job_payload(
     return ComparisonJob(
         family="FlexTPP",
         model_name="FlexTPP",
-        variant=order,
+        variant="_".join(
+            variant_part
+            for variant_part in (
+                f"{order}_enhanced" if order == "ST" and mark_schema == "enhanced" else order,
+                "no_conditioning" if conditioning_mode == "no_conditioning" else "",
+            )
+            if variant_part
+        ),
         run_name=run_name,
         config_payload=payload,
         module_name="HTAMP.prediction.vital_sign_tpp_predictor",
@@ -426,10 +633,17 @@ def _build_easy_job_payload(
     args: argparse.Namespace,
     run_prefix: str,
     model_id: str,
+    mark_schema: str,
+    separate_dataset_dir: bool,
 ) -> ComparisonJob:
-    run_name = f"{run_prefix}_easy_tpp_{_safe_name(model_id)}"
+    schema_suffix = _easy_schema_suffix(mark_schema)
+    run_name = f"{run_prefix}_easy_tpp_{_safe_name(model_id)}_{schema_suffix}"
     payload = _apply_dataset_training_flags(
-        copy.deepcopy(dict(base_payload)),
+        _apply_easy_mark_schema(
+            base_payload,
+            mark_schema=mark_schema,
+            separate_dataset_dir=separate_dataset_dir,
+        ),
         use_prepared_dataset=args.prepare_datasets,
     )
     payload["model_config"]["model_id"] = model_id
@@ -447,7 +661,7 @@ def _build_easy_job_payload(
     return ComparisonJob(
         family="EasyTPP",
         model_name=model_id,
-        variant=model_id,
+        variant=f"{model_id}_{mark_schema}",
         run_name=run_name,
         config_payload=payload,
         module_name="HTAMP.prediction.vital_sign_easy_tpp_predictor",
@@ -460,15 +674,23 @@ def _build_jobs(args: argparse.Namespace, run_prefix: str) -> list[ComparisonJob
     jobs: list[ComparisonJob] = []
 
     if not args.skip_flex:
-        for order in _parse_csv_strings(args.flex_orders, allowed=DEFAULT_FLEX_ORDERS):
-            jobs.append(
-                _build_flex_job_payload(
-                    base_payload=flex_payload,
-                    args=args,
-                    run_prefix=run_prefix,
-                    order=order,
-                )
-            )
+        flex_orders = _parse_csv_strings(args.flex_orders, allowed=DEFAULT_FLEX_ORDERS)
+        flex_st_mark_schemas = _parse_flex_st_mark_schemas(args.flex_st_mark_schemas)
+        flex_conditioning_modes = _parse_flex_conditioning_modes(args.flex_conditioning_modes)
+        for order in flex_orders:
+            order_mark_schemas = flex_st_mark_schemas if order == "ST" else ("standard",)
+            for mark_schema in order_mark_schemas:
+                for conditioning_mode in flex_conditioning_modes:
+                    jobs.append(
+                        _build_flex_job_payload(
+                            base_payload=flex_payload,
+                            args=args,
+                            run_prefix=run_prefix,
+                            order=order,
+                            mark_schema=mark_schema,
+                            conditioning_mode=conditioning_mode,
+                        )
+                    )
 
     if not args.skip_easy:
         easy_models = (
@@ -476,15 +698,20 @@ def _build_jobs(args: argparse.Namespace, run_prefix: str) -> list[ComparisonJob
             if args.easy_models.strip().lower() == "all"
             else _parse_csv_strings(args.easy_models, allowed=SUPPORTED_EASY_TPP_MODELS)
         )
-        for model_id in easy_models:
-            jobs.append(
-                _build_easy_job_payload(
-                    base_payload=easy_payload,
-                    args=args,
-                    run_prefix=run_prefix,
-                    model_id=model_id,
+        easy_mark_schemas = _parse_easy_mark_schemas(args.easy_mark_schemas)
+        separate_easy_dataset_dir = len(easy_mark_schemas) > 1
+        for mark_schema in easy_mark_schemas:
+            for model_id in easy_models:
+                jobs.append(
+                    _build_easy_job_payload(
+                        base_payload=easy_payload,
+                        args=args,
+                        run_prefix=run_prefix,
+                        model_id=model_id,
+                        mark_schema=mark_schema,
+                        separate_dataset_dir=separate_easy_dataset_dir,
+                    )
                 )
-            )
 
     if not jobs:
         raise ValueError("No jobs were selected. Check --skip_flex/--skip_easy settings.")
@@ -499,6 +726,19 @@ def _build_prepare_payload(base_payload: Mapping[str, Any]) -> dict[str, Any]:
     dataset_config["save_data"] = True
     payload.setdefault("model_config", {})["wandb"] = False
     return payload
+
+
+def _selected_flex_dataset_variants(args: argparse.Namespace) -> tuple[tuple[str, str], ...]:
+    flex_orders = _parse_csv_strings(args.flex_orders, allowed=DEFAULT_FLEX_ORDERS)
+    flex_st_mark_schemas = _parse_flex_st_mark_schemas(args.flex_st_mark_schemas)
+    flex_conditioning_modes = _parse_flex_conditioning_modes(args.flex_conditioning_modes)
+    variants: list[tuple[str, str]] = []
+
+    if "STP" in flex_orders or ("ST" in flex_orders and "standard" in flex_st_mark_schemas):
+        variants.extend(("standard", conditioning_mode) for conditioning_mode in flex_conditioning_modes)
+    if "ST" in flex_orders and "enhanced" in flex_st_mark_schemas:
+        variants.extend(("enhanced", conditioning_mode) for conditioning_mode in flex_conditioning_modes)
+    return tuple(variants)
 
 
 def _build_process_env(
@@ -569,22 +809,44 @@ def _prepare_datasets(args: argparse.Namespace, run_prefix: str) -> None:
         return
 
     if not args.skip_flex:
-        _run_dataset_prepare(
-            args,
-            label="FlexTPP",
-            module_name="HTAMP.prediction.data_provider.vital_sign_tpp_dataset",
-            payload=_build_prepare_payload(_load_json(args.flex_config_path)),
-            run_prefix=run_prefix,
-        )
+        flex_payload = _load_json(args.flex_config_path)
+        for mark_schema, conditioning_mode in _selected_flex_dataset_variants(args):
+            _run_dataset_prepare(
+                args,
+                label=(
+                    f"FlexTPP-{_flex_st_schema_suffix(mark_schema)}-"
+                    f"{_flex_conditioning_suffix(conditioning_mode)}"
+                ),
+                module_name="HTAMP.prediction.data_provider.vital_sign_tpp_dataset",
+                payload=_build_prepare_payload(
+                    _apply_flex_dataset_variant(
+                        flex_payload,
+                        order="ST",
+                        mark_schema=mark_schema,
+                        conditioning_mode=conditioning_mode,
+                    )
+                ),
+                run_prefix=run_prefix,
+            )
 
     if not args.skip_easy:
-        _run_dataset_prepare(
-            args,
-            label="EasyTPP",
-            module_name="HTAMP.prediction.data_provider.vital_sign_easy_tpp_dataset",
-            payload=_build_prepare_payload(_load_json(args.easy_config_path)),
-            run_prefix=run_prefix,
-        )
+        easy_payload = _load_json(args.easy_config_path)
+        easy_mark_schemas = _parse_easy_mark_schemas(args.easy_mark_schemas)
+        separate_easy_dataset_dir = len(easy_mark_schemas) > 1
+        for mark_schema in easy_mark_schemas:
+            _run_dataset_prepare(
+                args,
+                label=f"EasyTPP-{_easy_schema_suffix(mark_schema)}",
+                module_name="HTAMP.prediction.data_provider.vital_sign_easy_tpp_dataset",
+                payload=_build_prepare_payload(
+                    _apply_easy_mark_schema(
+                        easy_payload,
+                        mark_schema=mark_schema,
+                        separate_dataset_dir=separate_easy_dataset_dir,
+                    )
+                ),
+                run_prefix=run_prefix,
+            )
 
 
 def _read_metrics_summary(args: argparse.Namespace, run_name: str) -> dict[str, Any]:
@@ -882,9 +1144,37 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--easy_mark_schemas",
+        default=",".join(DEFAULT_EASY_MARK_SCHEMAS),
+        help=(
+            "Comma-separated EasyTPP mark schemas to train. "
+            "'enhanced' uses low/medium/high measurement labels; "
+            "'plain' uses only request task marks. Defaults to enhanced,plain."
+        ),
+    )
+    parser.add_argument(
         "--flex_orders",
         default=",".join(DEFAULT_FLEX_ORDERS),
         help="Comma-separated FlexTPP event orders. Defaults to ST,STP.",
+    )
+    parser.add_argument(
+        "--flex_st_mark_schemas",
+        default=",".join(DEFAULT_FLEX_ST_MARK_SCHEMAS),
+        help=(
+            "Comma-separated FlexTPP ST mark schemas to train. "
+            "'standard' uses base request task types; 'enhanced' uses "
+            "low/medium/high measurement labels in the categorical T mark. "
+            "Defaults to standard,enhanced. STP always uses standard event types."
+        ),
+    )
+    parser.add_argument(
+        "--flex_conditioning_modes",
+        default=",".join(DEFAULT_FLEX_CONDITIONING_MODES),
+        help=(
+            "Comma-separated FlexTPP conditioning modes to train. "
+            "'conditioned' uses previous-day summary conditioning; "
+            "'no_conditioning' disables it. Defaults to conditioned,no_conditioning."
+        ),
     )
     parser.add_argument("--skip_easy", action="store_true")
     parser.add_argument("--skip_flex", action="store_true")

@@ -36,7 +36,7 @@ SUPPORTED_EASY_TPP_MODELS = (
     "WSMTHP",
 )
 SUPPORTED_LABEL_STRATEGIES = ("quantile", "threshold")
-SUPPORTED_MARK_LABEL_MODES = ("task_label", "task_component_label")
+SUPPORTED_MARK_LABEL_MODES = ("task_label", "task_component_label", "task_only")
 DEFAULT_LABEL_NAMES = ("low", "medium", "high")
 
 
@@ -260,6 +260,7 @@ class VitalSignEasyTPPDatasetConfig(VitalSignTPPDatasetConfig):
             "missing_label",
             "drop_missing_measurement_events",
             "include_eos_event",
+            "event_type_mark_mode",
         ):
             payload.pop(field_name, None)
         payload["use_saved_dataset"] = False
