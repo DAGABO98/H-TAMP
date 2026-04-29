@@ -22,6 +22,19 @@ VALIDATION_SPLIT_STRATEGY_ALIASES = {
     "grouped_patients": "random_patients",
 }
 SUPPORTED_EVENT_ORDERS = ("ST", "STP")
+SUPPORTED_FLEX_EVENT_TYPE_MARK_MODES = ("task", "task_label", "task_component_label")
+SUPPORTED_LABEL_STRATEGIES = ("quantile", "threshold")
+DEFAULT_LABEL_NAMES = ("low", "medium", "high")
+FLEX_EVENT_TYPE_MARK_MODE_ALIASES = {
+    "standard": "task",
+    "plain": "task",
+    "task_only": "task",
+    "base_task": "task",
+    "enhanced": "task_label",
+    "enhanced_marks": "task_label",
+    "labels": "task_label",
+    "labeled": "task_label",
+}
 SUPPORTED_NON_LINEARITIES = (
     "ELU",
     "GELU",
@@ -186,6 +199,82 @@ def _normalize_tasks(raw_tasks: Sequence[str] | str | None) -> tuple[str, ...]:
     return tuple(normalized_tasks)
 
 
+def _default_label_component_by_task() -> dict[str, tuple[str, ...]]:
+    return {
+        "blood_pressure": ("systolic", "diastolic"),
+    }
+
+
+def _normalize_label_names(raw_label_names: Sequence[str] | None) -> tuple[str, str, str]:
+    label_names = DEFAULT_LABEL_NAMES if raw_label_names is None else tuple(raw_label_names)
+    if len(label_names) != 3:
+        raise ValueError("label_names must contain exactly three labels.")
+    normalized = tuple(str(label_name).strip().lower() for label_name in label_names)
+    if any(not label_name for label_name in normalized):
+        raise ValueError("label_names must not contain empty labels.")
+    if len(set(normalized)) != 3:
+        raise ValueError("label_names must contain three distinct labels.")
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_quantile_edges(raw_edges: Sequence[float]) -> tuple[float, float]:
+    if len(raw_edges) != 2:
+        raise ValueError("quantile_edges must contain exactly two numeric values.")
+    lower_edge, upper_edge = (float(raw_edges[0]), float(raw_edges[1]))
+    if not (0.0 < lower_edge < upper_edge < 1.0):
+        raise ValueError("quantile_edges must satisfy 0 < lower < upper < 1.")
+    return lower_edge, upper_edge
+
+
+def _normalize_mapping_dict(raw_value: Mapping[str, Any] | None) -> dict[str, Any]:
+    if raw_value is None:
+        return {}
+    return {
+        str(key): value
+        for key, value in dict(_coerce_mapping(value=raw_value, field_name="mapping")).items()
+    }
+
+
+def _normalize_component_names(raw_value: Any) -> tuple[str, ...]:
+    if isinstance(raw_value, str):
+        raw_components = [raw_value]
+    elif isinstance(raw_value, Sequence):
+        raw_components = list(raw_value)
+    else:
+        raise TypeError(
+            "label_component_by_task values must be a component name or a list of names."
+        )
+
+    component_names: list[str] = []
+    seen_components: set[str] = set()
+    for raw_component in raw_components:
+        component_name = str(raw_component).strip()
+        if not component_name:
+            continue
+        if component_name in seen_components:
+            continue
+        component_names.append(component_name)
+        seen_components.add(component_name)
+
+    if not component_names:
+        raise ValueError("label_component_by_task values must contain at least one component.")
+    return tuple(component_names)
+
+
+def _normalize_flex_event_type_mark_mode(raw_mode: str | None) -> str:
+    if raw_mode is None:
+        return "task"
+    normalized_mode = str(raw_mode).strip().lower()
+    normalized_mode = FLEX_EVENT_TYPE_MARK_MODE_ALIASES.get(normalized_mode, normalized_mode)
+    if normalized_mode not in SUPPORTED_FLEX_EVENT_TYPE_MARK_MODES:
+        raise ValueError(
+            f"Unsupported event_type_mark_mode '{raw_mode}'. "
+            f"Expected one of {SUPPORTED_FLEX_EVENT_TYPE_MARK_MODES}, or aliases "
+            "'standard'/'plain' and 'enhanced'."
+        )
+    return normalized_mode
+
+
 def _normalize_validation_split_strategy(raw_strategy: str | None) -> str:
     if raw_strategy is None:
         return "chronological_weeks"
@@ -245,6 +334,16 @@ class VitalSignTPPDatasetConfig:
     end_date: str = "2025-06-29"
     patient_id_col: str = "MRN"
     included_tasks: tuple[str, ...] = field(default_factory=lambda: tuple(SUPPORTED_VITAL_SIGN_TASKS))
+    event_type_mark_mode: str = "task"
+    label_strategy: str = "quantile"
+    label_names: tuple[str, str, str] = DEFAULT_LABEL_NAMES
+    quantile_edges: tuple[float, float] = (1.0 / 3.0, 2.0 / 3.0)
+    measurement_thresholds: dict[str, Any] = field(default_factory=dict)
+    label_component_by_task: dict[str, tuple[str, ...]] = field(
+        default_factory=_default_label_component_by_task
+    )
+    missing_label: str = "unknown"
+    drop_missing_measurement_events: bool = False
     train_ratio: float = 0.70
     val_ratio: float = 0.15
     test_iso_weeks: tuple[IsoWeek, ...] = field(default_factory=_default_test_iso_weeks)
@@ -288,6 +387,28 @@ class VitalSignTPPDatasetConfig:
         self.validation_split_seed = _normalize_validation_split_seed(
             raw_seed=self.validation_split_seed
         )
+        self.event_type_mark_mode = _normalize_flex_event_type_mark_mode(
+            self.event_type_mark_mode
+        )
+        self.label_strategy = str(self.label_strategy).strip().lower()
+        if self.label_strategy not in SUPPORTED_LABEL_STRATEGIES:
+            raise ValueError(
+                f"Unsupported label_strategy '{self.label_strategy}'. "
+                f"Expected one of {SUPPORTED_LABEL_STRATEGIES}."
+            )
+        self.label_names = _normalize_label_names(self.label_names)
+        self.quantile_edges = _normalize_quantile_edges(self.quantile_edges)
+        self.measurement_thresholds = _normalize_mapping_dict(self.measurement_thresholds)
+        self.label_component_by_task = {
+            str(task_name): _normalize_component_names(component_names)
+            for task_name, component_names in _normalize_mapping_dict(
+                self.label_component_by_task
+            ).items()
+        }
+        self.missing_label = str(self.missing_label).strip().lower()
+        if not self.missing_label:
+            raise ValueError("missing_label must not be empty.")
+        self.drop_missing_measurement_events = bool(self.drop_missing_measurement_events)
 
     @classmethod
     def from_dict(

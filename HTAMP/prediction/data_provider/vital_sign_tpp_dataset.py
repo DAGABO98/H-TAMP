@@ -5,6 +5,7 @@ import datetime
 import json
 import traceback
 from dataclasses import asdict, dataclass
+from itertools import product
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -52,6 +53,16 @@ WORKFLOW_IGNORED_CONFIG_FIELDS = (
     "use_saved_request_data",
     "use_saved_dataset",
 )
+STANDARD_EVENT_TYPE_MARK_CONFIG_FIELDS = (
+    "event_type_mark_mode",
+    "label_strategy",
+    "label_names",
+    "quantile_edges",
+    "measurement_thresholds",
+    "label_component_by_task",
+    "missing_label",
+    "drop_missing_measurement_events",
+)
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -80,6 +91,9 @@ def _dataset_config_snapshot(dataset_config: VitalSignTPPDatasetConfig) -> dict[
     payload = dataset_config.to_dict()
     for field_name in WORKFLOW_IGNORED_CONFIG_FIELDS:
         payload.pop(field_name, None)
+    if str(payload.get("event_type_mark_mode", "task")).strip().lower() == "task":
+        for field_name in STANDARD_EVENT_TYPE_MARK_CONFIG_FIELDS:
+            payload.pop(field_name, None)
     return _json_safe_value(payload)
 
 
@@ -124,6 +138,165 @@ def _task_property_columns(
     if include_time_features_as_properties:
         property_columns.extend((time_column, time_column) for time_column in TIME_COLUMNS)
     return property_columns
+
+
+def _as_finite_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(numeric_value):
+        return None
+    return numeric_value
+
+
+def _uses_enhanced_event_types(dataset_config: VitalSignTPPDatasetConfig) -> bool:
+    return str(getattr(dataset_config, "event_type_mark_mode", "task")).strip().lower() != "task"
+
+
+def _components_for_event_type_task(
+    *,
+    task_name: str,
+    dataset_config: VitalSignTPPDatasetConfig,
+) -> tuple[str, ...]:
+    configured_components = dataset_config.label_component_by_task.get(task_name)
+    if configured_components:
+        available_components = set(VITAL_OUTPUT_COMPONENTS.get(task_name, []))
+        for configured_component in configured_components:
+            if configured_component not in available_components:
+                raise ValueError(
+                    f"label_component_by_task for '{task_name}' references unsupported "
+                    f"component '{configured_component}'."
+                )
+        return tuple(configured_components)
+
+    components = tuple(VITAL_OUTPUT_COMPONENTS.get(task_name, []))
+    if not components:
+        raise ValueError(f"No vital measurement components are registered for '{task_name}'.")
+    return (components[0],)
+
+
+def _event_type_label_options(dataset_config: VitalSignTPPDatasetConfig) -> tuple[str, ...]:
+    if dataset_config.drop_missing_measurement_events:
+        return tuple(dataset_config.label_names)
+    return tuple(dataset_config.label_names) + (dataset_config.missing_label,)
+
+
+def _joint_event_type_label_combinations(
+    *,
+    component_names: Sequence[str],
+    label_options: Sequence[str],
+) -> list[list[tuple[str, str]]]:
+    return [
+        list(zip(component_names, label_combination))
+        for label_combination in product(label_options, repeat=len(component_names))
+    ]
+
+
+def _event_type_name(
+    *,
+    task_name: str,
+    component_labels: Sequence[tuple[str, str]],
+    event_type_mark_mode: str,
+) -> str:
+    if event_type_mark_mode == "task":
+        return task_name
+
+    if len(component_labels) > 1:
+        label_suffix = "__".join(
+            f"{component_name}_{label_name}"
+            for component_name, label_name in component_labels
+        )
+        return f"{task_name}__{label_suffix}"
+
+    if len(component_labels) != 1:
+        raise ValueError("component_labels must contain at least one component label.")
+
+    component_name, label_name = component_labels[0]
+    if event_type_mark_mode == "task_component_label":
+        return f"{task_name}__{component_name}__{label_name}"
+    return f"{task_name}__{label_name}"
+
+
+def _base_task_from_event_type_name(
+    *,
+    event_type_name: str,
+    included_tasks: Sequence[str],
+) -> str:
+    for task_name in sorted((str(task) for task in included_tasks), key=len, reverse=True):
+        if event_type_name == task_name or event_type_name.startswith(f"{task_name}__"):
+            return task_name
+    return str(event_type_name).split("__", 1)[0]
+
+
+def _parse_threshold_pair(raw_threshold: Any, *, field_name: str) -> tuple[float, float]:
+    if isinstance(raw_threshold, Mapping):
+        lower = raw_threshold.get("lower", raw_threshold.get("low"))
+        upper = raw_threshold.get("upper", raw_threshold.get("high"))
+        if lower is None or upper is None:
+            raise ValueError(
+                f"{field_name} threshold mappings must include lower/upper or low/high."
+            )
+        lower_threshold, upper_threshold = float(lower), float(upper)
+    else:
+        if len(raw_threshold) != 2:
+            raise ValueError(f"{field_name} thresholds must contain exactly two values.")
+        lower_threshold, upper_threshold = float(raw_threshold[0]), float(raw_threshold[1])
+
+    if not lower_threshold < upper_threshold:
+        raise ValueError(f"{field_name} thresholds must satisfy lower < upper.")
+    return lower_threshold, upper_threshold
+
+
+def _threshold_for_component(
+    *,
+    task_name: str,
+    component_name: str,
+    measurement_thresholds: Mapping[str, Any],
+) -> tuple[float, float] | None:
+    nested_thresholds = measurement_thresholds.get(task_name)
+    if isinstance(nested_thresholds, Mapping):
+        component_threshold = nested_thresholds.get(component_name)
+        if component_threshold is not None:
+            return _parse_threshold_pair(
+                component_threshold,
+                field_name=f"measurement_thresholds.{task_name}.{component_name}",
+            )
+
+    for key in (
+        f"{task_name}.{component_name}",
+        f"{task_name}__{component_name}",
+        f"{task_name}_{component_name}",
+        task_name,
+    ):
+        raw_threshold = measurement_thresholds.get(key)
+        if raw_threshold is not None:
+            return _parse_threshold_pair(
+                raw_threshold,
+                field_name=f"measurement_thresholds.{key}",
+            )
+    return None
+
+
+def _label_for_value(
+    *,
+    value: float | None,
+    lower_threshold: float,
+    upper_threshold: float,
+    label_names: tuple[str, str, str],
+    missing_label: str,
+) -> str:
+    if value is None:
+        return missing_label
+    if not lower_threshold < upper_threshold:
+        return label_names[1]
+    if value <= lower_threshold:
+        return label_names[0]
+    if value >= upper_threshold:
+        return label_names[2]
+    return label_names[1]
 
 
 def _chunk_indices(length: int, max_chunk_size: Optional[int]) -> list[tuple[int, int]]:
@@ -463,19 +636,213 @@ class VitalSignTPPDataManager:
             "val": val_segments_df,
             "test": test_segments_df,
         }
-        self.split_records = self._build_split_records(split_frames=split_frames, split_segments=split_segments)
-        self.metadata = self._build_metadata(request_metadata=request_data_manager.metadata)
+        event_type_context = self._build_event_type_context(split_frames=split_frames)
+        self.split_records = self._build_split_records(
+            split_frames=split_frames,
+            split_segments=split_segments,
+            event_type_context=event_type_context,
+        )
+        self.metadata = self._build_metadata(
+            request_metadata=request_data_manager.metadata,
+            event_type_context=event_type_context,
+        )
+
+    def _build_event_type_context(
+        self,
+        *,
+        split_frames: Mapping[str, pd.DataFrame],
+    ) -> dict[str, object]:
+        property_schema_by_task = {
+            task_name: [
+                property_name
+                for property_name, _ in _task_property_columns(
+                    task_name,
+                    include_time_features_as_properties=self.dataset_config.include_time_features_as_properties,
+                )
+            ]
+            for task_name in self.dataset_config.included_tasks
+        }
+        component_by_task = (
+            {
+                task_name: _components_for_event_type_task(
+                    task_name=task_name,
+                    dataset_config=self.dataset_config,
+                )
+                for task_name in self.dataset_config.included_tasks
+            }
+            if _uses_enhanced_event_types(self.dataset_config)
+            else {task_name: tuple() for task_name in self.dataset_config.included_tasks}
+        )
+        thresholds = self._build_event_type_thresholds(
+            split_frames=split_frames,
+            component_by_task=component_by_task,
+        )
+        event_types = self._build_event_type_names(component_by_task=component_by_task)
+        property_schema_by_event_type = {
+            event_type_name: property_schema_by_task[
+                _base_task_from_event_type_name(
+                    event_type_name=event_type_name,
+                    included_tasks=self.dataset_config.included_tasks,
+                )
+            ]
+            for event_type_name in event_types
+        }
+        return {
+            "component_by_task": component_by_task,
+            "thresholds": thresholds,
+            "event_types": event_types,
+            "property_schema_by_task": property_schema_by_task,
+            "property_schema_by_event_type": property_schema_by_event_type,
+        }
+
+    def _build_event_type_thresholds(
+        self,
+        *,
+        split_frames: Mapping[str, pd.DataFrame],
+        component_by_task: Mapping[str, Sequence[str]],
+    ) -> dict[str, dict[str, tuple[float, float]]]:
+        thresholds: dict[str, dict[str, tuple[float, float]]] = {}
+        if not _uses_enhanced_event_types(self.dataset_config):
+            return {
+                task_name: {}
+                for task_name in self.dataset_config.included_tasks
+            }
+
+        if self.dataset_config.label_strategy == "threshold":
+            for task_name, component_names in component_by_task.items():
+                for component_name in component_names:
+                    threshold_pair = _threshold_for_component(
+                        task_name=task_name,
+                        component_name=component_name,
+                        measurement_thresholds=self.dataset_config.measurement_thresholds,
+                    )
+                    if threshold_pair is None:
+                        raise ValueError(
+                            "label_strategy='threshold' requires measurement_thresholds for "
+                            f"{task_name}.{component_name}."
+                        )
+                    thresholds.setdefault(task_name, {})[component_name] = threshold_pair
+            return thresholds
+
+        values_by_key: dict[tuple[str, str], list[float]] = {
+            (task_name, component_name): []
+            for task_name, component_names in component_by_task.items()
+            for component_name in component_names
+        }
+        train_df = split_frames.get("train", pd.DataFrame())
+        for row in train_df.to_dict(orient="records"):
+            task_name = str(row.get("task_name", ""))
+            component_names = component_by_task.get(task_name)
+            if component_names is None:
+                continue
+            for component_name in component_names:
+                numeric_value = _as_finite_float(
+                    row.get(_event_measurement_column(task_name=task_name, component=component_name))
+                )
+                if numeric_value is not None:
+                    values_by_key[(task_name, component_name)].append(numeric_value)
+
+        lower_quantile, upper_quantile = self.dataset_config.quantile_edges
+        for (task_name, component_name), values in values_by_key.items():
+            if not values:
+                thresholds.setdefault(task_name, {})[component_name] = (0.0, 0.0)
+                continue
+            finite_values = np.asarray(values, dtype=np.float64)
+            lower_threshold, upper_threshold = np.quantile(
+                finite_values,
+                [lower_quantile, upper_quantile],
+            )
+            thresholds.setdefault(task_name, {})[component_name] = (
+                float(lower_threshold),
+                float(upper_threshold),
+            )
+        return thresholds
+
+    def _build_event_type_names(
+        self,
+        *,
+        component_by_task: Mapping[str, Sequence[str]],
+    ) -> list[str]:
+        if not _uses_enhanced_event_types(self.dataset_config):
+            return list(self.dataset_config.included_tasks)
+
+        event_type_names: list[str] = []
+        for task_name in self.dataset_config.included_tasks:
+            component_names = component_by_task[task_name]
+            for component_labels in _joint_event_type_label_combinations(
+                component_names=component_names,
+                label_options=_event_type_label_options(self.dataset_config),
+            ):
+                event_type_names.append(
+                    _event_type_name(
+                        task_name=task_name,
+                        component_labels=component_labels,
+                        event_type_mark_mode=self.dataset_config.event_type_mark_mode,
+                    )
+                )
+        return event_type_names
+
+    def _label_flex_event_type(
+        self,
+        *,
+        row: Mapping[str, object],
+        component_by_task: Mapping[str, Sequence[str]],
+        thresholds: Mapping[str, Mapping[str, tuple[float, float]]],
+    ) -> str | None:
+        task_name = str(row.get("task_name", ""))
+        if not _uses_enhanced_event_types(self.dataset_config):
+            return task_name if task_name in self.dataset_config.included_tasks else None
+
+        component_names = component_by_task.get(task_name)
+        if component_names is None:
+            return None
+
+        component_labels: list[tuple[str, str]] = []
+        for component_name in component_names:
+            numeric_value = _as_finite_float(
+                row.get(_event_measurement_column(task_name=task_name, component=component_name))
+            )
+            if numeric_value is None and self.dataset_config.drop_missing_measurement_events:
+                return None
+
+            lower_threshold, upper_threshold = thresholds[task_name][component_name]
+            label_name = _label_for_value(
+                value=numeric_value,
+                lower_threshold=lower_threshold,
+                upper_threshold=upper_threshold,
+                label_names=self.dataset_config.label_names,
+                missing_label=self.dataset_config.missing_label,
+            )
+            component_labels.append((component_name, label_name))
+
+        return _event_type_name(
+            task_name=task_name,
+            component_labels=component_labels,
+            event_type_mark_mode=self.dataset_config.event_type_mark_mode,
+        )
 
     def _build_split_records(
         self,
         *,
         split_frames: Mapping[str, pd.DataFrame],
         split_segments: Mapping[str, pd.DataFrame],
+        event_type_context: Mapping[str, object],
     ) -> dict[str, list[VitalSignTPPSequenceRecord]]:
-        event_types = list(self.dataset_config.included_tasks)
+        event_types = [str(event_type) for event_type in event_type_context["event_types"]]
         event_type_to_index = {
             event_type: event_index
             for event_index, event_type in enumerate(event_types)
+        }
+        component_by_task = {
+            str(task_name): tuple(component_names)
+            for task_name, component_names in dict(event_type_context["component_by_task"]).items()
+        }
+        thresholds = {
+            str(task_name): {
+                str(component_name): tuple(threshold_pair)
+                for component_name, threshold_pair in dict(component_thresholds).items()
+            }
+            for task_name, component_thresholds in dict(event_type_context["thresholds"]).items()
         }
         property_columns_by_task = {
             task_name: _task_property_columns(
@@ -574,6 +941,13 @@ class VitalSignTPPDataManager:
 
                         for row in chunk_df.to_dict(orient="records"):
                             task_name = str(row["task_name"])
+                            flex_event_type = self._label_flex_event_type(
+                                row=row,
+                                component_by_task=component_by_task,
+                                thresholds=thresholds,
+                            )
+                            if flex_event_type is None:
+                                continue
                             event_timestamp = pd.Timestamp(row[TIMESTAMP_COLUMN])
                             start_time_hours = float(
                                 (event_timestamp - chunk_start_timestamp).total_seconds() / 3600.0
@@ -591,7 +965,7 @@ class VitalSignTPPDataManager:
                                 (
                                     start_time_hours,
                                     start_time_hours,
-                                    event_type_to_index[task_name],
+                                    event_type_to_index[flex_event_type],
                                     property_payload,
                                 )
                             )
@@ -599,6 +973,7 @@ class VitalSignTPPDataManager:
                                 {
                                     "timestamp": event_timestamp.isoformat(),
                                     "task_name": task_name,
+                                    "flex_tpp_event_type": flex_event_type,
                                     "task_index": int(row["task_index"]),
                                     "floor": (
                                         None
@@ -611,6 +986,9 @@ class VitalSignTPPDataManager:
                                     },
                                 }
                             )
+
+                        if len(encoded_events) < self.dataset_config.min_events_per_sequence:
+                            continue
 
                         split_records[split_name].append(
                             VitalSignTPPSequenceRecord(
@@ -639,17 +1017,32 @@ class VitalSignTPPDataManager:
         self,
         *,
         request_metadata: Mapping[str, object],
+        event_type_context: Mapping[str, object],
     ) -> dict[str, object]:
         property_schema_by_task = {
-            task_name: [
-                property_name
-                for property_name, _ in _task_property_columns(
-                    task_name,
-                    include_time_features_as_properties=self.dataset_config.include_time_features_as_properties,
-                )
-            ]
-            for task_name in self.dataset_config.included_tasks
+            str(task_name): list(property_names)
+            for task_name, property_names in dict(
+                event_type_context["property_schema_by_task"]
+            ).items()
         }
+        property_schema_by_event_type = {
+            str(event_type_name): list(property_names)
+            for event_type_name, property_names in dict(
+                event_type_context["property_schema_by_event_type"]
+            ).items()
+        }
+        component_by_task = {
+            str(task_name): list(component_names)
+            for task_name, component_names in dict(event_type_context["component_by_task"]).items()
+        }
+        thresholds = {
+            str(task_name): {
+                str(component_name): list(threshold_pair)
+                for component_name, threshold_pair in dict(component_thresholds).items()
+            }
+            for task_name, component_thresholds in dict(event_type_context["thresholds"]).items()
+        }
+        event_types = [str(event_type) for event_type in event_type_context["event_types"]]
         return {
             "version": DATASET_VERSION,
             "dataset_representation": DATASET_REPRESENTATION,
@@ -657,12 +1050,25 @@ class VitalSignTPPDataManager:
             "encounter_id_col": ENCOUNTER_ID_COLUMN,
             "timestamp_col": TIMESTAMP_COLUMN,
             "included_tasks": list(self.dataset_config.included_tasks),
-            "event_types": list(self.dataset_config.included_tasks),
+            "event_types": event_types,
             "eos_event_type_name": EOS_EVENT_TYPE_NAME,
             "property_schema_by_task": property_schema_by_task,
+            "property_schema_by_event_type": property_schema_by_event_type,
             "include_time_features_as_properties": bool(
                 self.dataset_config.include_time_features_as_properties
             ),
+            "event_type_mark_mode": self.dataset_config.event_type_mark_mode,
+            "event_type_mark_schema": (
+                "enhanced" if _uses_enhanced_event_types(self.dataset_config) else "task"
+            ),
+            "label_strategy": self.dataset_config.label_strategy,
+            "label_names": list(self.dataset_config.label_names),
+            "missing_label": self.dataset_config.missing_label,
+            "drop_missing_measurement_events": bool(
+                self.dataset_config.drop_missing_measurement_events
+            ),
+            "label_component_by_task": component_by_task,
+            "thresholds_by_task_component": thresholds,
             "sequence_boundary": "calendar_day",
             "conditioning_mode": (
                 PREVIOUS_DAY_SUMMARY_CONDITIONING_MODE
@@ -870,21 +1276,40 @@ class VitalSignTPPDatasetBundle:
                 self.metadata.get("property_schema_by_task", {})
             ).items()
         }
+        self.property_schema_by_event_type = {
+            str(event_type_name): list(property_names)
+            for event_type_name, property_names in dict(
+                self.metadata.get("property_schema_by_event_type", {})
+            ).items()
+        }
+        if not self.property_schema_by_event_type:
+            self.property_schema_by_event_type = {
+                event_type_name: self.property_schema_by_task[
+                    _base_task_from_event_type_name(
+                        event_type_name=event_type_name,
+                        included_tasks=self.metadata.get("included_tasks", self.base_event_types),
+                    )
+                ]
+                for event_type_name in self.base_event_types
+            }
         self.condition_feature_names = [
             str(feature_name)
             for feature_name in self.metadata.get("condition_feature_names", [])
         ]
         self.condition_dim = len(self.condition_feature_names)
         self.property_types = {
-            self.event_type_to_index[task_name]: {
+            self.event_type_to_index[event_type_name]: {
                 property_name: MODALITY_CONTINUOUS
                 for property_name in property_names
             }
-            for task_name, property_names in self.property_schema_by_task.items()
+            for event_type_name, property_names in self.property_schema_by_event_type.items()
         }
         self.property_types[self.eos_event_type] = {}
         self.max_properties_per_event = max(
-            (len(property_names) for property_names in self.property_schema_by_task.values()),
+            (
+                len(property_names)
+                for property_names in self.property_schema_by_event_type.values()
+            ),
             default=0,
         )
         self.dims = [
