@@ -34,7 +34,6 @@ SUPPORTED_EASY_TPP_MODELS = (
     "RMTPP",
     "FullyNN",
     "IntensityFree",
-    "ODETPP",
     "ANHN",
     "S2P2",
     "WSMTHP",
