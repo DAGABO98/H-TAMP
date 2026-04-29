@@ -51,6 +51,8 @@ class MOTDCostBreakdown:
     type: float = 0.0
     mark: float = 0.0
     edit: float = 0.0
+    delete: float = 0.0
+    insert: float = 0.0
 
     def __add__(self, other: "MOTDCostBreakdown") -> "MOTDCostBreakdown":
         return MOTDCostBreakdown(
@@ -59,6 +61,8 @@ class MOTDCostBreakdown:
             type=self.type + other.type,
             mark=self.mark + other.mark,
             edit=self.edit + other.edit,
+            delete=self.delete + other.delete,
+            insert=self.insert + other.insert,
         )
 
     def as_dict(self) -> dict[str, float]:
@@ -68,6 +72,8 @@ class MOTDCostBreakdown:
             "type": float(self.type),
             "mark": float(self.mark),
             "edit": float(self.edit),
+            "delete": float(self.delete),
+            "insert": float(self.insert),
         }
 
 
@@ -82,6 +88,8 @@ class MOTDResult:
     type_cost: float = 0.0
     mark_cost: float = 0.0
     edit_cost: float = 0.0
+    delete_cost: float = 0.0
+    insert_cost: float = 0.0
 
     @property
     def other_cost(self) -> float:
@@ -95,6 +103,8 @@ class MOTDResult:
             type=self.type_cost,
             mark=self.mark_cost,
             edit=self.edit_cost,
+            delete=self.delete_cost,
+            insert=self.insert_cost,
         )
 
 
@@ -108,6 +118,8 @@ class ExpectedMOTDResult:
     mean_type_cost: float = 0.0
     mean_mark_cost: float = 0.0
     mean_edit_cost: float = 0.0
+    mean_delete_cost: float = 0.0
+    mean_insert_cost: float = 0.0
     per_sample_breakdowns: List[MOTDCostBreakdown] | None = None
 
     @property
@@ -322,11 +334,19 @@ def marked_otd(
                 alignment.append((pred_idx, true_idx))
                 operations.append(("match", pred_idx, true_idx))
         elif action == "delete":
-            breakdown = breakdown + MOTDCostBreakdown(total=cfg.c_del, edit=cfg.c_del)
+            breakdown = breakdown + MOTDCostBreakdown(
+                total=cfg.c_del,
+                edit=cfg.c_del,
+                delete=cfg.c_del,
+            )
             if return_alignment:
                 operations.append(("delete", i - 1, None))
         elif action == "insert":
-            breakdown = breakdown + MOTDCostBreakdown(total=cfg.c_ins, edit=cfg.c_ins)
+            breakdown = breakdown + MOTDCostBreakdown(
+                total=cfg.c_ins,
+                edit=cfg.c_ins,
+                insert=cfg.c_ins,
+            )
             if return_alignment:
                 operations.append(("insert", None, j - 1))
         else:
@@ -344,6 +364,8 @@ def marked_otd(
         type_cost=breakdown.type,
         mark_cost=breakdown.mark,
         edit_cost=breakdown.edit,
+        delete_cost=breakdown.delete,
+        insert_cost=breakdown.insert,
     )
 
 
@@ -375,6 +397,8 @@ def expected_marked_otd(
         mean_type_cost=sum(result.type_cost for result in results) / sample_count,
         mean_mark_cost=sum(result.mark_cost for result in results) / sample_count,
         mean_edit_cost=sum(result.edit_cost for result in results) / sample_count,
+        mean_delete_cost=sum(result.delete_cost for result in results) / sample_count,
+        mean_insert_cost=sum(result.insert_cost for result in results) / sample_count,
         per_sample_breakdowns=[result.breakdown for result in results],
     )
 

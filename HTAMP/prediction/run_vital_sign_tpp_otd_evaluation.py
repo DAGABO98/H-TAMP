@@ -1491,6 +1491,8 @@ def _detail_row(
         "otd_time": float(result.time_cost),
         "otd_type": float(result.type_cost),
         "otd_edit": float(result.edit_cost),
+        "otd_delete": float(getattr(result, "delete_cost", 0.0)),
+        "otd_insert": float(getattr(result, "insert_cost", 0.0)),
         "otd_other": float(result.other_cost),
     }
 
@@ -1589,6 +1591,8 @@ def _summary_row_from_details(
         "otd_other",
         "otd_type",
         "otd_edit",
+        "otd_delete",
+        "otd_insert",
         "predicted_event_count",
         "inference_seconds",
         "inference_milliseconds",
@@ -1659,15 +1663,41 @@ def _plot_results(*, output_dir: Path, detail_path: Path, summary_path: Path) ->
     labels = summary_df[label_column].tolist()
     x_positions = np.arange(len(labels))
     time_values = summary_df["otd_time_mean"].to_numpy(dtype=float)
-    other_values = summary_df["otd_other_mean"].to_numpy(dtype=float)
+    type_values = summary_df["otd_type_mean"].to_numpy(dtype=float)
+    delete_values = summary_df.get(
+        "otd_delete_mean",
+        summary_df["otd_edit_mean"] * 0.0,
+    ).to_numpy(dtype=float)
+    insert_values = summary_df.get(
+        "otd_insert_mean",
+        summary_df["otd_edit_mean"] * 0.0,
+    ).to_numpy(dtype=float)
+    residual_values = np.maximum(
+        0.0,
+        summary_df["otd_total_mean"].to_numpy(dtype=float)
+        - time_values
+        - type_values
+        - delete_values
+        - insert_values,
+    )
     total_std = summary_df["otd_total_std"].to_numpy(dtype=float)
     fig_width = max(10.0, 0.55 * len(labels))
     fig, ax = plt.subplots(figsize=(fig_width, 6.0))
-    ax.bar(x_positions, time_values, label="Time")
-    ax.bar(x_positions, other_values, bottom=time_values, label="Type/Edit")
+    bottoms = np.zeros_like(time_values)
+    ax.bar(x_positions, time_values, bottom=bottoms, label="Time")
+    bottoms = bottoms + time_values
+    ax.bar(x_positions, type_values, bottom=bottoms, label="Type")
+    bottoms = bottoms + type_values
+    ax.bar(x_positions, delete_values, bottom=bottoms, label="Deletion")
+    bottoms = bottoms + delete_values
+    ax.bar(x_positions, insert_values, bottom=bottoms, label="Addition")
+    bottoms = bottoms + insert_values
+    if np.any(residual_values > 1e-12):
+        ax.bar(x_positions, residual_values, bottom=bottoms, label="Other")
+        bottoms = bottoms + residual_values
     ax.errorbar(
         x_positions,
-        time_values + other_values,
+        bottoms,
         yerr=total_std,
         fmt="none",
         ecolor="black",
