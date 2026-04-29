@@ -22,6 +22,9 @@ import torch
 from HTAMP.prediction.configs.vital_sign_easy_tpp_config import (
     VitalSignEasyTPPTrainingConfig,
 )
+from HTAMP.prediction.configs.vital_sign_multittpp_config import (
+    VitalSignMultiTTPPTrainingConfig,
+)
 from HTAMP.prediction.configs.vital_sign_tpp_config import (
     VitalSignTPPTrainingConfig,
 )
@@ -36,10 +39,15 @@ from HTAMP.prediction.data_provider.vital_sign_tpp_dataset import (
     VitalSignTPPSequenceRecord,
     build_vital_sign_tpp_dataset_bundle,
 )
+from HTAMP.prediction.data_provider.vital_sign_multittpp_dataset import (
+    VitalSignMultiTTPPDatasetBundle,
+    build_vital_sign_multittpp_dataset_bundle,
+)
 from HTAMP.prediction.module.vital_sign_easy_tpp_module import (
     VitalSignEasyTPPModule,
     _ThinningConfigAdapter,
 )
+from HTAMP.prediction.module.vital_sign_multittpp_module import VitalSignMultiTTPPModule
 from HTAMP.prediction.module.vital_sign_tpp_module import VitalSignTPPModule
 from HTAMP.prediction.otd_metric import Event, MOTDConfig, marked_otd
 from HTAMP.prediction.point_process_models.easyTPP.torch_intensity_free import (
@@ -684,6 +692,13 @@ def _log_model_progress(
     )
 
 
+def _progress_intervals(args: argparse.Namespace) -> tuple[int, int]:
+    return (
+        max(1, int(args.progress_every)),
+        max(0, int(args.progress_sample_interval)),
+    )
+
+
 def _sync_device_for_timing(device: torch.device) -> None:
     if device.type != "cuda" or not torch.cuda.is_available():
         return
@@ -1156,6 +1171,42 @@ def _load_flex_model_and_bundle(
     return model, flex_bundle
 
 
+def _multittpp_training_config(
+    spec: ModelSpec,
+    args: argparse.Namespace,
+) -> VitalSignMultiTTPPTrainingConfig:
+    training_config = VitalSignMultiTTPPTrainingConfig.from_dict(spec.training_config)
+    training_config.dataset_config = _apply_dataset_load_flags(
+        training_config.dataset_config,
+        use_saved_datasets=args.use_saved_datasets,
+    )
+    return training_config
+
+
+def _load_multittpp_model_and_bundle(
+    *,
+    spec: ModelSpec,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[VitalSignMultiTTPPModule, VitalSignMultiTTPPDatasetBundle]:
+    training_config = _multittpp_training_config(spec=spec, args=args)
+    multittpp_bundle = build_vital_sign_multittpp_dataset_bundle(
+        dataset_config=training_config.dataset_config,
+    )
+    model = VitalSignMultiTTPPModule.load_from_checkpoint(
+        checkpoint_path=str(spec.checkpoint_path),
+        map_location=device,
+        model_config=training_config.model_config,
+        num_event_types=multittpp_bundle.num_event_types,
+        n_events=multittpp_bundle.n_events,
+        t_max_normalization=multittpp_bundle.t_max_normalization,
+        dt_max_normalization=multittpp_bundle.dt_max_normalization,
+    )
+    model.to(device)
+    model.eval()
+    return model, multittpp_bundle
+
+
 def _discrete_events_from_flex_events(
     *,
     events: Sequence[tuple[float, float, int, Mapping[str, float]]],
@@ -1190,6 +1241,62 @@ def _discrete_events_from_flex_events(
             )
         )
     return discrete_events
+
+
+def _sample_multittpp_rollout(
+    *,
+    model: VitalSignMultiTTPPModule,
+    record: VitalSignEasyTPPSequenceRecord,
+    prefix_len: int,
+    max_future_events: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    prefix_times = torch.as_tensor(
+        record.time_seqs[:prefix_len],
+        dtype=torch.float32,
+        device=device,
+    ).unsqueeze(0)
+    prefix_types = torch.as_tensor(
+        record.type_seqs[:prefix_len],
+        dtype=torch.long,
+        device=device,
+    ).unsqueeze(0)
+    if prefix_len == 0:
+        prefix_times = torch.zeros((1, 0), dtype=torch.float32, device=device)
+        prefix_types = torch.zeros((1, 0), dtype=torch.long, device=device)
+    with torch.no_grad():
+        return model.generate_future(
+            prefix_times=prefix_times,
+            prefix_types=prefix_types,
+            max_future_events=max_future_events,
+            n_min=model.model_config.block_size,
+        )
+
+
+def _discrete_events_from_multittpp_samples(
+    *,
+    sampled_times: torch.Tensor,
+    sampled_types: torch.Tensor,
+    multittpp_bundle: VitalSignMultiTTPPDatasetBundle,
+    mark_encoder: DiscreteMarkEncoder,
+) -> list[Event]:
+    times = sampled_times.detach().cpu().reshape(-1).tolist()
+    types = sampled_types.detach().cpu().reshape(-1).tolist()
+    events: list[Event] = []
+    for event_time, event_type in zip(times, types):
+        event_type_index = int(event_type)
+        if event_type_index < 0 or event_type_index >= multittpp_bundle.num_event_types:
+            continue
+        mark_name = str(multittpp_bundle.mark_names[event_type_index])
+        base_task = mark_encoder.base_task(mark_name)
+        events.append(
+            Event(
+                time=float(event_time),
+                event_type=base_task,
+                mark=mark_name,
+            )
+        )
+    return events
 
 
 def _evaluate_easy_model(
@@ -1253,6 +1360,126 @@ def _evaluate_easy_model(
                     device=device,
                 )
                 inference_seconds = _stop_inference_timer(device, inference_started_at)
+                result = marked_otd(
+                    pred_seq=predicted,
+                    true_seq=true_future,
+                    config=otd_config,
+                    time_scales=context.time_scales,
+                    return_alignment=False,
+                )
+                rows.append(
+                    _detail_row(
+                        spec=spec,
+                        record=record,
+                        sequence_index=sequence_index,
+                        prefix_len=prefix_len,
+                        sample_index=sample_index,
+                        true_future=true_future,
+                        predicted=predicted,
+                        inference_seconds=inference_seconds,
+                        result=result,
+                    )
+                )
+                completed_samples += 1
+                completed_rollout_event_budget += int(future_count)
+                if (
+                    sample_interval > 0
+                    and completed_samples - last_sample_log >= sample_interval
+                ):
+                    _log_model_progress(
+                        run_name=spec.run_name,
+                        completed_sequences=sequence_index,
+                        total_sequences=total_sequences,
+                        completed_prefixes=completed_prefixes,
+                        total_prefixes=total_prefixes,
+                        completed_samples=completed_samples,
+                        total_samples=total_samples,
+                        completed_rollout_event_budget=completed_rollout_event_budget,
+                        total_rollout_event_budget=total_rollout_event_budget,
+                        started_at=started_at,
+                    )
+                    last_sample_log = completed_samples
+            completed_prefixes += 1
+        if (
+            (sequence_index + 1) % sequence_interval == 0
+            or (sequence_index + 1) == total_sequences
+        ):
+            _log_model_progress(
+                run_name=spec.run_name,
+                completed_sequences=sequence_index + 1,
+                total_sequences=total_sequences,
+                completed_prefixes=completed_prefixes,
+                total_prefixes=total_prefixes,
+                completed_samples=completed_samples,
+                total_samples=total_samples,
+                completed_rollout_event_budget=completed_rollout_event_budget,
+                total_rollout_event_budget=total_rollout_event_budget,
+                started_at=started_at,
+            )
+    return rows
+
+
+def _evaluate_multittpp_model(
+    *,
+    spec: ModelSpec,
+    context: EvaluationContext,
+    args: argparse.Namespace,
+    device: torch.device,
+    otd_config: MOTDConfig,
+) -> list[dict[str, Any]]:
+    model, model_multittpp_bundle = _load_multittpp_model_and_bundle(
+        spec=spec,
+        args=args,
+        device=device,
+    )
+    model_records = _easy_records_by_key(model_multittpp_bundle, args.split)
+    rows: list[dict[str, Any]] = []
+    total_prefixes, total_samples, total_rollout_event_budget = _prefix_work_for_records(
+        args=args,
+        records=context.easy_records,
+        mark_encoder=context.mark_encoder,
+    )
+    total_sequences = len(context.easy_records)
+    sequence_interval, sample_interval = _progress_intervals(args)
+    completed_prefixes = 0
+    completed_samples = 0
+    completed_rollout_event_budget = 0
+    last_sample_log = 0
+    started_at = time.perf_counter()
+    _log(
+        f"{spec.run_name}: starting MultiTTPP OTD evaluation with "
+        f"{total_sequences} sequences, {total_prefixes} prefixes, "
+        f"{total_samples} sampled rollouts."
+    )
+
+    for sequence_index, record in enumerate(context.easy_records):
+        model_record = model_records.get(_easy_record_key(record))
+        if model_record is None:
+            raise ValueError(
+                f"No matching MultiTTPP model-schema record for canonical sequence {sequence_index}."
+            )
+        true_events = _easy_record_events(record=record, mark_encoder=context.mark_encoder)
+        for prefix_len in _prefix_lengths(args, true_events):
+            future_count = _future_event_count(args, true_events, prefix_len)
+            if future_count <= 0:
+                continue
+            true_future = true_events[prefix_len : prefix_len + future_count]
+            for sample_index in range(int(args.num_samples)):
+                inference_started_at = _start_inference_timer(device)
+                sampled_times, sampled_types = _sample_multittpp_rollout(
+                    model=model,
+                    record=model_record,
+                    prefix_len=prefix_len,
+                    max_future_events=future_count,
+                    device=device,
+                )
+                inference_seconds = _stop_inference_timer(device, inference_started_at)
+                predicted = _discrete_events_from_multittpp_samples(
+                    sampled_times=sampled_times,
+                    sampled_types=sampled_types,
+                    multittpp_bundle=model_multittpp_bundle,
+                    mark_encoder=context.mark_encoder,
+                )
                 result = marked_otd(
                     pred_seq=predicted,
                     true_seq=true_future,
@@ -1515,6 +1742,14 @@ def _evaluate_model(
         )
         if spec.family.lower() == "easytpp":
             detail_rows = _evaluate_easy_model(
+                spec=spec,
+                context=context,
+                args=args,
+                device=device,
+                otd_config=otd_config,
+            )
+        elif spec.family.lower() == "multittpp":
+            detail_rows = _evaluate_multittpp_model(
                 spec=spec,
                 context=context,
                 args=args,
@@ -1973,7 +2208,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="VitalSignTPPOTDEvaluation",
         description=(
-            "Evaluate trained EasyTPP and FlexTPP vital-sign request models with "
+            "Evaluate trained EasyTPP, FlexTPP, and MultiTTPP vital-sign request models with "
             "Monte Carlo marked Optimal Transport Distance."
         ),
     )
@@ -2078,7 +2313,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--use_saved_datasets",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Load the cached FlexTPP/EasyTPP datasets by default.",
+        help="Load the cached FlexTPP/EasyTPP/MultiTTPP datasets by default.",
     )
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)

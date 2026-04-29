@@ -22,6 +22,10 @@ DEFAULT_FLEX_CONFIG_PATH = (
     "HTAMP/prediction/configs/config_files/prediction/"
     "vital_sign_tpp_training.json"
 )
+DEFAULT_MULTITTPP_CONFIG_PATH = (
+    "HTAMP/prediction/configs/config_files/prediction/"
+    "vital_sign_multittpp_training.json"
+)
 SUPPORTED_EASY_TPP_MODELS = (
     "NHP",
     "AttNHP",
@@ -40,6 +44,16 @@ DEFAULT_FLEX_ST_MARK_SCHEMAS = ("standard", "enhanced")
 SUPPORTED_FLEX_ST_MARK_SCHEMAS = ("standard", "enhanced")
 DEFAULT_FLEX_CONDITIONING_MODES = ("conditioned", "no_conditioning")
 SUPPORTED_FLEX_CONDITIONING_MODES = ("conditioned", "no_conditioning")
+SUPPORTED_MULTITTPP_MODELS = (
+    "InhomogeneousPoisson",
+    "Renewal",
+    "ModulatedRenewal",
+    "TriTPP",
+    "SplineTransformer",
+)
+DEFAULT_MULTITTPP_MODELS = ("TriTPP",)
+DEFAULT_MULTITTPP_MARK_SCHEMAS = ("enhanced", "plain")
+SUPPORTED_MULTITTPP_MARK_SCHEMAS = ("enhanced", "plain")
 DEFAULT_EASY_MARK_SCHEMAS = ("enhanced", "plain")
 SUPPORTED_EASY_MARK_SCHEMAS = ("enhanced", "plain")
 DEFAULT_SELECTION_METRIC = "val_nll"
@@ -201,6 +215,25 @@ FLEX_TPP_VARIANT_DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
 }
+MULTITTPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "TriTPP": {
+        "model_config": {
+            "n_blocks": 4,
+            "block_size": 16,
+            "n_knots": 20,
+            "learning_rate": 0.001,
+        },
+    },
+    "SplineTransformer": {
+        "model_config": {
+            "n_embd": 32,
+            "n_heads": 4,
+            "n_knots": 20,
+            "dropout": 0.1,
+            "learning_rate": 0.001,
+        },
+    },
+}
 
 
 @dataclass
@@ -352,6 +385,19 @@ def _parse_flex_st_mark_schemas(raw_value: str) -> tuple[str, ...]:
     return tuple(schemas)
 
 
+def _parse_multittpp_mark_schemas(raw_value: str) -> tuple[str, ...]:
+    schemas = _parse_easy_mark_schemas(raw_value)
+    invalid_schemas = [
+        schema for schema in schemas if schema not in SUPPORTED_MULTITTPP_MARK_SCHEMAS
+    ]
+    if invalid_schemas:
+        raise ValueError(
+            f"Unsupported MultiTTPP mark schema(s) {invalid_schemas}. "
+            f"Expected one of {SUPPORTED_MULTITTPP_MARK_SCHEMAS}."
+        )
+    return schemas
+
+
 def _parse_flex_conditioning_modes(raw_value: str) -> tuple[str, ...]:
     aliases = {
         "conditioned": "conditioned",
@@ -392,6 +438,10 @@ def _flex_conditioning_suffix(conditioning_mode: str) -> str:
 
 def _easy_schema_suffix(mark_schema: str) -> str:
     return "enhanced_marks" if mark_schema == "enhanced" else "plain_marks"
+
+
+def _multittpp_schema_suffix(mark_schema: str) -> str:
+    return "enhanced_marks" if mark_schema == "enhanced" else "standard_marks"
 
 
 def _apply_flex_event_type_schema(
@@ -468,6 +518,29 @@ def _apply_easy_mark_schema(
     if separate_dataset_dir:
         dataset_dir = Path(str(dataset_config.get("dataset_dir", "data/prediction/vital_sign_easy_tpp_dataset")))
         dataset_config["dataset_dir"] = str(dataset_dir / _easy_schema_suffix(mark_schema))
+
+    return updated_payload
+
+
+def _apply_multittpp_mark_schema(
+    payload: Mapping[str, Any],
+    *,
+    mark_schema: str,
+    separate_dataset_dir: bool,
+) -> dict[str, Any]:
+    updated_payload = copy.deepcopy(dict(payload))
+    dataset_config = updated_payload.setdefault("dataset_config", {})
+    if mark_schema == "plain":
+        dataset_config["mark_label_mode"] = "task_only"
+    elif mark_schema == "enhanced":
+        dataset_config.setdefault("mark_label_mode", "task_label")
+    else:
+        raise ValueError(f"Unsupported MultiTTPP mark schema '{mark_schema}'.")
+
+    dataset_config["include_eos_event"] = False
+    if separate_dataset_dir:
+        dataset_dir = Path(str(dataset_config.get("dataset_dir", "data/prediction/vital_sign_multittpp_dataset")))
+        dataset_config["dataset_dir"] = str(dataset_dir / _multittpp_schema_suffix(mark_schema))
 
     return updated_payload
 
@@ -668,9 +741,51 @@ def _build_easy_job_payload(
     )
 
 
+def _build_multittpp_job_payload(
+    *,
+    base_payload: Mapping[str, Any],
+    args: argparse.Namespace,
+    run_prefix: str,
+    model_name: str,
+    mark_schema: str,
+    separate_dataset_dir: bool,
+) -> ComparisonJob:
+    schema_suffix = _multittpp_schema_suffix(mark_schema)
+    run_name = f"{run_prefix}_multittpp_{_safe_name(model_name)}_{schema_suffix}"
+    payload = _apply_dataset_training_flags(
+        _apply_multittpp_mark_schema(
+            base_payload,
+            mark_schema=mark_schema,
+            separate_dataset_dir=separate_dataset_dir,
+        ),
+        use_prepared_dataset=args.prepare_datasets,
+    )
+    payload["model_config"]["model_name"] = model_name
+    payload = _apply_architecture_defaults(
+        payload,
+        defaults=MULTITTPP_MODEL_DEFAULTS.get(model_name, {}),
+        enabled=not args.no_model_defaults,
+    )
+    payload = _apply_common_model_overrides(
+        payload,
+        args=args,
+        run_name=run_name,
+        wandb=not args.no_wandb,
+    )
+    return ComparisonJob(
+        family="MultiTTPP",
+        model_name=model_name,
+        variant=f"{model_name}_{mark_schema}",
+        run_name=run_name,
+        config_payload=payload,
+        module_name="HTAMP.prediction.vital_sign_multittpp_predictor",
+    )
+
+
 def _build_jobs(args: argparse.Namespace, run_prefix: str) -> list[ComparisonJob]:
     flex_payload = _load_json(args.flex_config_path)
     easy_payload = _load_json(args.easy_config_path)
+    multittpp_payload = _load_json(args.multittpp_config_path)
     jobs: list[ComparisonJob] = []
 
     if not args.skip_flex:
@@ -713,8 +828,31 @@ def _build_jobs(args: argparse.Namespace, run_prefix: str) -> list[ComparisonJob
                     )
                 )
 
+    if not args.skip_multittpp:
+        multittpp_models = (
+            SUPPORTED_MULTITTPP_MODELS
+            if args.multittpp_models.strip().lower() == "all"
+            else _parse_csv_strings(args.multittpp_models, allowed=SUPPORTED_MULTITTPP_MODELS)
+        )
+        multittpp_mark_schemas = _parse_multittpp_mark_schemas(args.multittpp_mark_schemas)
+        separate_multittpp_dataset_dir = len(multittpp_mark_schemas) > 1
+        for mark_schema in multittpp_mark_schemas:
+            for model_name in multittpp_models:
+                jobs.append(
+                    _build_multittpp_job_payload(
+                        base_payload=multittpp_payload,
+                        args=args,
+                        run_prefix=run_prefix,
+                        model_name=model_name,
+                        mark_schema=mark_schema,
+                        separate_dataset_dir=separate_multittpp_dataset_dir,
+                    )
+                )
+
     if not jobs:
-        raise ValueError("No jobs were selected. Check --skip_flex/--skip_easy settings.")
+        raise ValueError(
+            "No jobs were selected. Check --skip_flex/--skip_easy/--skip_multittpp settings."
+        )
     return jobs
 
 
@@ -802,7 +940,7 @@ def _run_dataset_prepare(
 
 
 def _prepare_datasets(args: argparse.Namespace, run_prefix: str) -> None:
-    if args.skip_flex and args.skip_easy:
+    if args.skip_flex and args.skip_easy and args.skip_multittpp:
         return
     if not args.prepare_datasets:
         print("Dataset pre-build is disabled; training jobs will use config workflow flags.")
@@ -843,6 +981,25 @@ def _prepare_datasets(args: argparse.Namespace, run_prefix: str) -> None:
                         easy_payload,
                         mark_schema=mark_schema,
                         separate_dataset_dir=separate_easy_dataset_dir,
+                    )
+                ),
+                run_prefix=run_prefix,
+            )
+
+    if not args.skip_multittpp:
+        multittpp_payload = _load_json(args.multittpp_config_path)
+        multittpp_mark_schemas = _parse_multittpp_mark_schemas(args.multittpp_mark_schemas)
+        separate_multittpp_dataset_dir = len(multittpp_mark_schemas) > 1
+        for mark_schema in multittpp_mark_schemas:
+            _run_dataset_prepare(
+                args,
+                label=f"MultiTTPP-{_multittpp_schema_suffix(mark_schema)}",
+                module_name="HTAMP.prediction.data_provider.vital_sign_multittpp_dataset",
+                payload=_build_prepare_payload(
+                    _apply_multittpp_mark_schema(
+                        multittpp_payload,
+                        mark_schema=mark_schema,
+                        separate_dataset_dir=separate_multittpp_dataset_dir,
                     )
                 ),
                 run_prefix=run_prefix,
@@ -1135,6 +1292,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--easy_config_path", default=DEFAULT_EASY_CONFIG_PATH)
     parser.add_argument("--flex_config_path", default=DEFAULT_FLEX_CONFIG_PATH)
+    parser.add_argument("--multittpp_config_path", default=DEFAULT_MULTITTPP_CONFIG_PATH)
     parser.add_argument(
         "--easy_models",
         default="all",
@@ -1176,8 +1334,26 @@ def build_parser() -> argparse.ArgumentParser:
             "'no_conditioning' disables it. Defaults to conditioned,no_conditioning."
         ),
     )
+    parser.add_argument(
+        "--multittpp_models",
+        default=",".join(DEFAULT_MULTITTPP_MODELS),
+        help=(
+            "Comma-separated MultiTTPP model names, or 'all'. Available: "
+            f"{', '.join(SUPPORTED_MULTITTPP_MODELS)}"
+        ),
+    )
+    parser.add_argument(
+        "--multittpp_mark_schemas",
+        default=",".join(DEFAULT_MULTITTPP_MARK_SCHEMAS),
+        help=(
+            "Comma-separated MultiTTPP mark schemas to train. "
+            "'enhanced' uses low/medium/high measurement labels; "
+            "'plain' uses only request task marks. Defaults to enhanced,plain."
+        ),
+    )
     parser.add_argument("--skip_easy", action="store_true")
     parser.add_argument("--skip_flex", action="store_true")
+    parser.add_argument("--skip_multittpp", action="store_true")
     parser.add_argument("--gpu_ids", default="0,1,2")
     parser.add_argument("--max_parallel_runs", type=int, default=3)
     parser.add_argument("--run_prefix", default=None)
