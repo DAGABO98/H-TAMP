@@ -325,6 +325,8 @@ class VitalSignTPPModelConfig:
     accelerator: str = "auto"
     devices: int = 1
     strategy: Optional[str] = None
+    precision: str | int = "32-true"
+    accumulate_grad_batches: int = 1
     conditioning_network: Optional[dict[str, Any]] = None
     order: str = "STP"
     gaussian_except_start_time: bool = False
@@ -355,6 +357,12 @@ class VitalSignTPPModelConfig:
             raise ValueError("weight_decay must be non-negative.")
         if self.gradient_clip_val < 0.0:
             raise ValueError("gradient_clip_val must be non-negative.")
+        if self.accumulate_grad_batches <= 0:
+            raise ValueError("accumulate_grad_batches must be greater than zero.")
+        if isinstance(self.precision, str):
+            self.precision = self.precision.strip()
+            if not self.precision:
+                raise ValueError("precision must not be empty.")
         if self.order not in SUPPORTED_EVENT_ORDERS:
             raise ValueError(
                 f"Unsupported event order '{self.order}'. Expected one of {SUPPORTED_EVENT_ORDERS}."

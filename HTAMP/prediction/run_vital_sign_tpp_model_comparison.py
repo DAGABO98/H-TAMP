@@ -129,43 +129,71 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
     "THP": {
+        "dataset_config": {
+            "max_events_per_sequence": 96,
+        },
         "model_config": {
+            "batch_size": 16,
             "hidden_size": 128,
             "time_emb_size": 16,
             "num_layers": 2,
             "num_heads": 4,
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
+            "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
+            "accumulate_grad_batches": 2,
         },
     },
     "AttNHP": {
+        "dataset_config": {
+            "max_events_per_sequence": 96,
+        },
         "model_config": {
+            "batch_size": 16,
             "hidden_size": 128,
             "time_emb_size": 16,
             "num_layers": 2,
             "num_heads": 4,
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
+            "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
+            "accumulate_grad_batches": 2,
         },
     },
     "SAHP": {
+        "dataset_config": {
+            "max_events_per_sequence": 96,
+        },
         "model_config": {
+            "batch_size": 16,
             "hidden_size": 128,
             "time_emb_size": 16,
             "num_layers": 2,
             "num_heads": 4,
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
+            "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
+            "accumulate_grad_batches": 2,
         },
     },
     "ANHN": {
+        "dataset_config": {
+            "max_events_per_sequence": 64,
+        },
         "model_config": {
+            "batch_size": 8,
             "hidden_size": 128,
             "time_emb_size": 16,
             "num_layers": 2,
             "num_heads": 4,
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
+            "loss_integral_num_sample_per_step": 8,
+            "precision": "16-mixed",
+            "accumulate_grad_batches": 4,
         },
     },
     "S2P2": {
@@ -180,12 +208,19 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
     "WSMTHP": {
+        "dataset_config": {
+            "max_events_per_sequence": 96,
+        },
         "model_config": {
+            "batch_size": 16,
             "hidden_size": 128,
             "num_layers": 2,
             "num_heads": 4,
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
+            "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
+            "accumulate_grad_batches": 2,
             "model_specs": {
                 "CE_coef": 10.0,
                 "T_mode": "train_global",
@@ -634,6 +669,8 @@ def _apply_common_model_overrides(
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
         "learning_rate": args.learning_rate,
+        "precision": args.precision,
+        "accumulate_grad_batches": args.accumulate_grad_batches,
     }
     for field_name, field_value in optional_overrides.items():
         if field_value is not None:
@@ -735,6 +772,10 @@ def _build_easy_job_payload(
         defaults=EASY_TPP_MODEL_DEFAULTS.get(model_id, {}),
         enabled=not args.no_model_defaults,
     )
+    if args.easy_max_events_per_sequence is not None:
+        payload.setdefault("dataset_config", {})["max_events_per_sequence"] = int(
+            args.easy_max_events_per_sequence
+        )
     payload = _apply_common_model_overrides(
         payload,
         args=args,
@@ -898,6 +939,7 @@ def _build_process_env(
 ) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     env["WANDB_PROJECT"] = args.wandb_project
     env["WANDB_GROUP"] = args.wandb_group or run_prefix
     env["WANDB_JOB_TYPE"] = job_type
@@ -1398,6 +1440,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--learning_rate", type=float, default=None)
+    parser.add_argument(
+        "--precision",
+        default=None,
+        help=(
+            "Optional Lightning precision override, e.g. 32-true, 16-mixed, "
+            "or bf16-mixed."
+        ),
+    )
+    parser.add_argument("--accumulate_grad_batches", type=int, default=None)
+    parser.add_argument(
+        "--easy_max_events_per_sequence",
+        type=int,
+        default=None,
+        help=(
+            "Optional cap for EasyTPP source sequence chunks. This is useful "
+            "for attention-heavy EasyTPP models whose memory grows quadratically "
+            "with sequence length."
+        ),
+    )
     parser.add_argument(
         "--no_model_defaults",
         action="store_true",

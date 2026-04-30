@@ -249,6 +249,8 @@ class VitalSignEasyTPPPredictor:
             default_root_dir=log_dir,
             gradient_clip_val=model_config.gradient_clip_val,
             max_epochs=model_config.max_epochs,
+            precision=model_config.precision,
+            accumulate_grad_batches=model_config.accumulate_grad_batches,
         )
 
         trainer.fit(model, datamodule=data_module)

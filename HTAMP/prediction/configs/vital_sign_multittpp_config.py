@@ -47,6 +47,8 @@ class VitalSignMultiTTPPModelConfig:
     accelerator: str = "auto"
     devices: int = 1
     strategy: Optional[str] = None
+    precision: str | int = "32-true"
+    accumulate_grad_batches: int = 1
     seed: int = 42
     n_samples: int = 100
     fixed_normalization: float = 50.0
@@ -86,6 +88,12 @@ class VitalSignMultiTTPPModelConfig:
             raise ValueError("weight_decay must be non-negative.")
         if self.gradient_clip_val < 0.0:
             raise ValueError("gradient_clip_val must be non-negative.")
+        if self.accumulate_grad_batches <= 0:
+            raise ValueError("accumulate_grad_batches must be greater than zero.")
+        if isinstance(self.precision, str):
+            self.precision = self.precision.strip()
+            if not self.precision:
+                raise ValueError("precision must not be empty.")
         if self.n_samples <= 0:
             raise ValueError("n_samples must be greater than zero.")
         if self.fixed_normalization <= 0.0:

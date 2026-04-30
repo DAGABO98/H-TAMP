@@ -978,7 +978,6 @@ def _sample_intensity_free_next(
     return max(0.0, dtime), type_id
 
 
-@torch.no_grad()
 def _sample_easy_next_event(
     *,
     model: VitalSignEasyTPPModule,
@@ -995,42 +994,60 @@ def _sample_easy_next_event(
             device=device,
         )
 
-    time_seq, time_delta_seq, event_seq, _, _ = _easy_batch_from_prefix(
-        times=times,
-        type_ids=type_ids,
-        device=device,
-    )
-    dtime_boundary = time_delta_seq + easy_model.event_sampler.dtime_max
-    accepted_dtimes, _ = easy_model.event_sampler.draw_next_time_one_step(
-        time_seq,
-        time_delta_seq,
-        event_seq,
-        dtime_boundary,
-        easy_model.compute_intensities_at_sample_times,
-        compute_last_step_only=True,
-    )
-    accepted_last = accepted_dtimes[0, -1]
-    accepted_index = torch.randint(
-        low=0,
-        high=int(accepted_last.numel()),
-        size=(1,),
-        device=device,
-    )
-    dtime_tensor = accepted_last[accepted_index].reshape(1, 1, 1).clamp_min(0.0)
-    intensities = easy_model.compute_intensities_at_sample_times(
-        time_seq,
-        time_delta_seq,
-        event_seq,
-        dtime_tensor,
-        max_steps=int(event_seq.shape[1]),
-        compute_last_step_only=True,
-    )
-    mark_scores = intensities[0, -1, 0, :].clamp_min(0.0)
-    if not torch.isfinite(mark_scores).all() or float(mark_scores.sum().item()) <= 0.0:
-        mark_scores = torch.ones_like(mark_scores)
-    probs = mark_scores / mark_scores.sum()
-    type_id = int(torch.multinomial(probs, 1).item())
-    return float(dtime_tensor.reshape(-1)[0].item()), type_id
+    # FullyNN computes intensity by differentiating its cumulative hazard with
+    # respect to sampled time. Most EasyTPP models should run under no_grad for
+    # cheap inference, but FullyNN needs a small grad-enabled island.
+    needs_grad_for_intensity = easy_model.__class__.__name__ == "FullyNN"
+    parameters = list(easy_model.parameters()) if needs_grad_for_intensity else []
+    original_requires_grad = [parameter.requires_grad for parameter in parameters]
+    if needs_grad_for_intensity:
+        for parameter in parameters:
+            parameter.requires_grad_(False)
+
+    try:
+        grad_context = torch.enable_grad() if needs_grad_for_intensity else torch.no_grad()
+        with torch.inference_mode(False):
+            with grad_context:
+                time_seq, time_delta_seq, event_seq, _, _ = _easy_batch_from_prefix(
+                    times=times,
+                    type_ids=type_ids,
+                    device=device,
+                )
+                dtime_boundary = time_delta_seq + easy_model.event_sampler.dtime_max
+                accepted_dtimes, _ = easy_model.event_sampler.draw_next_time_one_step(
+                    time_seq,
+                    time_delta_seq,
+                    event_seq,
+                    dtime_boundary,
+                    easy_model.compute_intensities_at_sample_times,
+                    compute_last_step_only=True,
+                )
+                accepted_last = accepted_dtimes[0, -1]
+                accepted_index = torch.randint(
+                    low=0,
+                    high=int(accepted_last.numel()),
+                    size=(1,),
+                    device=device,
+                )
+                dtime_tensor = accepted_last[accepted_index].reshape(1, 1, 1).clamp_min(0.0)
+                intensities = easy_model.compute_intensities_at_sample_times(
+                    time_seq,
+                    time_delta_seq,
+                    event_seq,
+                    dtime_tensor,
+                    max_steps=int(event_seq.shape[1]),
+                    compute_last_step_only=True,
+                )
+                mark_scores = intensities[0, -1, 0, :].clamp_min(0.0)
+                if not torch.isfinite(mark_scores).all() or float(mark_scores.sum().item()) <= 0.0:
+                    mark_scores = torch.ones_like(mark_scores)
+                probs = (mark_scores / mark_scores.sum()).detach()
+                type_id = int(torch.multinomial(probs, 1).item())
+                dtime_value = float(dtime_tensor.detach().reshape(-1)[0].item())
+                return dtime_value, type_id
+    finally:
+        for parameter, requires_grad in zip(parameters, original_requires_grad):
+            parameter.requires_grad_(requires_grad)
 
 
 def _sample_easy_rollout(

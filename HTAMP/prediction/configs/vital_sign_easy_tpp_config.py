@@ -286,6 +286,8 @@ class VitalSignEasyTPPModelConfig:
     accelerator: str = "auto"
     devices: int = 1
     strategy: Optional[str] = None
+    precision: str | int = "32-true"
+    accumulate_grad_batches: int = 1
     gpu: int = -1
     rnn_type: str = "LSTM"
     hidden_size: int = 64
@@ -321,6 +323,12 @@ class VitalSignEasyTPPModelConfig:
             raise ValueError("weight_decay must be non-negative.")
         if self.gradient_clip_val < 0.0:
             raise ValueError("gradient_clip_val must be non-negative.")
+        if self.accumulate_grad_batches <= 0:
+            raise ValueError("accumulate_grad_batches must be greater than zero.")
+        if isinstance(self.precision, str):
+            self.precision = self.precision.strip()
+            if not self.precision:
+                raise ValueError("precision must not be empty.")
         if min(self.hidden_size, self.time_emb_size, self.num_layers, self.num_heads) <= 0:
             raise ValueError(
                 "hidden_size, time_emb_size, num_layers, and num_heads must be greater than zero."
