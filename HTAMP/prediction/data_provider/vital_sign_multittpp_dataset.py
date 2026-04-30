@@ -16,7 +16,7 @@ from HTAMP.prediction.configs.vital_sign_multittpp_config import (
     VitalSignMultiTTPPDatasetConfig,
     VitalSignMultiTTPPTrainingConfig,
 )
-from HTAMP.prediction.data_provider.monitoring_requests_dataset import SPLITS
+from HTAMP.prediction.data_provider.request_events_dataset import SPLITS
 from HTAMP.prediction.data_provider.vital_sign_easy_tpp_dataset import (
     EOS_EVENT_TYPE_NAME,
     VitalSignEasyTPPDataManager,

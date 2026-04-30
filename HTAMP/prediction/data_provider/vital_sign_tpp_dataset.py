@@ -14,13 +14,13 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from HTAMP.prediction.configs.monitoring_request_config import MonitoringRequestDatasetConfig
+from HTAMP.prediction.configs.request_event_config import RequestEventDatasetConfig
 from HTAMP.prediction.configs.vital_sign_tpp_config import (
     VitalSignTPPDatasetConfig,
     VitalSignTPPModelConfig,
     VitalSignTPPTrainingConfig,
 )
-from HTAMP.prediction.data_provider.monitoring_requests_dataset import (
+from HTAMP.prediction.data_provider.request_events_dataset import (
     ENCOUNTER_ID_COLUMN,
     FLOOR_COLUMN,
     SPLITS,
@@ -99,12 +99,12 @@ def _dataset_config_snapshot(dataset_config: VitalSignTPPDatasetConfig) -> dict[
 
 def _build_request_dataset_config(
     dataset_config: VitalSignTPPDatasetConfig,
-) -> MonitoringRequestDatasetConfig:
-    return MonitoringRequestDatasetConfig.from_dict(
+) -> RequestEventDatasetConfig:
+    return RequestEventDatasetConfig.from_dict(
         {
             "annotated_data_files": dataset_config.annotated_data_files,
             "request_dir": dataset_config.request_dir,
-            "dataset_dir": str(Path(dataset_config.dataset_dir) / "_monitoring_requests_cache"),
+            "dataset_dir": str(Path(dataset_config.dataset_dir) / "_request_events_cache"),
             "start_date": dataset_config.start_date,
             "end_date": dataset_config.end_date,
             "patient_id_col": dataset_config.patient_id_col,

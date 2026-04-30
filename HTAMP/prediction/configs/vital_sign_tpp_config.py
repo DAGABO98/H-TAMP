@@ -1,26 +1,27 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
+from HTAMP.prediction.configs.request_event_config import (
+    SUPPORTED_REQUEST_TASKS,
+    SUPPORTED_VALIDATION_SPLIT_STRATEGIES,
+    VALIDATION_SPLIT_STRATEGY_ALIASES,
+    IsoWeek,
+    _build_annotated_data_files,
+    _coerce_mapping,
+    _deep_merge_dicts,
+    _default_test_iso_weeks,
+    _default_test_iso_weeks_by_floor,
+    _load_json_object,
+    _normalize_floor_key,
+    _normalize_test_iso_weeks,
+    _normalize_test_iso_weeks_by_floor,
+)
 
-SUPPORTED_VITAL_SIGN_TASKS = (
-    "blood_pressure",
-    "heart_rate",
-    "respiratory_rate",
-    "temperature",
-    "oxygen_saturation",
-)
-SUPPORTED_VALIDATION_SPLIT_STRATEGIES = (
-    "chronological_weeks",
-    "random_patients",
-)
-VALIDATION_SPLIT_STRATEGY_ALIASES = {
-    "grouped_patients": "random_patients",
-}
+SUPPORTED_VITAL_SIGN_TASKS = SUPPORTED_REQUEST_TASKS
 SUPPORTED_EVENT_ORDERS = ("ST", "STP")
 SUPPORTED_FLEX_EVENT_TYPE_MARK_MODES = ("task", "task_label", "task_component_label")
 SUPPORTED_LABEL_STRATEGIES = ("quantile", "threshold")
@@ -43,133 +44,6 @@ SUPPORTED_NON_LINEARITIES = (
     "Softplus",
     "Tanh",
 )
-IsoWeek = tuple[int, int]
-
-
-def _default_test_iso_weeks() -> tuple[IsoWeek, ...]:
-    try:
-        from HTAMP.assignment.run_test import ALLOWED_ISO_WEEKS
-
-        return tuple(sorted(ALLOWED_ISO_WEEKS))
-    except Exception:
-        return (
-            (2024, 27),
-            (2024, 36),
-            (2024, 40),
-            (2024, 44),
-            (2025, 5),
-            (2025, 14),
-        )
-
-
-def _load_json_object(config_path: str | Path) -> dict[str, Any]:
-    path = Path(config_path)
-    with path.open("r", encoding="utf-8") as config_file:
-        payload = json.load(config_file)
-
-    if not isinstance(payload, dict):
-        raise ValueError(
-            f"Expected the JSON config at '{path}' to contain an object at the top level."
-        )
-    return payload
-
-
-def _coerce_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise TypeError(
-            f"Expected '{field_name}' to be a JSON object, got {type(value).__name__}."
-        )
-    return value
-
-
-def _deep_merge_dicts(base: Mapping[str, Any], updates: Mapping[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in updates.items():
-        if isinstance(value, Mapping) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge_dicts(base=merged[key], updates=value)
-            continue
-        merged[key] = value
-    return merged
-
-
-def _parse_iso_week_value(value: str) -> IsoWeek:
-    cleaned = value.strip().replace("W", "-").replace(",", "-").replace("_", "-")
-    parts = [part for part in cleaned.split("-") if part]
-    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-        return int(parts[0]), int(parts[1])
-    raise ValueError(
-        f"Could not parse ISO week value '{value}'. "
-        "Use formats like '2024W40', '2024-W40', or [2024, 40]."
-    )
-
-
-def _normalize_test_iso_weeks(
-    raw_weeks: Sequence[str | Sequence[int]] | None,
-) -> tuple[IsoWeek, ...]:
-    if raw_weeks is None:
-        return _default_test_iso_weeks()
-    if isinstance(raw_weeks, str):
-        raw_weeks = [raw_weeks]
-
-    normalized_weeks: list[tuple[int, int]] = []
-    for entry in raw_weeks:
-        if isinstance(entry, str):
-            normalized_weeks.append(_parse_iso_week_value(entry))
-            continue
-        if len(entry) != 2:
-            raise ValueError(
-                "Each test_iso_weeks entry must be either a string like '2024W40' "
-                "or a two-item sequence like [2024, 40]."
-            )
-        normalized_weeks.append((int(entry[0]), int(entry[1])))
-
-    return tuple(normalized_weeks)
-
-
-def _normalize_floor_key(raw_floor: Any, *, field_name: str) -> int:
-    if isinstance(raw_floor, bool):
-        raise TypeError(f"{field_name} floor keys must be integers, not booleans.")
-    try:
-        return int(raw_floor)
-    except (TypeError, ValueError) as exc:
-        raise TypeError(f"{field_name} floor keys must be integers.") from exc
-
-
-def _default_test_iso_weeks_by_floor() -> dict[int, tuple[IsoWeek, ...]]:
-    try:
-        from HTAMP.assignment.run_test import ALLOWED_ISO_WEEKS_BY_FLOOR
-
-        return {
-            int(floor): tuple(sorted(set(_normalize_test_iso_weeks(raw_weeks=weeks))))
-            for floor, weeks in ALLOWED_ISO_WEEKS_BY_FLOOR.items()
-        }
-    except Exception:
-        return {}
-
-
-def _normalize_test_iso_weeks_by_floor(
-    raw_weeks_by_floor: Mapping[Any, Sequence[str | Sequence[int]] | None] | None,
-) -> dict[int, tuple[IsoWeek, ...]]:
-    if raw_weeks_by_floor is None:
-        return _default_test_iso_weeks_by_floor()
-
-    normalized_weeks_by_floor: dict[int, tuple[IsoWeek, ...]] = {}
-    for raw_floor, raw_weeks in dict(
-        _coerce_mapping(value=raw_weeks_by_floor, field_name="test_iso_weeks_by_floor")
-    ).items():
-        floor = _normalize_floor_key(raw_floor, field_name="test_iso_weeks_by_floor")
-        normalized_weeks_by_floor[floor] = tuple(
-            sorted(set(_normalize_test_iso_weeks(raw_weeks=raw_weeks)))
-        )
-    return dict(sorted(normalized_weeks_by_floor.items()))
-
-
-def _build_annotated_data_files(raw_value: Any) -> AnnotatedDataFiles:
-    if isinstance(raw_value, AnnotatedDataFiles):
-        return raw_value
-
-    annotated_data = _coerce_mapping(value=raw_value, field_name="annotated_data_files")
-    return AnnotatedDataFiles(**dict(annotated_data))
 
 
 def _normalize_tasks(raw_tasks: Sequence[str] | str | None) -> tuple[str, ...]:
@@ -659,3 +533,4 @@ class VitalSignTPPPredictionJobConfig:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+    

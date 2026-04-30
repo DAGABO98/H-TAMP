@@ -17,7 +17,7 @@ from HTAMP.prediction.configs.vital_sign_easy_tpp_config import (
     VitalSignEasyTPPDatasetConfig,
     VitalSignEasyTPPTrainingConfig,
 )
-from HTAMP.prediction.data_provider.monitoring_requests_dataset import (
+from HTAMP.prediction.data_provider.request_events_dataset import (
     SPLITS,
     VITAL_OUTPUT_COMPONENTS,
 )
