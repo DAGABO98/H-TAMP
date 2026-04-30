@@ -148,7 +148,10 @@ class NHP(TorchBaseModel):
             left_hs.append(h_d_t)
             right_states.append(torch.cat((c_t, c_bar_t, delta_t, o_t), dim=-1))
 
-        left_hiddens = torch.stack(left_hs[1:], dim=-2)  # (batch_size, seq_len - 1, hidden_dim)
+        if len(left_hs) > 1:
+            left_hiddens = torch.stack(left_hs[1:], dim=-2)  # (batch_size, seq_len - 1, hidden_dim)
+        else:
+            left_hiddens = all_event_emb_BNP.new_empty(B, 0, self.hidden_size)
         right_hiddens = torch.stack(right_states, dim=-2)  # (batch_size, seq_len, 4 * hidden_dim)
         return left_hiddens, right_hiddens
 
