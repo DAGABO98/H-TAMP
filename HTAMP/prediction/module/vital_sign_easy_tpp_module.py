@@ -185,20 +185,39 @@ class VitalSignEasyTPPModule(L.LightningModule):
     def forward(self, batch: Mapping[str, torch.Tensor]) -> torch.Tensor:
         return self._compute_metrics(batch)["nll"]
 
-    def _compute_metrics(self, batch: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def _loglike_loss(self, batch: Mapping[str, torch.Tensor]) -> tuple[torch.Tensor, int]:
+        batch_tuple = self._batch_tuple(batch)
+        if self.model_config.model_id == "FullyNN":
+            with torch.inference_mode(False):
+                with torch.enable_grad():
+                    return self.easy_tpp_model.loglike_loss(batch_tuple)
+        return self.easy_tpp_model.loglike_loss(batch_tuple)
+
+    def _compute_metrics(
+        self,
+        batch: Mapping[str, torch.Tensor],
+        *,
+        detach_metrics: bool = False,
+    ) -> dict[str, torch.Tensor]:
         self._sync_easy_tpp_device(batch)
-        loss, num_events = self.easy_tpp_model.loglike_loss(self._batch_tuple(batch))
+        loss, num_events = self._loglike_loss(batch)
         normalizer = torch.as_tensor(
             max(float(num_events), 1.0),
             dtype=loss.dtype,
             device=loss.device,
         )
         nll = loss / normalizer
-        return {
+        metrics = {
             "loss": loss,
             "nll": nll,
             "num_events": normalizer,
         }
+        if detach_metrics:
+            metrics = {
+                metric_name: metric_value.detach()
+                for metric_name, metric_value in metrics.items()
+            }
+        return metrics
 
     def _log_metrics(
         self,
@@ -232,7 +251,7 @@ class VitalSignEasyTPPModule(L.LightningModule):
         batch: Mapping[str, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor]:
-        metrics = self._compute_metrics(batch)
+        metrics = self._compute_metrics(batch, detach_metrics=True)
         self._log_metrics("val", metrics, batch_size=int(batch["time_seqs"].shape[0]))
         return metrics
 
@@ -241,6 +260,6 @@ class VitalSignEasyTPPModule(L.LightningModule):
         batch: Mapping[str, torch.Tensor],
         batch_idx: int,
     ) -> dict[str, torch.Tensor]:
-        metrics = self._compute_metrics(batch)
+        metrics = self._compute_metrics(batch, detach_metrics=True)
         self._log_metrics("test", metrics, batch_size=int(batch["time_seqs"].shape[0]))
         return metrics

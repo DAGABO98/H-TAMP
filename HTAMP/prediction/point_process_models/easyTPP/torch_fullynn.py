@@ -46,7 +46,7 @@ class CumulHazardFunctionNetwork(nn.Module):
         for p in self.parameters():
             p.data = torch.clamp(p.data, min=self.params_eps)
 
-        time_delta_seqs.requires_grad_(True)
+        time_delta_seqs = time_delta_seqs.detach().clone().requires_grad_(True)
 
         # [batch_size, seq_len, hidden_size]
         t = self.layer_dense_1(time_delta_seqs.unsqueeze(dim=-1))
