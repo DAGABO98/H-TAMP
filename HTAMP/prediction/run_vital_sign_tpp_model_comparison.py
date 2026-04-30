@@ -50,7 +50,7 @@ SUPPORTED_MULTITTPP_MODELS = (
     "TriTPP",
     "SplineTransformer",
 )
-DEFAULT_MULTITTPP_MODELS = ("TriTPP",)
+DEFAULT_MULTITTPP_MODELS = ("TriTPP", "SplineTransformer", "ModulatedRenewal", "Renewal", "InhomogeneousPoisson")
 DEFAULT_MULTITTPP_MARK_SCHEMAS = ("enhanced", "plain")
 SUPPORTED_MULTITTPP_MARK_SCHEMAS = ("enhanced", "plain")
 DEFAULT_EASY_MARK_SCHEMAS = ("enhanced", "plain")
