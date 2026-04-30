@@ -71,6 +71,7 @@ BASE_SUMMARY_FIELDS = [
     "selection_metric",
     "selection_metric_value",
     "selection_rank",
+    "log_path",
     "metrics_summary_path",
     "best_checkpoint_path",
     "best_checkpoint_score",
@@ -250,6 +251,8 @@ class RunningJob:
     job: ComparisonJob
     process: subprocess.Popen
     temp_config_path: Path
+    log_path: Path
+    log_file: Any
     gpu_id: int | None
     start_time: datetime.datetime
     wall_clock_start: float
@@ -550,6 +553,14 @@ def _log_dir(args: argparse.Namespace) -> Path:
 
 def _temp_config_dir(args: argparse.Namespace) -> Path:
     return _log_dir(args) / "temp_configs" / "vital_sign_tpp_comparison"
+
+
+def _comparison_log_dir(args: argparse.Namespace) -> Path:
+    return _log_dir(args) / "comparison_logs"
+
+
+def _comparison_log_path(args: argparse.Namespace, run_name: str) -> Path:
+    return _comparison_log_dir(args) / f"{_safe_name(run_name)}.log"
 
 
 def _default_summary_path(run_prefix: str) -> Path:
@@ -1108,7 +1119,14 @@ def _launch_job(
         str(temp_config_path),
     ]
     gpu_label = f"GPU {gpu_id}" if gpu_id is not None else "un-pinned GPU/CPU"
+    log_path = _comparison_log_path(args, run_name=job.run_name)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = log_path.open("w", encoding="utf-8")
+    log_file.write(f"Command: {' '.join(command)}\n")
+    log_file.write(f"GPU: {gpu_label}\n\n")
+    log_file.flush()
     print(f"Starting {job.run_name} on {gpu_label}: {' '.join(command)}")
+    print(f"  Log: {log_path}")
     start_time = datetime.datetime.now()
     process = subprocess.Popen(
         command,
@@ -1119,11 +1137,15 @@ def _launch_job(
             run_prefix=run_prefix,
             job_type=job.family.lower(),
         ),
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
     return RunningJob(
         job=job,
         process=process,
         temp_config_path=temp_config_path,
+        log_path=log_path,
+        log_file=log_file,
         gpu_id=gpu_id,
         start_time=start_time,
         wall_clock_start=time.perf_counter(),
@@ -1136,6 +1158,7 @@ def _finalize_job(
     running_job: RunningJob,
 ) -> dict[str, Any]:
     returncode = running_job.process.wait()
+    running_job.log_file.close()
     duration_seconds = time.perf_counter() - running_job.wall_clock_start
     end_time = datetime.datetime.now()
     running_job.temp_config_path.unlink(missing_ok=True)
@@ -1147,6 +1170,8 @@ def _finalize_job(
         f"Finished {running_job.job.run_name} with status {status} "
         f"in {duration_seconds:.1f}s."
     )
+    if status != "success":
+        print(f"  Failure log: {running_job.log_path}")
     return {
         "family": running_job.job.family,
         "model_name": running_job.job.model_name,
@@ -1161,6 +1186,7 @@ def _finalize_job(
         "selection_metric": "",
         "selection_metric_value": "",
         "selection_rank": "",
+        "log_path": str(running_job.log_path),
         **metrics,
     }
 
@@ -1177,6 +1203,7 @@ def _cancel_running_jobs(running_jobs: list[RunningJob]) -> list[dict[str, Any]]
         except subprocess.TimeoutExpired:
             running_job.process.kill()
             running_job.process.wait()
+        running_job.log_file.close()
         running_job.temp_config_path.unlink(missing_ok=True)
         rows.append(
             {
@@ -1193,6 +1220,7 @@ def _cancel_running_jobs(running_jobs: list[RunningJob]) -> list[dict[str, Any]]
                 "selection_metric": "",
                 "selection_metric_value": "",
                 "selection_rank": "",
+                "log_path": str(running_job.log_path),
                 "metrics_summary_path": "",
                 "best_checkpoint_path": "",
                 "best_checkpoint_score": "",
@@ -1267,6 +1295,7 @@ def _run_jobs(
                             "selection_metric": "",
                             "selection_metric_value": "",
                             "selection_rank": "",
+                            "log_path": "",
                             "metrics_summary_path": "",
                             "best_checkpoint_path": "",
                             "best_checkpoint_score": "",
