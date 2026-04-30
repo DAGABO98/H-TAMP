@@ -1004,6 +1004,38 @@ def _sample_easy_next_event(
         for parameter in parameters:
             parameter.requires_grad_(False)
 
+    def intensity_at_sample_times(
+        time_seq: torch.Tensor,
+        time_delta_seq: torch.Tensor,
+        event_seq: torch.Tensor,
+        sample_dtimes: torch.Tensor,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        if (
+            needs_grad_for_intensity
+            and kwargs.get("compute_last_step_only", False)
+            and int(sample_dtimes.shape[1]) != int(time_seq.shape[1])
+        ):
+            copy_steps = min(int(sample_dtimes.shape[1]), int(time_seq.shape[1]))
+            expanded_sample_dtimes = torch.zeros(
+                (
+                    int(time_seq.shape[0]),
+                    int(time_seq.shape[1]),
+                    int(sample_dtimes.shape[-1]),
+                ),
+                dtype=sample_dtimes.dtype,
+                device=sample_dtimes.device,
+            )
+            expanded_sample_dtimes[:, -copy_steps:, :] = sample_dtimes[:, -copy_steps:, :]
+            sample_dtimes = expanded_sample_dtimes
+        return easy_model.compute_intensities_at_sample_times(
+            time_seq,
+            time_delta_seq,
+            event_seq,
+            sample_dtimes,
+            **kwargs,
+        )
+
     try:
         grad_context = torch.enable_grad() if needs_grad_for_intensity else torch.no_grad()
         with torch.inference_mode(False):
@@ -1019,7 +1051,7 @@ def _sample_easy_next_event(
                     time_delta_seq,
                     event_seq,
                     dtime_boundary,
-                    easy_model.compute_intensities_at_sample_times,
+                    intensity_at_sample_times,
                     compute_last_step_only=True,
                 )
                 accepted_last = accepted_dtimes[0, -1]
@@ -1030,7 +1062,7 @@ def _sample_easy_next_event(
                     device=device,
                 )
                 dtime_tensor = accepted_last[accepted_index].reshape(1, 1, 1).clamp_min(0.0)
-                intensities = easy_model.compute_intensities_at_sample_times(
+                intensities = intensity_at_sample_times(
                     time_seq,
                     time_delta_seq,
                     event_seq,
