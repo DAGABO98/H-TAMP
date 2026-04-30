@@ -706,7 +706,7 @@ def _build_flex_job_payload(
         ),
         run_name=run_name,
         config_payload=payload,
-        module_name="HTAMP.prediction.vital_sign_tpp_predictor",
+        module_name="HTAMP.prediction.predictor.vital_sign_tpp_predictor",
     )
 
 
@@ -747,7 +747,7 @@ def _build_easy_job_payload(
         variant=f"{model_id}_{mark_schema}",
         run_name=run_name,
         config_payload=payload,
-        module_name="HTAMP.prediction.vital_sign_easy_tpp_predictor",
+        module_name="HTAMP.prediction.predictor.vital_sign_easy_tpp_predictor",
     )
 
 
@@ -788,7 +788,7 @@ def _build_multittpp_job_payload(
         variant=f"{model_name}_{mark_schema}",
         run_name=run_name,
         config_payload=payload,
-        module_name="HTAMP.prediction.vital_sign_multittpp_predictor",
+        module_name="HTAMP.prediction.predictor.vital_sign_multittpp_predictor",
     )
 
 

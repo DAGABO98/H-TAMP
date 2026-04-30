@@ -49,13 +49,13 @@ from HTAMP.prediction.module.vital_sign_easy_tpp_module import (
 )
 from HTAMP.prediction.module.vital_sign_multittpp_module import VitalSignMultiTTPPModule
 from HTAMP.prediction.module.vital_sign_tpp_module import VitalSignTPPModule
-from HTAMP.prediction.otd_metric import Event, MOTDConfig, marked_otd
+from HTAMP.prediction.metrics.otd_metric import Event, MOTDConfig, marked_otd
 from HTAMP.prediction.point_process_models.easyTPP.torch_intensity_free import (
     LogNormalMixtureDistribution,
     clamp_preserve_gradients,
 )
 from HTAMP.prediction.point_process_models.easyTPP.torch_thinning import EventSampler
-from HTAMP.prediction.vital_sign_tpp_prediction_handler import (
+from HTAMP.prediction.prediction_handlers.vital_sign_tpp_prediction_handler import (
     _sample_future_events_from_prefix,
 )
 
