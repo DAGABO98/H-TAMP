@@ -226,15 +226,13 @@ class ANHN(TorchBaseModel):
         # [batch_size, seq_len, num_samples, 1, 1]
         sample_dtimes_ = sample_dtimes[:, :, :, None, None]
 
-        states_samples = []
-        seq_len = intensity_base.size()[1]
-        for _ in range(seq_len):
-            states_samples_ = self.compute_states_at_event_times(mu, alpha, delta, base_elapses + sample_dtimes_)
-            states_samples.append(states_samples_)
-
         # [batch_size, seq_len, num_sample, hidden_size]
-        states_samples = torch.stack(states_samples, dim=1)
-        return states_samples
+        return self.compute_states_at_event_times(
+            mu,
+            alpha,
+            delta,
+            base_elapses + sample_dtimes_,
+        )
 
     def compute_intensities_at_sample_times(self, time_seqs, time_delta_seqs, type_seqs, sample_dtimes, **kwargs):
         """Compute the intensity at sampled times.
@@ -254,7 +252,10 @@ class ANHN(TorchBaseModel):
 
         if attention_mask is None:
             batch_size, seq_len = time_seqs.size()
-            attention_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).unsqueeze(0)
+            attention_mask = torch.triu(
+                torch.ones(seq_len, seq_len, device=type_seqs.device),
+                diagonal=1,
+            ).unsqueeze(0)
             attention_mask = attention_mask.expand(batch_size, -1, -1).to(torch.bool)
 
         # [batch_size, seq_len, num_samples]
@@ -266,8 +267,8 @@ class ANHN(TorchBaseModel):
                                                              base_dtime, sample_dtimes)
 
         if compute_last_step_only:
-            lambdas = self.softplus(encoder_output[:, -1:, :, :])
+            lambdas = self.layer_intensity(encoder_output[:, -1:, :, :])
         else:
             # [batch_size, seq_len, num_samples, num_event_types]
-            lambdas = self.softplus(encoder_output)
+            lambdas = self.layer_intensity(encoder_output)
         return lambdas
