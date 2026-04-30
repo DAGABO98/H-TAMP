@@ -6,7 +6,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.linalg as linalg
 from torch._prims_common import NumberType
-from torch.cuda.amp import custom_bwd, custom_fwd  # automatic mixed precision package
+
+try:
+    from torch.amp import custom_bwd as _torch_amp_custom_bwd
+    from torch.amp import custom_fwd as _torch_amp_custom_fwd
+
+    def custom_fwd(fn=None, **kwargs):
+        return _torch_amp_custom_fwd(fn, device_type="cuda", **kwargs)
+
+    def custom_bwd(fn=None, **kwargs):
+        return _torch_amp_custom_bwd(fn, device_type="cuda", **kwargs)
+
+except (ImportError, TypeError):
+    from torch.cuda.amp import custom_bwd, custom_fwd  # automatic mixed precision package
 
 
 class ClampPreserveGradients(torch.autograd.Function):
