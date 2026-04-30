@@ -165,14 +165,22 @@ class VitalSignEasyTPPModule(L.LightningModule):
             weight_decay=self.model_config.weight_decay,
         )
 
-    def _batch_tuple(self, batch: Mapping[str, torch.Tensor]) -> tuple[torch.Tensor, ...]:
-        return (
+    def _batch_tuple(
+        self,
+        batch: Mapping[str, torch.Tensor],
+        *,
+        clone_tensors: bool = False,
+    ) -> tuple[torch.Tensor, ...]:
+        batch_tuple = (
             batch["time_seqs"],
             batch["time_delta_seqs"],
             batch["type_seqs"],
             batch["seq_non_pad_mask"],
             batch["attention_mask"],
         )
+        if clone_tensors:
+            return tuple(tensor.clone() for tensor in batch_tuple)
+        return batch_tuple
 
     def _sync_easy_tpp_device(self, batch: Mapping[str, torch.Tensor]) -> None:
         device = batch["time_seqs"].device
@@ -186,11 +194,12 @@ class VitalSignEasyTPPModule(L.LightningModule):
         return self._compute_metrics(batch)["nll"]
 
     def _loglike_loss(self, batch: Mapping[str, torch.Tensor]) -> tuple[torch.Tensor, int]:
-        batch_tuple = self._batch_tuple(batch)
         if self.model_config.model_id == "FullyNN":
             with torch.inference_mode(False):
                 with torch.enable_grad():
+                    batch_tuple = self._batch_tuple(batch, clone_tensors=True)
                     return self.easy_tpp_model.loglike_loss(batch_tuple)
+        batch_tuple = self._batch_tuple(batch)
         return self.easy_tpp_model.loglike_loss(batch_tuple)
 
     def _compute_metrics(
