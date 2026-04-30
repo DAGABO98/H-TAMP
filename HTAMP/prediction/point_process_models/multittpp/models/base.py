@@ -507,9 +507,10 @@ class TransformedExponential(nn.Module):
             yT = yT.masked_fill((idxT < 0).unsqueeze(-1), 0)
             N = (idxT.max() + 1).item()
 
-            if N < N_min:
-                y = F.pad(y, (0, N_min - N - 1), value=0.0)
-                k = F.pad(k, (0, N_min - N - 1), value=self.n_marks)
+            if y.shape[1] < N_min:
+                pad_len = N_min - y.shape[1]
+                y = F.pad(y, (0, pad_len), value=0.0)
+                k = F.pad(k, (0, pad_len), value=self.n_marks)
 
             for _ in range(n_samples):
                 x, condxT, cache = self.inverse(y, k, yT, cache_y=True)
