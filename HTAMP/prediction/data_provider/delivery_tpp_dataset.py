@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import logging
 import re
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -53,6 +55,7 @@ DELIVERY_TASK_NAME = "medication"
 NO_CONDITIONING_MODE = "none"
 PREVIOUS_DAY_SUMMARY_CONDITIONING_MODE = "previous_day_summary"
 MEDICATION_CODE_PROPERTY = "medication_code_index"
+LOGGER = logging.getLogger(__name__)
 WORKFLOW_IGNORED_CONFIG_FIELDS = (
     "preprocess_data",
     "save_data",
@@ -155,6 +158,103 @@ def _episode_filter(
             == str(encounter_id)
         )
     return frame.loc[mask].copy()
+
+
+def _timed_log(start_time: float, message: str, *args: object) -> None:
+    LOGGER.info("%s in %.1fs", message % args if args else message, time.perf_counter() - start_time)
+
+
+def _normalize_encounter_value(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    normalized = _normalize_identifier_series(pd.Series([value])).iloc[0]
+    if pd.isna(normalized):
+        return ""
+    return str(normalized)
+
+
+def _build_episode_lookup(frame: pd.DataFrame) -> dict[str, dict[object, pd.DataFrame]]:
+    empty_frame = frame.iloc[0:0].copy()
+    if frame.empty:
+        return {"patient": {}, "episode": {}, "empty": {"": empty_frame}}
+
+    indexed_frame = frame.copy()
+    indexed_frame["__patient_key"] = indexed_frame["patient_id"].astype(str)
+    indexed_frame["__encounter_key"] = (
+        _normalize_identifier_series(indexed_frame[ENCOUNTER_ID_COLUMN])
+        .fillna("")
+        .astype(str)
+    )
+    patient_lookup = {
+        str(patient_id): group.drop(columns=["__patient_key", "__encounter_key"])
+        .sort_values(TIMESTAMP_COLUMN, kind="mergesort")
+        .reset_index(drop=True)
+        for patient_id, group in indexed_frame.groupby("__patient_key", sort=False)
+    }
+    episode_lookup = {
+        (str(patient_id), str(encounter_id)): group.drop(columns=["__patient_key", "__encounter_key"])
+        .sort_values(TIMESTAMP_COLUMN, kind="mergesort")
+        .reset_index(drop=True)
+        for (patient_id, encounter_id), group in indexed_frame.groupby(
+            ["__patient_key", "__encounter_key"],
+            sort=False,
+            dropna=False,
+        )
+        if str(encounter_id).strip()
+    }
+    return {"patient": patient_lookup, "episode": episode_lookup, "empty": {"": empty_frame}}
+
+
+def _lookup_episode_frame(
+    lookup: Mapping[str, Mapping[object, pd.DataFrame]],
+    *,
+    patient_id: str,
+    encounter_id: str,
+) -> pd.DataFrame:
+    normalized_encounter_id = _normalize_encounter_value(encounter_id)
+    empty_frame = lookup.get("empty", {}).get("", pd.DataFrame())
+    if normalized_encounter_id:
+        return lookup["episode"].get(
+            (str(patient_id), normalized_encounter_id),
+            empty_frame,
+        )
+    return lookup["patient"].get(str(patient_id), empty_frame)
+
+
+def _filter_time_window(
+    frame: pd.DataFrame,
+    *,
+    start_time: object,
+    end_time: object,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    mask = frame[TIMESTAMP_COLUMN].between(
+        pd.Timestamp(start_time),
+        pd.Timestamp(end_time),
+        inclusive="both",
+    )
+    return frame.loc[mask].copy()
+
+
+def _segment_lookup_filter(
+    lookup: Mapping[str, Mapping[object, pd.DataFrame]],
+    segment: object,
+) -> pd.DataFrame:
+    frame = _lookup_episode_frame(
+        lookup,
+        patient_id=str(getattr(segment, "patient_id")),
+        encounter_id=(
+            ""
+            if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+            else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
+        ),
+    )
+    return _filter_time_window(
+        frame,
+        start_time=getattr(segment, "start_time"),
+        end_time=getattr(segment, "end_time"),
+    )
 
 
 def _previous_day_condition_feature_names(
@@ -319,15 +419,25 @@ class DeliveryTPPDataManager:
             self._load_dataset()
 
     def _build_from_requests(self) -> None:
+        build_start = time.perf_counter()
+        LOGGER.info("Starting delivery TPP dataset build in %s", self.dataset_dir)
         helper = _build_delivery_helper(dataset_config=self.dataset_config)
+        stage_start = time.perf_counter()
         request_handler = helper._build_request_handler()
+        _timed_log(stage_start, "Built request handler")
+        stage_start = time.perf_counter()
         vitals_df = helper._build_vitals_frame(request_handler=request_handler)
+        _timed_log(stage_start, "Built vitals frame with %d rows", len(vitals_df))
+        stage_start = time.perf_counter()
         admin_df, _ = helper._build_medication_frames(request_handler=request_handler)
+        _timed_log(stage_start, "Built medication administration frame with %d rows", len(admin_df))
+        stage_start = time.perf_counter()
         scheduled_df = _prepare_mapped_medication_frame(
             helper=helper,
             med_df=request_handler.med_df,
             time_col=self.dataset_config.medication_scheduled_time_col,
         )
+        _timed_log(stage_start, "Built scheduled medication frame with %d rows", len(scheduled_df))
         self.resolved_medication_code_col = helper.resolved_medication_code_col
 
         if scheduled_df.empty:
@@ -336,17 +446,22 @@ class DeliveryTPPDataManager:
                 "date range and medication-time column."
             )
 
+        stage_start = time.perf_counter()
         timeline_df = helper._build_timeline_df(
             vitals_df=vitals_df,
             admin_df=admin_df,
             orders_df=scheduled_df,
         )
+        _timed_log(stage_start, "Built timeline frame with %d rows", len(timeline_df))
         if timeline_df.empty:
             raise ValueError(
                 "No delivery TPP source events were found for the configured date range."
             )
 
+        stage_start = time.perf_counter()
         _, segments_df = helper._build_split_segments(timeline_df=timeline_df)
+        _timed_log(stage_start, "Built %d split segment rows", len(segments_df))
+        stage_start = time.perf_counter()
         event_type_context = self._build_event_type_context(
             helper=helper,
             segments_df=segments_df,
@@ -354,6 +469,8 @@ class DeliveryTPPDataManager:
             admin_df=admin_df,
             scheduled_df=scheduled_df,
         )
+        _timed_log(stage_start, "Built event type context")
+        stage_start = time.perf_counter()
         self.split_records = self._build_split_records(
             helper=helper,
             segments_df=segments_df,
@@ -362,10 +479,12 @@ class DeliveryTPPDataManager:
             scheduled_df=scheduled_df,
             event_type_context=event_type_context,
         )
+        _timed_log(stage_start, "Built split records")
         self.metadata = self._build_metadata(
             helper=helper,
             event_type_context=event_type_context,
         )
+        _timed_log(build_start, "Finished delivery TPP dataset build")
 
     def _build_event_type_context(
         self,
@@ -380,17 +499,35 @@ class DeliveryTPPDataManager:
             split_name: {"vitals": [], "admins": [], "scheduled": []}
             for split_name in SPLITS
         }
-        for segment in segments_df.itertuples(index=False):
-            segment_series = pd.Series(segment._asdict())
-            split_source_frames[segment.split]["vitals"].append(
-                helper._segment_filter(vitals_df, segment_series)
+        lookup_start = time.perf_counter()
+        vitals_lookup = _build_episode_lookup(vitals_df)
+        admin_lookup = _build_episode_lookup(admin_df)
+        scheduled_lookup = _build_episode_lookup(scheduled_df)
+        _timed_log(lookup_start, "Built episode lookups for event type context")
+
+        train_segments = segments_df[segments_df["split"].astype(str) == "train"]
+        LOGGER.info(
+            "Collecting train frames for vocabulary from %d/%d segments",
+            len(train_segments),
+            len(segments_df),
+        )
+        progress_every = max(1, len(train_segments) // 10) if len(train_segments) else 1
+        for segment_index, segment in enumerate(train_segments.itertuples(index=False), start=1):
+            split_source_frames["train"]["vitals"].append(
+                _segment_lookup_filter(vitals_lookup, segment)
             )
-            split_source_frames[segment.split]["admins"].append(
-                helper._segment_filter(admin_df, segment_series)
+            split_source_frames["train"]["admins"].append(
+                _segment_lookup_filter(admin_lookup, segment)
             )
-            split_source_frames[segment.split]["scheduled"].append(
-                helper._segment_filter(scheduled_df, segment_series)
+            split_source_frames["train"]["scheduled"].append(
+                _segment_lookup_filter(scheduled_lookup, segment)
             )
+            if segment_index % progress_every == 0 or segment_index == len(train_segments):
+                LOGGER.info(
+                    "Collected vocabulary source frames for %d/%d train segments",
+                    segment_index,
+                    len(train_segments),
+                )
 
         train_vitals_df = (
             pd.concat(split_source_frames["train"]["vitals"], ignore_index=True)
@@ -526,12 +663,29 @@ class DeliveryTPPDataManager:
         unknown_medication_index = medication_code_to_index[self.dataset_config.unknown_medication_label]
         vital_vocab = [str(name) for name in event_type_context["vital_vocab"]]
         med_condition_vocab = [str(code) for code in event_type_context["med_condition_vocab"]]
+        if _uses_enhanced_event_types(self.dataset_config):
+            med_code_to_delivery_event_type = {
+                str(key): str(value)
+                for key, value in dict(event_type_context["med_code_to_event_type"]).items()
+            }
+            unknown_delivery_event_type = med_code_to_delivery_event_type[
+                self.dataset_config.unknown_medication_label
+            ]
+        else:
+            med_code_to_delivery_event_type = {}
+            unknown_delivery_event_type = DELIVERY_TASK_NAME
+
+        lookup_start = time.perf_counter()
+        vitals_lookup = _build_episode_lookup(vitals_df)
+        admin_lookup = _build_episode_lookup(admin_df)
+        scheduled_lookup = _build_episode_lookup(scheduled_df)
+        _timed_log(lookup_start, "Built episode lookups for split-record construction")
 
         split_records: dict[str, list[VitalSignTPPSequenceRecord]] = {
             split: [] for split in SPLITS
         }
-        for segment in segments_df.itertuples(index=False):
-            segment_series = pd.Series(segment._asdict())
+        progress_every = max(1, len(segments_df) // 10) if len(segments_df) else 1
+        for segment_index, segment in enumerate(segments_df.itertuples(index=False), start=1):
             split_name = str(segment.split)
             patient_id = str(segment.patient_id)
             encounter_id = (
@@ -539,23 +693,30 @@ class DeliveryTPPDataManager:
                 if pd.isna(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
                 else str(getattr(segment, ENCOUNTER_ID_COLUMN, ""))
             )
-            segment_scheduled_df = helper._segment_filter(
-                scheduled_df,
-                segment_series,
+            segment_scheduled_df = _segment_lookup_filter(
+                scheduled_lookup,
+                segment,
             ).sort_values(
                 [TIMESTAMP_COLUMN, "med_code", ENCOUNTER_ID_COLUMN],
                 kind="mergesort",
             ).reset_index(drop=True)
             if segment_scheduled_df.empty:
+                if segment_index % progress_every == 0 or segment_index == len(segments_df):
+                    LOGGER.info(
+                        "Built split records through %d/%d segments; counts=%s",
+                        segment_index,
+                        len(segments_df),
+                        {split: len(records) for split, records in split_records.items()},
+                    )
                 continue
 
-            patient_vitals_df = _episode_filter(
-                vitals_df,
+            patient_vitals_df = _lookup_episode_frame(
+                vitals_lookup,
                 patient_id=patient_id,
                 encounter_id=encounter_id,
             )
-            patient_admin_df = _episode_filter(
-                admin_df,
+            patient_admin_df = _lookup_episode_frame(
+                admin_lookup,
                 patient_id=patient_id,
                 encounter_id=encounter_id,
             )
@@ -598,9 +759,9 @@ class DeliveryTPPDataManager:
                             med_code,
                             unknown_medication_index,
                         )
-                        delivery_event_type = self._event_type_for_med_code(
-                            med_code=med_code,
-                            event_type_context=event_type_context,
+                        delivery_event_type = med_code_to_delivery_event_type.get(
+                            med_code,
+                            unknown_delivery_event_type,
                         )
                         property_payload = (
                             {MEDICATION_CODE_PROPERTY: float(medication_code_index)}
@@ -653,6 +814,13 @@ class DeliveryTPPDataManager:
                             condition=condition_vector,
                         )
                     )
+            if segment_index % progress_every == 0 or segment_index == len(segments_df):
+                LOGGER.info(
+                    "Built split records through %d/%d segments; counts=%s",
+                    segment_index,
+                    len(segments_df),
+                    {split: len(records) for split, records in split_records.items()},
+                )
 
         for split_name in SPLITS:
             if not split_records[split_name]:
@@ -978,6 +1146,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
     p_start = datetime.datetime.now()
     try:
         parser = build_parser()
