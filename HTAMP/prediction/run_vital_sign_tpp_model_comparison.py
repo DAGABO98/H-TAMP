@@ -5,6 +5,7 @@ import copy
 import csv
 import datetime
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -57,6 +58,8 @@ DEFAULT_EASY_MARK_SCHEMAS = ("enhanced", "plain")
 SUPPORTED_EASY_MARK_SCHEMAS = ("enhanced", "plain")
 DEFAULT_SELECTION_METRIC = "val_nll"
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
+LOGGER = logging.getLogger(__name__)
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 BASE_SUMMARY_FIELDS = [
     "family",
     "model_name",
@@ -141,6 +144,7 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
             "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
             "accumulate_grad_batches": 2,
         },
     },
@@ -157,6 +161,7 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
             "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
             "accumulate_grad_batches": 2,
         },
     },
@@ -173,6 +178,7 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
             "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
             "accumulate_grad_batches": 2,
         },
     },
@@ -189,6 +195,7 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
             "loss_integral_num_sample_per_step": 8,
+            "precision": "16-mixed",
             "accumulate_grad_batches": 4,
         },
     },
@@ -215,6 +222,7 @@ EASY_TPP_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
             "dropout_rate": 0.1,
             "learning_rate": 0.0003,
             "loss_integral_num_sample_per_step": 12,
+            "precision": "16-mixed",
             "accumulate_grad_batches": 2,
             "model_specs": {
                 "CE_coef": 10.0,
@@ -301,10 +309,12 @@ def _resolve_repo_relative_path(path_str: str | Path) -> Path:
 
 def _load_json(path_str: str | Path) -> dict[str, Any]:
     path = _resolve_repo_relative_path(path_str)
+    LOGGER.debug("Loading JSON config from %s", path)
     with path.open("r", encoding="utf-8") as config_file:
         payload = json.load(config_file)
     if not isinstance(payload, dict):
         raise ValueError(f"Expected '{path}' to contain a JSON object.")
+    LOGGER.info("Loaded config %s", path)
     return payload
 
 
@@ -618,6 +628,29 @@ def _comparison_log_path(args: argparse.Namespace, run_name: str) -> Path:
     return _comparison_log_dir(args) / f"{_safe_name(run_name)}.log"
 
 
+def _controller_log_path(args: argparse.Namespace, run_prefix: str) -> Path:
+    configured_log_file = getattr(args, "log_file", None)
+    if configured_log_file:
+        return _resolve_repo_relative_path(configured_log_file)
+    return _comparison_log_dir(args) / f"{_safe_name(run_prefix)}_controller.log"
+
+
+def configure_comparison_logging(args: argparse.Namespace, *, run_prefix: str) -> Path:
+    log_path = _controller_log_path(args, run_prefix)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper()),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
+        force=True,
+    )
+    LOGGER.info("Controller log: %s", log_path)
+    return log_path
+
+
 def _default_summary_path(run_prefix: str) -> Path:
     return _repo_root() / "data" / "prediction" / "vital_sign_tpp_comparison" / (
         f"{_safe_name(run_prefix)}_summary.csv"
@@ -651,7 +684,9 @@ def _write_temp_config(
         delete=False,
     ) as config_file:
         json.dump(payload, config_file, indent=2)
-        return Path(config_file.name)
+        config_path = Path(config_file.name)
+    LOGGER.debug("Wrote temporary config for %s to %s", run_name, config_path)
+    return config_path
 
 
 def _apply_dataset_training_flags(
@@ -928,6 +963,34 @@ def _build_jobs(args: argparse.Namespace, run_prefix: str) -> list[ComparisonJob
     return jobs
 
 
+def _log_job_plan(jobs: Sequence[ComparisonJob]) -> None:
+    family_counts: dict[str, int] = {}
+    for job in jobs:
+        family_counts[job.family] = family_counts.get(job.family, 0) + 1
+    LOGGER.info("Prepared %d training job(s): %s", len(jobs), family_counts)
+    for job_index, job in enumerate(jobs, start=1):
+        dataset_config = dict(job.config_payload.get("dataset_config", {}))
+        model_config = dict(job.config_payload.get("model_config", {}))
+        LOGGER.info(
+            "Job %02d/%02d run_name=%s family=%s variant=%s module=%s dataset_dir=%s "
+            "order=%s model_id=%s model_name=%s mark_mode=%s",
+            job_index,
+            len(jobs),
+            job.run_name,
+            job.family,
+            job.variant,
+            job.module_name,
+            dataset_config.get("dataset_dir", ""),
+            model_config.get("order", ""),
+            model_config.get("model_id", ""),
+            model_config.get("model_name", ""),
+            dataset_config.get(
+                "event_type_mark_mode",
+                dataset_config.get("mark_label_mode", ""),
+            ),
+        )
+
+
 def _build_prepare_payload(base_payload: Mapping[str, Any]) -> dict[str, Any]:
     payload = copy.deepcopy(dict(base_payload))
     dataset_config = payload.setdefault("dataset_config", {})
@@ -972,6 +1035,7 @@ def _prepare_datasets_for_jobs(
     module_by_family: Mapping[str, str],
 ) -> None:
     prepared_keys: set[tuple[str, str]] = set()
+    LOGGER.info("Preparing unique datasets for %d selected training jobs", len(jobs))
     for job in jobs:
         module_name = module_by_family.get(job.family)
         if module_name is None:
@@ -983,6 +1047,11 @@ def _prepare_datasets_for_jobs(
             payload=prepare_payload,
         )
         if prepare_key in prepared_keys:
+            LOGGER.info(
+                "Skipping duplicate dataset preparation for %s/%s",
+                job.family,
+                job.variant,
+            )
             continue
         prepared_keys.add(prepare_key)
 
@@ -993,6 +1062,7 @@ def _prepare_datasets_for_jobs(
             payload=prepare_payload,
             run_prefix=run_prefix,
         )
+    LOGGER.info("Finished dataset preparation for %d unique dataset variant(s)", len(prepared_keys))
 
 
 def _selected_flex_dataset_variants(args: argparse.Namespace) -> tuple[tuple[str, str], ...]:
@@ -1048,23 +1118,49 @@ def _run_dataset_prepare(
         "--config_path",
         str(temp_config_path),
     ]
-    print(f"Preparing {label} dataset with command: {' '.join(command)}")
+    log_path = _comparison_log_dir(args) / (
+        f"{_safe_name(run_prefix)}_{_safe_name(label)}_dataset_prepare.log"
+    )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("Preparing %s dataset with %s", label, module_name)
+    LOGGER.info("Dataset preparation log: %s", log_path)
+    start_time = time.perf_counter()
     try:
-        result = subprocess.run(
-            command,
-            cwd=_repo_root(),
-            env=_build_process_env(
-                args,
-                gpu_id=None,
-                run_prefix=run_prefix,
-                job_type="dataset_prepare",
-            ),
-            check=False,
-        )
+        with log_path.open("w", encoding="utf-8") as log_file:
+            log_file.write(f"Command: {' '.join(command)}\n")
+            log_file.write("GPU: un-pinned GPU/CPU\n")
+            log_file.write(f"Started: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n")
+            log_file.flush()
+            result = subprocess.run(
+                command,
+                cwd=_repo_root(),
+                env=_build_process_env(
+                    args,
+                    gpu_id=None,
+                    run_prefix=run_prefix,
+                    job_type="dataset_prepare",
+                ),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            log_file.write(f"\nFinished: {datetime.datetime.now().isoformat(timespec='seconds')}\n")
+            log_file.write(f"Return code: {result.returncode}\n")
         if result.returncode != 0:
+            LOGGER.error(
+                "%s dataset preparation failed with return code %s; see %s",
+                label,
+                result.returncode,
+                log_path,
+            )
             raise RuntimeError(
                 f"{label} dataset preparation failed with return code {result.returncode}."
             )
+        LOGGER.info(
+            "Prepared %s dataset successfully in %.1fs",
+            label,
+            time.perf_counter() - start_time,
+        )
     finally:
         temp_config_path.unlink(missing_ok=True)
 
@@ -1076,9 +1172,10 @@ def _prepare_datasets(
     run_prefix: str,
 ) -> None:
     if args.skip_flex and args.skip_easy and args.skip_multittpp:
+        LOGGER.info("Dataset pre-build skipped because every model family was skipped")
         return
     if not args.prepare_datasets:
-        print("Dataset pre-build is disabled; training jobs will use config workflow flags.")
+        LOGGER.info("Dataset pre-build is disabled; training jobs will use config workflow flags")
         return
 
     _prepare_datasets_for_jobs(
@@ -1168,6 +1265,7 @@ def _write_summary(summary_path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(summary_file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    LOGGER.info("Updated summary CSV at %s with %d row(s)", summary_path, len(rows))
 
 
 def _launch_job(
@@ -1198,8 +1296,17 @@ def _launch_job(
     log_file.write(f"Command: {' '.join(command)}\n")
     log_file.write(f"GPU: {gpu_label}\n\n")
     log_file.flush()
-    print(f"Starting {job.run_name} on {gpu_label}: {' '.join(command)}")
-    print(f"  Log: {log_path}")
+    LOGGER.info(
+        "Starting job %s [%s/%s] on %s",
+        job.run_name,
+        job.family,
+        job.variant,
+        gpu_label,
+    )
+    LOGGER.info("Job log: %s", log_path)
+    LOGGER.debug("Job command: %s", " ".join(command))
+    LOGGER.debug("Job temp config: %s", temp_config_path)
+    LOGGER.debug("Expected metrics summary: %s", metrics_path)
     start_time = datetime.datetime.now()
     process = subprocess.Popen(
         command,
@@ -1239,12 +1346,27 @@ def _finalize_job(
     metrics = _extract_metrics(
         _read_metrics_summary(args, run_name=running_job.job.run_name)
     )
-    print(
-        f"Finished {running_job.job.run_name} with status {status} "
-        f"in {duration_seconds:.1f}s."
+    log_method = LOGGER.info if status == "success" else LOGGER.error
+    log_method(
+        "Finished job %s with status=%s returncode=%s duration=%.1fs",
+        running_job.job.run_name,
+        status,
+        returncode,
+        duration_seconds,
     )
     if status != "success":
-        print(f"  Failure log: {running_job.log_path}")
+        LOGGER.error("Failure log: %s", running_job.log_path)
+    elif metrics:
+        LOGGER.info(
+            "Metrics for %s: best_checkpoint=%s selection candidates=%s",
+            running_job.job.run_name,
+            metrics.get("best_checkpoint_path", ""),
+            {
+                key: value
+                for key, value in metrics.items()
+                if key.startswith("val_") or key.startswith("test_")
+            },
+        )
     return {
         "family": running_job.job.family,
         "model_name": running_job.job.model_name,
@@ -1266,14 +1388,18 @@ def _finalize_job(
 
 def _cancel_running_jobs(running_jobs: list[RunningJob]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    if running_jobs:
+        LOGGER.warning("Cancelling %d running job(s)", len(running_jobs))
     for running_job in running_jobs:
         if running_job.process.poll() is None:
+            LOGGER.warning("Terminating %s", running_job.job.run_name)
             running_job.process.terminate()
 
     for running_job in running_jobs:
         try:
             running_job.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
+            LOGGER.warning("Killing %s after terminate timeout", running_job.job.run_name)
             running_job.process.kill()
             running_job.process.wait()
         running_job.log_file.close()
@@ -1318,6 +1444,13 @@ def _run_jobs(
     if gpu_ids:
         max_parallel_runs = min(max_parallel_runs, len(gpu_ids))
     available_gpu_ids = list(gpu_ids[:max_parallel_runs])
+    LOGGER.info(
+        "Running %d training job(s) with max_parallel_runs=%d gpu_ids=%s",
+        len(pending_jobs),
+        max_parallel_runs,
+        gpu_ids or ["un-pinned"],
+    )
+    last_heartbeat = time.perf_counter()
 
     while pending_jobs or running_jobs:
         while pending_jobs and len(running_jobs) < max_parallel_runs:
@@ -1338,6 +1471,15 @@ def _run_jobs(
             if running_job.process.poll() is not None
         ]
         if not finished_indices:
+            now = time.perf_counter()
+            if now - last_heartbeat >= 60.0:
+                LOGGER.info(
+                    "Heartbeat: running=%s pending=%d completed=%d",
+                    [running_job.job.run_name for running_job in running_jobs],
+                    len(pending_jobs),
+                    len(rows),
+                )
+                last_heartbeat = now
             continue
 
         for finished_index in reversed(finished_indices):
@@ -1351,8 +1493,10 @@ def _run_jobs(
                 available_gpu_ids.sort()
 
             if rows[-1]["status"] != "success" and args.fail_fast:
+                LOGGER.error("Fail-fast enabled; cancelling remaining jobs after %s failed", rows[-1]["run_name"])
                 rows.extend(_cancel_running_jobs(running_jobs))
                 for pending_job in pending_jobs:
+                    LOGGER.warning("Marking pending job %s as cancelled", pending_job.run_name)
                     rows.append(
                         {
                             "family": pending_job.family,
@@ -1464,6 +1608,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb_group", default=None)
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument("--selection_metric", default=DEFAULT_SELECTION_METRIC)
+    parser.add_argument(
+        "--log_level",
+        default="INFO",
+        type=str.upper,
+        choices=LOG_LEVELS,
+        help="Controller logging verbosity.",
+    )
+    parser.add_argument(
+        "--log_file",
+        default=None,
+        help=(
+            "Optional controller log path. Defaults to a controller log in the "
+            "comparison log directory."
+        ),
+    )
     parser.add_argument("--accelerator", default="auto")
     parser.add_argument("--strategy", default=None)
     parser.add_argument("--max_epochs", type=int, default=None)
@@ -1515,19 +1674,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     run_prefix = _run_prefix(args.run_prefix)
+    controller_log_path = configure_comparison_logging(args, run_prefix=run_prefix)
     summary_path = _summary_path(args, run_prefix)
     jobs = _build_jobs(args, run_prefix=run_prefix)
 
-    print(f"Prepared {len(jobs)} training job(s).")
-    print(f"W&B project: {args.wandb_project}")
-    print(f"W&B group: {args.wandb_group or run_prefix}")
-    print(f"Per-architecture defaults: {not args.no_model_defaults}")
-    print(f"Summary path: {summary_path}")
-    for job in jobs:
-        print(f"  - {job.run_name} [{job.family}/{job.variant}]")
+    LOGGER.info("Starting vital-sign TPP model comparison")
+    LOGGER.info("Controller log path: %s", controller_log_path)
+    LOGGER.info("W&B project: %s", args.wandb_project)
+    LOGGER.info("W&B group: %s", args.wandb_group or run_prefix)
+    LOGGER.info("W&B enabled: %s", not args.no_wandb)
+    LOGGER.info("Per-architecture defaults: %s", not args.no_model_defaults)
+    LOGGER.info("Summary path: %s", summary_path)
+    _log_job_plan(jobs)
 
     if args.dry_run:
-        print("Dry run requested; no datasets or models were trained.")
+        LOGGER.info("Dry run requested; no datasets or models were trained")
         return 0
 
     _prepare_datasets(args, jobs=jobs, run_prefix=run_prefix)
@@ -1537,11 +1698,11 @@ def main() -> int:
         run_prefix=run_prefix,
         summary_path=summary_path,
     )
-    print(f"Vital-sign TPP comparison summary saved to {summary_path}")
+    LOGGER.info("Vital-sign TPP comparison summary saved to %s", summary_path)
     if exit_code == 0:
-        print("All selected vital-sign TPP comparison jobs completed successfully.")
+        LOGGER.info("All selected vital-sign TPP comparison jobs completed successfully")
     else:
-        print("At least one vital-sign TPP comparison job failed.")
+        LOGGER.error("At least one vital-sign TPP comparison job failed")
     return exit_code
 
 

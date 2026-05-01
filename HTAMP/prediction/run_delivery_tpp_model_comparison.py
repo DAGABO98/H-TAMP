@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping
 
 from HTAMP.prediction import run_vital_sign_tpp_model_comparison as base
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_EASY_CONFIG_PATH = (
     "HTAMP/prediction/configs/config_files/prediction/"
@@ -415,9 +418,10 @@ def _prepare_datasets(
     run_prefix: str,
 ) -> None:
     if args.skip_flex and args.skip_easy and args.skip_multittpp:
+        LOGGER.info("Dataset pre-build skipped because every model family was skipped")
         return
     if not args.prepare_datasets:
-        print("Dataset pre-build is disabled; training jobs will use config workflow flags.")
+        LOGGER.info("Dataset pre-build is disabled; training jobs will use config workflow flags")
         return
 
     base._prepare_datasets_for_jobs(
@@ -454,19 +458,21 @@ def main() -> int:
     _patch_base_runner_paths()
     args = build_parser().parse_args()
     run_prefix = _run_prefix(args.run_prefix)
+    controller_log_path = base.configure_comparison_logging(args, run_prefix=run_prefix)
     summary_path = _summary_path(args, run_prefix)
     jobs = _build_jobs(args, run_prefix=run_prefix)
 
-    print(f"Prepared {len(jobs)} delivery training job(s).")
-    print(f"W&B project: {args.wandb_project}")
-    print(f"W&B group: {args.wandb_group or run_prefix}")
-    print(f"Per-architecture defaults: {not args.no_model_defaults}")
-    print(f"Summary path: {summary_path}")
-    for job in jobs:
-        print(f"  - {job.run_name} [{job.family}/{job.variant}]")
+    LOGGER.info("Starting delivery TPP model comparison")
+    LOGGER.info("Controller log path: %s", controller_log_path)
+    LOGGER.info("W&B project: %s", args.wandb_project)
+    LOGGER.info("W&B group: %s", args.wandb_group or run_prefix)
+    LOGGER.info("W&B enabled: %s", not args.no_wandb)
+    LOGGER.info("Per-architecture defaults: %s", not args.no_model_defaults)
+    LOGGER.info("Summary path: %s", summary_path)
+    base._log_job_plan(jobs)
 
     if args.dry_run:
-        print("Dry run requested; no datasets or models were trained.")
+        LOGGER.info("Dry run requested; no datasets or models were trained")
         return 0
 
     _prepare_datasets(args, jobs=jobs, run_prefix=run_prefix)
@@ -476,11 +482,11 @@ def main() -> int:
         run_prefix=run_prefix,
         summary_path=summary_path,
     )
-    print(f"Delivery TPP comparison summary saved to {summary_path}")
+    LOGGER.info("Delivery TPP comparison summary saved to %s", summary_path)
     if exit_code == 0:
-        print("All selected delivery TPP comparison jobs completed successfully.")
+        LOGGER.info("All selected delivery TPP comparison jobs completed successfully")
     else:
-        print("At least one delivery TPP comparison job failed.")
+        LOGGER.error("At least one delivery TPP comparison job failed")
     return exit_code
 
 
