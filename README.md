@@ -23,9 +23,14 @@ To test movement visualization:
 python -m HTAMP.planning.state --use_saved_data --num_robots 5
 ```
 
-To preprocess the data
+To preprocess the data:
 ```console
 python -m HTAMP.data_processing.data_processing
+```
+
+To create mapping from medicine names to ATC3 codes:
+```console
+python -m HTAMP.prediction.medication_mapping.build_medication_mapping --input_csv data/processed/medication_orders_annotated.csv --med_name_col "Medication Generic Name" --output_csv data/prediction/medication_mapping/medication_mapping.csv
 ```
 
 To debug a specific policy:
