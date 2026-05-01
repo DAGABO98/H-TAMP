@@ -400,71 +400,31 @@ def _selected_flex_dataset_variants(args: argparse.Namespace) -> tuple[tuple[str
     return tuple(variants)
 
 
-def _prepare_datasets(args: argparse.Namespace, run_prefix: str) -> None:
+DATASET_PREPARE_MODULE_BY_FAMILY = {
+    "FlexTPP": "HTAMP.prediction.data_provider.delivery_tpp_dataset",
+    "EasyTPP": "HTAMP.prediction.data_provider.delivery_easy_tpp_dataset",
+    "MultiTTPP": "HTAMP.prediction.data_provider.delivery_multittpp_dataset",
+}
+
+
+def _prepare_datasets(
+    args: argparse.Namespace,
+    *,
+    jobs: list[base.ComparisonJob],
+    run_prefix: str,
+) -> None:
     if args.skip_flex and args.skip_easy and args.skip_multittpp:
         return
     if not args.prepare_datasets:
         print("Dataset pre-build is disabled; training jobs will use config workflow flags.")
         return
 
-    if not args.skip_flex:
-        flex_payload = base._load_json(args.flex_config_path)
-        for mark_schema, conditioning_mode in _selected_flex_dataset_variants(args):
-            base._run_dataset_prepare(
-                args,
-                label=(
-                    f"FlexTPP-{_flex_st_schema_suffix(mark_schema)}-"
-                    f"{base._flex_conditioning_suffix(conditioning_mode)}"
-                ),
-                module_name="HTAMP.prediction.data_provider.delivery_tpp_dataset",
-                payload=base._build_prepare_payload(
-                    _apply_flex_dataset_variant(
-                        flex_payload,
-                        order="ST",
-                        mark_schema=mark_schema,
-                        conditioning_mode=conditioning_mode,
-                    )
-                ),
-                run_prefix=run_prefix,
-            )
-
-    if not args.skip_easy:
-        easy_payload = base._load_json(args.easy_config_path)
-        easy_mark_schemas = base._parse_easy_mark_schemas(args.easy_mark_schemas)
-        separate_easy_dataset_dir = len(easy_mark_schemas) > 1
-        for mark_schema in easy_mark_schemas:
-            base._run_dataset_prepare(
-                args,
-                label=f"EasyTPP-{_easy_schema_suffix(mark_schema)}",
-                module_name="HTAMP.prediction.data_provider.delivery_easy_tpp_dataset",
-                payload=base._build_prepare_payload(
-                    _apply_easy_mark_schema(
-                        easy_payload,
-                        mark_schema=mark_schema,
-                        separate_dataset_dir=separate_easy_dataset_dir,
-                    )
-                ),
-                run_prefix=run_prefix,
-            )
-
-    if not args.skip_multittpp:
-        multittpp_payload = base._load_json(args.multittpp_config_path)
-        multittpp_mark_schemas = base._parse_multittpp_mark_schemas(args.multittpp_mark_schemas)
-        separate_multittpp_dataset_dir = len(multittpp_mark_schemas) > 1
-        for mark_schema in multittpp_mark_schemas:
-            base._run_dataset_prepare(
-                args,
-                label=f"MultiTTPP-{_multittpp_schema_suffix(mark_schema)}",
-                module_name="HTAMP.prediction.data_provider.delivery_multittpp_dataset",
-                payload=base._build_prepare_payload(
-                    _apply_multittpp_mark_schema(
-                        multittpp_payload,
-                        mark_schema=mark_schema,
-                        separate_dataset_dir=separate_multittpp_dataset_dir,
-                    )
-                ),
-                run_prefix=run_prefix,
-            )
+    base._prepare_datasets_for_jobs(
+        args,
+        jobs=jobs,
+        run_prefix=run_prefix,
+        module_by_family=DATASET_PREPARE_MODULE_BY_FAMILY,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -508,7 +468,7 @@ def main() -> int:
         print("Dry run requested; no datasets or models were trained.")
         return 0
 
-    _prepare_datasets(args, run_prefix=run_prefix)
+    _prepare_datasets(args, jobs=jobs, run_prefix=run_prefix)
     exit_code = base._run_jobs(
         args,
         jobs=jobs,
