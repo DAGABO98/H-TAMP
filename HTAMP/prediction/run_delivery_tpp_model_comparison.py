@@ -256,6 +256,7 @@ def _build_easy_job_payload(
         payload.setdefault("dataset_config", {})["max_events_per_sequence"] = int(
             args.easy_max_events_per_sequence
         )
+    payload = base._apply_sequence_cap_dataset_dir(payload)
     payload = base._apply_common_model_overrides(
         payload,
         args=args,

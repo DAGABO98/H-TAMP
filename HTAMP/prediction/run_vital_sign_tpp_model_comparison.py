@@ -481,6 +481,31 @@ def _multittpp_schema_suffix(mark_schema: str) -> str:
     return "enhanced_marks" if mark_schema == "enhanced" else "standard_marks"
 
 
+def _sequence_cap_cache_suffix(max_events_per_sequence: Any) -> str | None:
+    if max_events_per_sequence is None:
+        return None
+    try:
+        max_events = int(max_events_per_sequence)
+    except (TypeError, ValueError):
+        return f"max_events_{_safe_name(max_events_per_sequence)}"
+    if max_events <= 0:
+        return None
+    return f"max_events_{max_events}"
+
+
+def _apply_sequence_cap_dataset_dir(payload: Mapping[str, Any]) -> dict[str, Any]:
+    updated_payload = copy.deepcopy(dict(payload))
+    dataset_config = updated_payload.setdefault("dataset_config", {})
+    suffix = _sequence_cap_cache_suffix(dataset_config.get("max_events_per_sequence"))
+    if suffix is None:
+        return updated_payload
+
+    dataset_dir = Path(str(dataset_config.get("dataset_dir", "data/prediction/vital_sign_easy_tpp_dataset")))
+    if dataset_dir.name != suffix:
+        dataset_config["dataset_dir"] = str(dataset_dir / suffix)
+    return updated_payload
+
+
 def _apply_flex_event_type_schema(
     payload: Mapping[str, Any],
     *,
@@ -776,6 +801,7 @@ def _build_easy_job_payload(
         payload.setdefault("dataset_config", {})["max_events_per_sequence"] = int(
             args.easy_max_events_per_sequence
         )
+    payload = _apply_sequence_cap_dataset_dir(payload)
     payload = _apply_common_model_overrides(
         payload,
         args=args,

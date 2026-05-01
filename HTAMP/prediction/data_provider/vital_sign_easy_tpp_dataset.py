@@ -60,6 +60,53 @@ def _dataset_config_snapshot(dataset_config: VitalSignEasyTPPDatasetConfig) -> d
     return _json_safe_value(payload)
 
 
+def _flatten_config_snapshot(
+    payload: Mapping[str, Any],
+    *,
+    prefix: str = "",
+) -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    for key, value in payload.items():
+        dotted_key = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            flattened.update(_flatten_config_snapshot(value, prefix=dotted_key))
+        else:
+            flattened[dotted_key] = value
+    return flattened
+
+
+def _config_snapshot_mismatch_summary(
+    *,
+    saved_snapshot: Mapping[str, Any],
+    expected_snapshot: Mapping[str, Any],
+    max_items: int = 12,
+) -> str:
+    saved_flat = _flatten_config_snapshot(saved_snapshot)
+    expected_flat = _flatten_config_snapshot(expected_snapshot)
+    changed_keys = sorted(set(saved_flat) | set(expected_flat))
+    differences = [
+        (
+            key,
+            saved_flat.get(key, "<missing>"),
+            expected_flat.get(key, "<missing>"),
+        )
+        for key in changed_keys
+        if saved_flat.get(key, "<missing>") != expected_flat.get(key, "<missing>")
+    ]
+    if not differences:
+        return "Snapshot values differ, but no scalar field difference could be summarized."
+
+    shown_differences = differences[:max_items]
+    parts = [
+        f"{key}: saved={saved_value!r}, expected={expected_value!r}"
+        for key, saved_value, expected_value in shown_differences
+    ]
+    remaining = len(differences) - len(shown_differences)
+    if remaining > 0:
+        parts.append(f"... and {remaining} more field(s)")
+    return "; ".join(parts)
+
+
 def _as_finite_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -609,12 +656,18 @@ class VitalSignEasyTPPDataManager:
         self.metadata = dict(payload["metadata"])
         if int(self.metadata.get("version", -1)) != DATASET_VERSION:
             raise ValueError("Saved EasyTPP vital-sign dataset version mismatch.")
-        if self.metadata.get("config_snapshot") != _dataset_config_snapshot(
-            self.dataset_config
-        ):
+        saved_snapshot = self.metadata.get("config_snapshot")
+        expected_snapshot = _dataset_config_snapshot(self.dataset_config)
+        if saved_snapshot != expected_snapshot:
+            mismatch_summary = (
+                _config_snapshot_mismatch_summary(
+                    saved_snapshot=saved_snapshot if isinstance(saved_snapshot, Mapping) else {},
+                    expected_snapshot=expected_snapshot,
+                )
+            )
             raise ValueError(
                 "Saved EasyTPP vital-sign dataset does not match the current "
-                "dataset configuration."
+                f"dataset configuration. Differences: {mismatch_summary}."
             )
 
         raw_split_records = dict(payload["split_records"])
