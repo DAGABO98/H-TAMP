@@ -466,11 +466,49 @@ def _load_model_specs(
     return specs
 
 
-def _apply_dataset_load_flags(dataset_config: Any, *, use_saved_datasets: bool) -> Any:
-    dataset_config.use_saved_dataset = bool(use_saved_datasets)
-    dataset_config.preprocess_data = not bool(use_saved_datasets)
-    dataset_config.save_data = not bool(use_saved_datasets)
-    return dataset_config
+def _copy_dataset_config_with_load_flags(
+    dataset_config: Any,
+    *,
+    use_saved_datasets: bool,
+    save_rebuilt_dataset: bool = True,
+) -> Any:
+    payload = dataset_config.to_dict() if hasattr(dataset_config, "to_dict") else dict(dataset_config)
+    payload["use_saved_dataset"] = bool(use_saved_datasets)
+    payload["preprocess_data"] = not bool(use_saved_datasets)
+    payload["save_data"] = bool(save_rebuilt_dataset) if not use_saved_datasets else False
+    return type(dataset_config).from_dict(payload)
+
+
+def _build_dataset_bundle_with_cache_fallback(
+    *,
+    dataset_config: Any,
+    builder: Any,
+    description: str,
+    use_saved_datasets: bool,
+    builder_kwargs: Mapping[str, Any] | None = None,
+) -> Any:
+    builder_kwargs = dict(builder_kwargs or {})
+    load_config = _copy_dataset_config_with_load_flags(
+        dataset_config,
+        use_saved_datasets=use_saved_datasets,
+    )
+    try:
+        return builder(dataset_config=load_config, **builder_kwargs)
+    except Exception as load_error:
+        if not use_saved_datasets:
+            raise
+
+        dataset_dir = getattr(load_config, "dataset_dir", "<unknown>")
+        _log(
+            f"{description}: cached dataset could not be loaded from "
+            f"{dataset_dir}; rebuilding it. Reason: {load_error}"
+        )
+        rebuild_config = _copy_dataset_config_with_load_flags(
+            dataset_config,
+            use_saved_datasets=False,
+            save_rebuilt_dataset=True,
+        )
+        return builder(dataset_config=rebuild_config, **builder_kwargs)
 
 
 def _canonical_easy_training_config(
@@ -501,12 +539,11 @@ def _build_evaluation_context(
         args=args,
         model_specs=model_specs,
     )
-    easy_dataset_config = _apply_dataset_load_flags(
-        easy_training_config.dataset_config,
+    easy_bundle = _build_dataset_bundle_with_cache_fallback(
+        dataset_config=easy_training_config.dataset_config,
+        builder=build_vital_sign_easy_tpp_dataset_bundle,
+        description="Canonical EasyTPP OTD dataset",
         use_saved_datasets=args.use_saved_datasets,
-    )
-    easy_bundle = build_vital_sign_easy_tpp_dataset_bundle(
-        dataset_config=easy_dataset_config,
     )
     easy_records = easy_bundle.get_raw_records(args.split)
     demand_counts_before_filter = _demand_sequence_counts(easy_records)
@@ -1149,10 +1186,6 @@ def _base_task_from_mark_name(mark_name: str, metadata: Mapping[str, Any]) -> st
 
 def _easy_training_config(spec: ModelSpec, args: argparse.Namespace) -> VitalSignEasyTPPTrainingConfig:
     training_config = VitalSignEasyTPPTrainingConfig.from_dict(spec.training_config)
-    training_config.dataset_config = _apply_dataset_load_flags(
-        training_config.dataset_config,
-        use_saved_datasets=args.use_saved_datasets,
-    )
     return training_config
 
 
@@ -1163,8 +1196,11 @@ def _load_easy_model_and_bundle(
     device: torch.device,
 ) -> tuple[VitalSignEasyTPPModule, VitalSignEasyTPPDatasetBundle]:
     training_config = _easy_training_config(spec=spec, args=args)
-    easy_bundle = build_vital_sign_easy_tpp_dataset_bundle(
+    easy_bundle = _build_dataset_bundle_with_cache_fallback(
         dataset_config=training_config.dataset_config,
+        builder=build_vital_sign_easy_tpp_dataset_bundle,
+        description=f"{spec.run_name} EasyTPP dataset",
+        use_saved_datasets=args.use_saved_datasets,
     )
     model = VitalSignEasyTPPModule.load_from_checkpoint(
         checkpoint_path=str(spec.checkpoint_path),
@@ -1189,10 +1225,6 @@ def _load_easy_model_and_bundle(
 
 def _flex_training_config(spec: ModelSpec, args: argparse.Namespace) -> VitalSignTPPTrainingConfig:
     training_config = VitalSignTPPTrainingConfig.from_dict(spec.training_config)
-    training_config.dataset_config = _apply_dataset_load_flags(
-        training_config.dataset_config,
-        use_saved_datasets=args.use_saved_datasets,
-    )
     return training_config
 
 
@@ -1203,9 +1235,12 @@ def _load_flex_model_and_bundle(
     device: torch.device,
 ) -> tuple[VitalSignTPPModule, VitalSignTPPDatasetBundle]:
     training_config = _flex_training_config(spec, args)
-    flex_bundle = build_vital_sign_tpp_dataset_bundle(
+    flex_bundle = _build_dataset_bundle_with_cache_fallback(
         dataset_config=training_config.dataset_config,
-        model_config=training_config.model_config,
+        builder=build_vital_sign_tpp_dataset_bundle,
+        description=f"{spec.run_name} FlexTPP dataset",
+        use_saved_datasets=args.use_saved_datasets,
+        builder_kwargs={"model_config": training_config.model_config},
     )
     model = VitalSignTPPModule.load_from_checkpoint(
         checkpoint_path=str(spec.checkpoint_path),
@@ -1225,10 +1260,6 @@ def _multittpp_training_config(
     args: argparse.Namespace,
 ) -> VitalSignMultiTTPPTrainingConfig:
     training_config = VitalSignMultiTTPPTrainingConfig.from_dict(spec.training_config)
-    training_config.dataset_config = _apply_dataset_load_flags(
-        training_config.dataset_config,
-        use_saved_datasets=args.use_saved_datasets,
-    )
     return training_config
 
 
@@ -1239,8 +1270,11 @@ def _load_multittpp_model_and_bundle(
     device: torch.device,
 ) -> tuple[VitalSignMultiTTPPModule, VitalSignMultiTTPPDatasetBundle]:
     training_config = _multittpp_training_config(spec=spec, args=args)
-    multittpp_bundle = build_vital_sign_multittpp_dataset_bundle(
+    multittpp_bundle = _build_dataset_bundle_with_cache_fallback(
         dataset_config=training_config.dataset_config,
+        builder=build_vital_sign_multittpp_dataset_bundle,
+        description=f"{spec.run_name} MultiTTPP dataset",
+        use_saved_datasets=args.use_saved_datasets,
     )
     model = VitalSignMultiTTPPModule.load_from_checkpoint(
         checkpoint_path=str(spec.checkpoint_path),
