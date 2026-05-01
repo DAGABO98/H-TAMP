@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, stdev
@@ -479,6 +480,57 @@ def _copy_dataset_config_with_load_flags(
     return type(dataset_config).from_dict(payload)
 
 
+@contextmanager
+def _dataset_rebuild_lock(
+    *,
+    dataset_dir: str | Path,
+    description: str,
+    timeout_seconds: float = 7200.0,
+    stale_after_seconds: float = 21600.0,
+) -> Any:
+    lock_dir = Path(dataset_dir)
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / ".otd_dataset_rebuild.lock"
+    start_time = time.monotonic()
+    announced_wait = False
+    lock_fd: int | None = None
+    while lock_fd is None:
+        try:
+            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(lock_fd, f"pid={os.getpid()} time={datetime.datetime.now().isoformat()}\n".encode("utf-8"))
+        except FileExistsError:
+            try:
+                lock_age = time.time() - lock_path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if lock_age > stale_after_seconds:
+                try:
+                    lock_path.unlink()
+                    _log(f"{description}: removed stale dataset rebuild lock at {lock_path}.")
+                    continue
+                except FileNotFoundError:
+                    continue
+            if time.monotonic() - start_time > timeout_seconds:
+                raise TimeoutError(
+                    f"Timed out waiting for dataset rebuild lock at {lock_path} "
+                    f"while preparing {description}."
+                )
+            if not announced_wait:
+                _log(f"{description}: waiting for another OTD process to rebuild {lock_dir}.")
+                announced_wait = True
+            time.sleep(5.0)
+
+    try:
+        yield
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _build_dataset_bundle_with_cache_fallback(
     *,
     dataset_config: Any,
@@ -488,6 +540,18 @@ def _build_dataset_bundle_with_cache_fallback(
     builder_kwargs: Mapping[str, Any] | None = None,
 ) -> Any:
     builder_kwargs = dict(builder_kwargs or {})
+    if not use_saved_datasets:
+        rebuild_config = _copy_dataset_config_with_load_flags(
+            dataset_config,
+            use_saved_datasets=False,
+            save_rebuilt_dataset=True,
+        )
+        with _dataset_rebuild_lock(
+            dataset_dir=getattr(rebuild_config, "dataset_dir", "."),
+            description=description,
+        ):
+            return builder(dataset_config=rebuild_config, **builder_kwargs)
+
     load_config = _copy_dataset_config_with_load_flags(
         dataset_config,
         use_saved_datasets=use_saved_datasets,
@@ -495,9 +559,6 @@ def _build_dataset_bundle_with_cache_fallback(
     try:
         return builder(dataset_config=load_config, **builder_kwargs)
     except Exception as load_error:
-        if not use_saved_datasets:
-            raise
-
         dataset_dir = getattr(load_config, "dataset_dir", "<unknown>")
         _log(
             f"{description}: cached dataset could not be loaded from "
@@ -508,7 +569,14 @@ def _build_dataset_bundle_with_cache_fallback(
             use_saved_datasets=False,
             save_rebuilt_dataset=True,
         )
-        return builder(dataset_config=rebuild_config, **builder_kwargs)
+        with _dataset_rebuild_lock(
+            dataset_dir=getattr(rebuild_config, "dataset_dir", "."),
+            description=description,
+        ):
+            try:
+                return builder(dataset_config=load_config, **builder_kwargs)
+            except Exception:
+                return builder(dataset_config=rebuild_config, **builder_kwargs)
 
 
 def _canonical_easy_training_config(
