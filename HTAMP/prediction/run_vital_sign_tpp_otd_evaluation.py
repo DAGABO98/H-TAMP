@@ -2142,6 +2142,7 @@ def _log_wandb(
     output_paths: Sequence[Path],
     plot_paths: Sequence[Path],
     summary_rows: Sequence[Mapping[str, Any]],
+    artifact_name: str = "vital_sign_tpp_otd_evaluation",
 ) -> None:
     if not args.wandb:
         return
@@ -2175,7 +2176,7 @@ def _log_wandb(
                 wandb.summary[f"{metric_prefix}/{metric_name}"] = summary_row[metric_name]
     for plot_path in plot_paths:
         wandb.log({plot_path.stem: wandb.Image(str(plot_path))})
-    artifact = wandb.Artifact("vital_sign_tpp_otd_evaluation", type="evaluation")
+    artifact = wandb.Artifact(artifact_name, type="evaluation")
     for output_path in output_paths:
         artifact.add_file(str(output_path))
     for plot_path in plot_paths:

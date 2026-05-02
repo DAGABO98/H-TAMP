@@ -349,10 +349,10 @@ def main() -> int:
     if args.wandb:
         base._log_wandb(
             args=args,
-            summary_path=summary_path,
-            detail_path=detail_path,
-            metadata_path=metadata_path,
+            output_paths=[detail_path, summary_path, metadata_path],
             plot_paths=plot_paths,
+            summary_rows=summary_rows,
+            artifact_name="delivery_tpp_otd_evaluation",
         )
     return 0 if all(row.get("status") == "success" for row in summary_rows) else 1
 
