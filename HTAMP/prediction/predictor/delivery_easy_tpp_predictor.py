@@ -22,6 +22,7 @@ from HTAMP.prediction.module.vital_sign_easy_tpp_module import VitalSignEasyTPPM
 from HTAMP.prediction.predictor.vital_sign_easy_tpp_predictor import (
     VitalSignEasyTPPPredictor,
 )
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 
 class DeliveryEasyTPPPredictor(VitalSignEasyTPPPredictor):
@@ -94,6 +95,7 @@ class DeliveryEasyTPPPredictor(VitalSignEasyTPPPredictor):
             job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

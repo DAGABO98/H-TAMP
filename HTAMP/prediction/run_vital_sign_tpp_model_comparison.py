@@ -296,6 +296,24 @@ class RunningJob:
     wall_clock_start: float
 
 
+@dataclass
+class DatasetPrepareJob:
+    label: str
+    module_name: str
+    payload: dict[str, Any]
+
+
+@dataclass
+class RunningDatasetPrepare:
+    job: DatasetPrepareJob
+    process: subprocess.Popen
+    temp_config_path: Path
+    log_path: Path
+    log_file: Any
+    start_time: datetime.datetime
+    wall_clock_start: float
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -1035,6 +1053,7 @@ def _prepare_datasets_for_jobs(
     module_by_family: Mapping[str, str],
 ) -> None:
     prepared_keys: set[tuple[str, str]] = set()
+    prepare_jobs: list[DatasetPrepareJob] = []
     LOGGER.info("Preparing unique datasets for %d selected training jobs", len(jobs))
     for job in jobs:
         module_name = module_by_family.get(job.family)
@@ -1055,14 +1074,15 @@ def _prepare_datasets_for_jobs(
             continue
         prepared_keys.add(prepare_key)
 
-        _run_dataset_prepare(
-            args,
-            label=f"{job.family}-{job.variant}",
-            module_name=module_name,
-            payload=prepare_payload,
-            run_prefix=run_prefix,
+        prepare_jobs.append(
+            DatasetPrepareJob(
+                label=f"{job.family}-{job.variant}",
+                module_name=module_name,
+                payload=prepare_payload,
+            )
         )
-    LOGGER.info("Finished dataset preparation for %d unique dataset variant(s)", len(prepared_keys))
+
+    _run_dataset_prepare_jobs(args, prepare_jobs=prepare_jobs, run_prefix=run_prefix)
 
 
 def _selected_flex_dataset_variants(args: argparse.Namespace) -> tuple[tuple[str, str], ...]:
@@ -1091,11 +1111,215 @@ def _build_process_env(
     env["WANDB_PROJECT"] = args.wandb_project
     env["WANDB_GROUP"] = args.wandb_group or run_prefix
     env["WANDB_JOB_TYPE"] = job_type
+    env["WANDB_INIT_TIMEOUT"] = str(args.wandb_init_timeout)
     if args.stf_log_dir:
         env["STF_LOG_DIR"] = str(_log_dir(args))
     if gpu_id is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     return env
+
+
+def _dataset_prepare_log_path(
+    args: argparse.Namespace,
+    *,
+    label: str,
+    run_prefix: str,
+) -> Path:
+    return _comparison_log_dir(args) / (
+        f"{_safe_name(run_prefix)}_{_safe_name(label)}_dataset_prepare.log"
+    )
+
+
+def _launch_dataset_prepare(
+    args: argparse.Namespace,
+    *,
+    job: DatasetPrepareJob,
+    run_prefix: str,
+) -> RunningDatasetPrepare:
+    temp_config_path = _write_temp_config(
+        args,
+        payload=job.payload,
+        run_name=f"{run_prefix}_{job.label}_dataset_prepare",
+    )
+    command = [
+        sys.executable,
+        "-m",
+        job.module_name,
+        "--config_path",
+        str(temp_config_path),
+    ]
+    log_path = _dataset_prepare_log_path(args, label=job.label, run_prefix=run_prefix)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("Preparing %s dataset with %s", job.label, job.module_name)
+    LOGGER.info("Dataset preparation log: %s", log_path)
+    start_time = datetime.datetime.now()
+    wall_clock_start = time.perf_counter()
+    log_file = log_path.open("w", encoding="utf-8")
+    try:
+        log_file.write(f"Command: {' '.join(command)}\n")
+        log_file.write("GPU: un-pinned GPU/CPU\n")
+        log_file.write(f"Started: {start_time.isoformat(timespec='seconds')}\n\n")
+        log_file.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=_repo_root(),
+            env=_build_process_env(
+                args,
+                gpu_id=None,
+                run_prefix=run_prefix,
+                job_type="dataset_prepare",
+            ),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    except Exception:
+        log_file.close()
+        temp_config_path.unlink(missing_ok=True)
+        raise
+
+    LOGGER.info("Started %s dataset preparation with pid=%s", job.label, process.pid)
+    return RunningDatasetPrepare(
+        job=job,
+        process=process,
+        temp_config_path=temp_config_path,
+        log_path=log_path,
+        log_file=log_file,
+        start_time=start_time,
+        wall_clock_start=wall_clock_start,
+    )
+
+
+def _finalize_dataset_prepare(running_prepare: RunningDatasetPrepare) -> bool:
+    returncode = running_prepare.process.wait()
+    duration = time.perf_counter() - running_prepare.wall_clock_start
+    try:
+        running_prepare.log_file.write(
+            f"\nFinished: {datetime.datetime.now().isoformat(timespec='seconds')}\n"
+        )
+        running_prepare.log_file.write(f"Return code: {returncode}\n")
+    finally:
+        running_prepare.log_file.close()
+        running_prepare.temp_config_path.unlink(missing_ok=True)
+
+    if returncode != 0:
+        LOGGER.error(
+            "%s dataset preparation failed with return code %s after %.1fs; see %s",
+            running_prepare.job.label,
+            returncode,
+            duration,
+            running_prepare.log_path,
+        )
+        return False
+
+    LOGGER.info(
+        "Prepared %s dataset successfully in %.1fs",
+        running_prepare.job.label,
+        duration,
+    )
+    return True
+
+
+def _cancel_running_dataset_prepares(
+    running_prepares: list[RunningDatasetPrepare],
+) -> None:
+    if running_prepares:
+        LOGGER.warning("Cancelling %d running dataset preparation job(s)", len(running_prepares))
+
+    for running_prepare in running_prepares:
+        if running_prepare.process.poll() is None:
+            LOGGER.warning("Terminating dataset preparation %s", running_prepare.job.label)
+            running_prepare.process.terminate()
+
+    for running_prepare in running_prepares:
+        try:
+            running_prepare.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            LOGGER.warning(
+                "Killing dataset preparation %s after terminate timeout",
+                running_prepare.job.label,
+            )
+            running_prepare.process.kill()
+            running_prepare.process.wait()
+        try:
+            running_prepare.log_file.write(
+                f"\nCancelled: {datetime.datetime.now().isoformat(timespec='seconds')}\n"
+            )
+            running_prepare.log_file.write(
+                f"Return code: {running_prepare.process.returncode}\n"
+            )
+        finally:
+            running_prepare.log_file.close()
+            running_prepare.temp_config_path.unlink(missing_ok=True)
+    running_prepares.clear()
+
+
+def _run_dataset_prepare_jobs(
+    args: argparse.Namespace,
+    *,
+    prepare_jobs: Sequence[DatasetPrepareJob],
+    run_prefix: str,
+) -> None:
+    if not prepare_jobs:
+        LOGGER.info("No dataset variants need preparation")
+        return
+
+    max_parallel_prepares = max(1, int(getattr(args, "max_parallel_dataset_prepares", 1)))
+    pending_jobs = list(prepare_jobs)
+    running_prepares: list[RunningDatasetPrepare] = []
+    completed_count = 0
+    last_heartbeat = time.perf_counter()
+    LOGGER.info(
+        "Preparing %d unique dataset variant(s) with max_parallel_dataset_prepares=%d",
+        len(pending_jobs),
+        max_parallel_prepares,
+    )
+
+    try:
+        while pending_jobs or running_prepares:
+            while pending_jobs and len(running_prepares) < max_parallel_prepares:
+                running_prepares.append(
+                    _launch_dataset_prepare(
+                        args,
+                        job=pending_jobs.pop(0),
+                        run_prefix=run_prefix,
+                    )
+                )
+
+            time.sleep(1.0)
+            finished_indices = [
+                index
+                for index, running_prepare in enumerate(running_prepares)
+                if running_prepare.process.poll() is not None
+            ]
+            if not finished_indices:
+                now = time.perf_counter()
+                if now - last_heartbeat >= 60.0:
+                    LOGGER.info(
+                        "Dataset prep heartbeat: running=%s pending=%d completed=%d",
+                        [running_prepare.job.label for running_prepare in running_prepares],
+                        len(pending_jobs),
+                        completed_count,
+                    )
+                    last_heartbeat = now
+                continue
+
+            for finished_index in reversed(finished_indices):
+                finished_prepare = running_prepares.pop(finished_index)
+                if not _finalize_dataset_prepare(finished_prepare):
+                    _cancel_running_dataset_prepares(running_prepares)
+                    raise RuntimeError(
+                        f"{finished_prepare.job.label} dataset preparation failed; "
+                        f"see {finished_prepare.log_path}."
+                    )
+                completed_count += 1
+
+        LOGGER.info(
+            "Finished dataset preparation for %d unique dataset variant(s)",
+            completed_count,
+        )
+    except Exception:
+        _cancel_running_dataset_prepares(running_prepares)
+        raise
 
 
 def _run_dataset_prepare(
@@ -1106,63 +1330,18 @@ def _run_dataset_prepare(
     payload: Mapping[str, Any],
     run_prefix: str,
 ) -> None:
-    temp_config_path = _write_temp_config(
+    prepare_job = DatasetPrepareJob(
+        label=label,
+        module_name=module_name,
+        payload=copy.deepcopy(dict(payload)),
+    )
+    running_prepare = _launch_dataset_prepare(
         args,
-        payload=payload,
-        run_name=f"{run_prefix}_{label}_dataset_prepare",
+        job=prepare_job,
+        run_prefix=run_prefix,
     )
-    command = [
-        sys.executable,
-        "-m",
-        module_name,
-        "--config_path",
-        str(temp_config_path),
-    ]
-    log_path = _comparison_log_dir(args) / (
-        f"{_safe_name(run_prefix)}_{_safe_name(label)}_dataset_prepare.log"
-    )
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    LOGGER.info("Preparing %s dataset with %s", label, module_name)
-    LOGGER.info("Dataset preparation log: %s", log_path)
-    start_time = time.perf_counter()
-    try:
-        with log_path.open("w", encoding="utf-8") as log_file:
-            log_file.write(f"Command: {' '.join(command)}\n")
-            log_file.write("GPU: un-pinned GPU/CPU\n")
-            log_file.write(f"Started: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n")
-            log_file.flush()
-            result = subprocess.run(
-                command,
-                cwd=_repo_root(),
-                env=_build_process_env(
-                    args,
-                    gpu_id=None,
-                    run_prefix=run_prefix,
-                    job_type="dataset_prepare",
-                ),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            log_file.write(f"\nFinished: {datetime.datetime.now().isoformat(timespec='seconds')}\n")
-            log_file.write(f"Return code: {result.returncode}\n")
-        if result.returncode != 0:
-            LOGGER.error(
-                "%s dataset preparation failed with return code %s; see %s",
-                label,
-                result.returncode,
-                log_path,
-            )
-            raise RuntimeError(
-                f"{label} dataset preparation failed with return code {result.returncode}."
-            )
-        LOGGER.info(
-            "Prepared %s dataset successfully in %.1fs",
-            label,
-            time.perf_counter() - start_time,
-        )
-    finally:
-        temp_config_path.unlink(missing_ok=True)
+    if not _finalize_dataset_prepare(running_prepare):
+        raise RuntimeError(f"{label} dataset preparation failed; see {running_prepare.log_path}.")
 
 
 def _prepare_datasets(
@@ -1601,11 +1780,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip_multittpp", action="store_true")
     parser.add_argument("--gpu_ids", default="0,1,2")
     parser.add_argument("--max_parallel_runs", type=int, default=3)
+    parser.add_argument(
+        "--max_parallel_dataset_prepares",
+        type=int,
+        default=1,
+        help=(
+            "Maximum dataset preparation subprocesses to run concurrently. "
+            "Increase cautiously because dataset builds can be memory and disk heavy."
+        ),
+    )
     parser.add_argument("--run_prefix", default=None)
     parser.add_argument("--summary_path", default=None)
     parser.add_argument("--stf_log_dir", default=None)
     parser.add_argument("--wandb_project", default="vital_sign_tpp_comparison")
     parser.add_argument("--wandb_group", default=None)
+    parser.add_argument(
+        "--wandb_init_timeout",
+        type=float,
+        default=300.0,
+        help="W&B run initialization timeout in seconds for launched training jobs.",
+    )
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument("--selection_metric", default=DEFAULT_SELECTION_METRIC)
     parser.add_argument(
@@ -1683,7 +1877,10 @@ def main() -> int:
     LOGGER.info("W&B project: %s", args.wandb_project)
     LOGGER.info("W&B group: %s", args.wandb_group or run_prefix)
     LOGGER.info("W&B enabled: %s", not args.no_wandb)
+    LOGGER.info("W&B init timeout: %.1fs", args.wandb_init_timeout)
     LOGGER.info("Per-architecture defaults: %s", not args.no_model_defaults)
+    LOGGER.info("Dataset pre-build enabled: %s", args.prepare_datasets)
+    LOGGER.info("Max parallel dataset prepares: %s", args.max_parallel_dataset_prepares)
     LOGGER.info("Summary path: %s", summary_path)
     _log_job_plan(jobs)
 

@@ -24,6 +24,7 @@ from HTAMP.prediction.data_provider.vital_sign_easy_tpp_dataset import (
     build_vital_sign_easy_tpp_dataset_bundle,
 )
 from HTAMP.prediction.module.vital_sign_easy_tpp_module import VitalSignEasyTPPModule
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 
@@ -164,6 +165,7 @@ class VitalSignEasyTPPPredictor:
             job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

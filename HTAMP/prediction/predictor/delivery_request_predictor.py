@@ -23,6 +23,7 @@ from HTAMP.prediction.data_provider.delivery_requests_dataset import (
     build_delivery_request_dataset_bundle,
 )
 from HTAMP.prediction.module.delivery_request_module import DeliveryRequestModule
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 
@@ -137,6 +138,7 @@ class DeliveryRequestPredictor:
             project="delivery_request_point_process",
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

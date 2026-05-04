@@ -24,6 +24,7 @@ from HTAMP.prediction.data_provider.vital_sign_multittpp_dataset import (
     build_vital_sign_multittpp_dataset_bundle,
 )
 from HTAMP.prediction.module.vital_sign_multittpp_module import VitalSignMultiTTPPModule
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 
@@ -152,6 +153,7 @@ class VitalSignMultiTTPPPredictor:
             job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

@@ -22,6 +22,7 @@ from HTAMP.prediction.module.vital_sign_multittpp_module import VitalSignMultiTT
 from HTAMP.prediction.predictor.vital_sign_multittpp_predictor import (
     VitalSignMultiTTPPPredictor,
 )
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 
 class DeliveryMultiTTPPPredictor(VitalSignMultiTTPPPredictor):
@@ -82,6 +83,7 @@ class DeliveryMultiTTPPPredictor(VitalSignMultiTTPPPredictor):
             job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

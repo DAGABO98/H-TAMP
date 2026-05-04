@@ -25,6 +25,7 @@ from HTAMP.prediction.data_provider.vital_sign_tpp_dataset import (
 )
 from HTAMP.prediction.point_process_models.flexTPP.dataset.base import batch_collate
 from HTAMP.prediction.module.vital_sign_tpp_module import VitalSignTPPModule
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 METRICS_SUMMARY_FILENAME = "metrics_summary.json"
 
@@ -153,6 +154,7 @@ class VitalSignTPPPredictor:
             job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

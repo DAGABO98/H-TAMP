@@ -21,6 +21,7 @@ from HTAMP.prediction.data_provider.delivery_tpp_dataset import (
 from HTAMP.prediction.module.vital_sign_tpp_module import VitalSignTPPModule
 from HTAMP.prediction.point_process_models.flexTPP.dataset.base import batch_collate
 from HTAMP.prediction.predictor.vital_sign_tpp_predictor import VitalSignTPPPredictor
+from HTAMP.prediction.predictor.wandb_utils import wandb_init_settings
 
 
 class DeliveryTPPPredictor(VitalSignTPPPredictor):
@@ -81,6 +82,7 @@ class DeliveryTPPPredictor(VitalSignTPPPredictor):
             job_type=os.getenv("WANDB_JOB_TYPE", "train"),
             config=config_payload,
             dir=log_dir,
+            settings=wandb_init_settings(wandb),
         )
         wandb.run.name = model_config.run_name
         wandb.run.save(log_dir)

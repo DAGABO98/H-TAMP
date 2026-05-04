@@ -467,7 +467,10 @@ def main() -> int:
     LOGGER.info("W&B project: %s", args.wandb_project)
     LOGGER.info("W&B group: %s", args.wandb_group or run_prefix)
     LOGGER.info("W&B enabled: %s", not args.no_wandb)
+    LOGGER.info("W&B init timeout: %.1fs", args.wandb_init_timeout)
     LOGGER.info("Per-architecture defaults: %s", not args.no_model_defaults)
+    LOGGER.info("Dataset pre-build enabled: %s", args.prepare_datasets)
+    LOGGER.info("Max parallel dataset prepares: %s", args.max_parallel_dataset_prepares)
     LOGGER.info("Summary path: %s", summary_path)
     base._log_job_plan(jobs)
 
