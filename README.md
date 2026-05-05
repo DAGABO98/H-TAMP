@@ -83,3 +83,8 @@ To evaluate vital sign models using OTD with soft event matching:
 ```console
 python -m HTAMP.prediction.run_vital_sign_tpp_otd_evaluation   --comparison_summary_path data/prediction/vital_sign_tpp_comparison/vital_sign_full_summary.csv   --easy_config_path HTAMP/prediction/configs/config_files/prediction/vital_sign_easy_tpp_training.json   --num_samples 4   --max_future_events 5   --max_sequences 2   --sequence_subset_strategy random   --seed 42   --prefix_stride 5 --run_demand_strata   --demand_gpu_ids 0,1,2   --output_dir data/prediction/vital_sign_tpp_otd_by_demand --wandb_project vital_sign_full_tpp_comparison  --wandb --soft_type_matching --type_weight 1.0
 ```
+
+To cache predictions:
+```console
+python -m HTAMP.prediction.prediction_handlers.offline_request_prediction_cache --tasks vital_sign,delivery --split test --demand_level all --num_samples 20 --max_future_events 8 --selected_vital_runs final_vital_flex_tpp_stp --selected_delivery_runs final_med_flex_tpp_stp
+```
