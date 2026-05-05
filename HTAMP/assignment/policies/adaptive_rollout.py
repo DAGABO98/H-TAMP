@@ -68,6 +68,9 @@ class AdaptiveRollout:
         self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
         self.prediction_lookahead_minutes = prediction_lookahead_minutes
 
+    def _planning_horizon_end_timestamp(self) -> pd.Timestamp:
+        return pd.Timestamp(self.date_stamp).normalize() + pd.Timedelta(hours=int(self.end_hour))
+
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
         self.assigned_requests = copy.deepcopy(state.assigned_requests)
@@ -525,6 +528,7 @@ class AdaptiveRollout:
             traversal_graph_generator=traversal_graph_generator,
             prediction_lookahead_minutes=self.prediction_lookahead_minutes,
             prediction_match_tolerance_minutes=self.prediction_match_tolerance_minutes,
+            planning_horizon_end_timestamp=self._planning_horizon_end_timestamp(),
             debug=debug,
         )
 

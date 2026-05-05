@@ -398,6 +398,7 @@ class OfflinePredictionCache:
         traversal_graph_generator: TraversalGraphGenerator,
         lookahead_minutes: float,
         match_tolerance_minutes: float,
+        planning_horizon_end_timestamp: pd.Timestamp | None = None,
     ) -> list[dict[float, RequestsLists]]:
         if not self.enabled:
             return []
@@ -406,6 +407,13 @@ class OfflinePredictionCache:
             seconds=float(state.simulator_time)
         )
         horizon_timestamp = current_timestamp + pd.Timedelta(minutes=float(lookahead_minutes))
+        if planning_horizon_end_timestamp is not None:
+            horizon_timestamp = min(
+                horizon_timestamp,
+                pd.Timestamp(planning_horizon_end_timestamp),
+            )
+        if horizon_timestamp <= current_timestamp:
+            return []
         prefix_rows = self._latest_prefix_rows(
             current_timestamp=current_timestamp,
             state=state,

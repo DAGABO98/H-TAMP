@@ -102,6 +102,7 @@ class RolloutHelpers:
         traversal_graph_generator: TraversalGraphGenerator,
         prediction_lookahead_minutes: float,
         prediction_match_tolerance_minutes: float,
+        planning_horizon_end_timestamp: pd.Timestamp | None = None,
         debug: bool = False,
     ) -> list[dict[float, RequestsLists]]:
         if prediction_cache is None or not prediction_cache.enabled:
@@ -114,6 +115,7 @@ class RolloutHelpers:
             traversal_graph_generator=traversal_graph_generator,
             lookahead_minutes=prediction_lookahead_minutes,
             match_tolerance_minutes=prediction_match_tolerance_minutes,
+            planning_horizon_end_timestamp=planning_horizon_end_timestamp,
         )
         if debug:
             print(f"Extracted {len(sample_sets)} prediction sample request set(s).")
