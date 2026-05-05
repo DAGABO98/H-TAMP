@@ -273,7 +273,15 @@ class TaskRequest:
                  rejected: bool = False,
                  scheduled: bool = False,
                  planned_time: Optional[float] = None,
-                 planned_goal_indices: Optional[list[int]] = None):
+                 planned_goal_indices: Optional[list[int]] = None,
+                 patient_id: Optional[str] = None,
+                 mrn: Optional[str] = None,
+                 encounter_id: Optional[str] = None,
+                 scheduled_room: Optional[str] = None,
+                 scheduled_space_id: Optional[str] = None,
+                 scheduled_space_supplies: Optional[str] = None,
+                 floor: Optional[int] = None,
+                 scheduled_day: Optional[str] = None):
         self.request_id = request_id
         self.request_type = request_type
         self.goal_nodes = goal_nodes
@@ -282,6 +290,14 @@ class TaskRequest:
         self.scheduled_time = scheduled_time
         self.administered_time = administered_time
         self.time_for_service = scheduled_time + (60.0 * time_for_rejection_minutes)
+        self.patient_id = patient_id if patient_id is not None else ""
+        self.mrn = mrn if mrn is not None else self.patient_id
+        self.encounter_id = encounter_id if encounter_id is not None else ""
+        self.scheduled_room = scheduled_room if scheduled_room is not None else ""
+        self.scheduled_space_id = scheduled_space_id if scheduled_space_id is not None else ""
+        self.scheduled_space_supplies = scheduled_space_supplies if scheduled_space_supplies is not None else ""
+        self.floor = floor
+        self.scheduled_day = scheduled_day if scheduled_day is not None else ""
         self.started = started
         self.completed_goals = completed_goals
         self.completed = completed
@@ -338,6 +354,14 @@ class TaskRequest:
             "scheduled_time": self.scheduled_time,
             "administered_time": self.administered_time,
             "time_for_service": self.time_for_service,
+            "patient_id": self.patient_id,
+            "mrn": self.mrn,
+            "encounter_id": self.encounter_id,
+            "scheduled_room": self.scheduled_room,
+            "scheduled_space_id": self.scheduled_space_id,
+            "scheduled_space_supplies": self.scheduled_space_supplies,
+            "floor": self.floor,
+            "scheduled_day": self.scheduled_day,
             "started": self.started,
             "completed_goals": self.completed_goals,
             "completed": self.completed,
@@ -351,6 +375,8 @@ class TaskRequest:
     def __repr__(self):
         return f"Request(request_id={self.request_id}, request_type='{self.request_type}'," + \
             f"ordered_time={self.ordered_time}, scheduled_time={self.scheduled_time}, time_for_service={self.time_for_service}, " + \
+            f"patient_id={self.patient_id}, encounter_id={self.encounter_id}, scheduled_room={self.scheduled_room}, " + \
+            f"scheduled_space_id={self.scheduled_space_id}, floor={self.floor}, " + \
             f"goal_nodes={self.goal_nodes}, wait_times_at_goals_seconds={self.wait_times_at_goals_seconds}, " + \
             f"started={self.started}, completed_goals={self.completed_goals}, completed={self.completed}, rejected={self.rejected}, " + \
             f"planned_time={self.planned_time}, planned_goal_indices={self.planned_goal_indices}, total_cost={self.total_cost}, assigned_robot_id={self.assigned_robot_id})"

@@ -46,6 +46,20 @@ class GlobalRequestHandler:
 
     def _empty_task_df(self) -> pd.DataFrame:
         return pd.DataFrame()
+
+    def _first_row_value(self, row: pd.Series, candidates: Sequence[str]) -> str:
+        for candidate in candidates:
+            if candidate in row.index and pd.notna(row[candidate]):
+                return str(row[candidate])
+        return ""
+
+    def _first_row_int(self, row: pd.Series, candidates: Sequence[str]) -> int | None:
+        for candidate in candidates:
+            if candidate in row.index and pd.notna(row[candidate]):
+                numeric_value = pd.to_numeric(pd.Series([row[candidate]]), errors="coerce").iloc[0]
+                if pd.notna(numeric_value):
+                    return int(numeric_value)
+        return None
     
     def _load_preprocessed_data(self) -> PreprocessedDataFrames:
         bp_df = self._load_blood_pressure_data() if self._task_enabled("blood_pressure") else self._empty_task_df()
@@ -338,7 +352,15 @@ class DailyRequestHandler(GlobalRequestHandler):
                 time_for_rejection_minutes=time_for_rejection_minutes,
                 ordered_time=ordered_time,
                 scheduled_time=scheduled_time,
-                administered_time=administered_time
+                administered_time=administered_time,
+                patient_id=self._first_row_value(row, ["patient_id", "MRN", "PAT_ID"]),
+                mrn=self._first_row_value(row, ["MRN", "patient_id", "PAT_ID"]),
+                encounter_id=self._first_row_value(row, ["encounter_id", "Patient Encounter CSN", "PAT_ENC_CSN_ID"]),
+                scheduled_room=self._first_row_value(row, ["scheduled_room"]),
+                scheduled_space_id=self._first_row_value(row, ["scheduled_space_id"]),
+                scheduled_space_supplies=self._first_row_value(row, ["scheduled_space_supplies"]),
+                floor=self._first_row_int(row, ["__floor__", "floor"]),
+                scheduled_day=self._first_row_value(row, ["__day__", "day"]),
                 )
 
             task_requets_list.append(task_request)
@@ -559,7 +581,15 @@ class PlanningRequestHandler(GlobalRequestHandler):
                 time_for_rejection_minutes=time_for_rejection_minutes,
                 ordered_time=ordered_time,
                 scheduled_time=scheduled_time,
-                administered_time=administered_time
+                administered_time=administered_time,
+                patient_id=self._first_row_value(row, ["patient_id", "MRN", "PAT_ID"]),
+                mrn=self._first_row_value(row, ["MRN", "patient_id", "PAT_ID"]),
+                encounter_id=self._first_row_value(row, ["encounter_id", "Patient Encounter CSN", "PAT_ENC_CSN_ID"]),
+                scheduled_room=self._first_row_value(row, ["scheduled_room"]),
+                scheduled_space_id=self._first_row_value(row, ["scheduled_space_id"]),
+                scheduled_space_supplies=self._first_row_value(row, ["scheduled_space_supplies"]),
+                floor=self._first_row_int(row, ["__floor__", "floor"]),
+                scheduled_day=self._first_row_value(row, ["__day__", "day"]),
                 )
 
             task_requests_list.append(task_request)
