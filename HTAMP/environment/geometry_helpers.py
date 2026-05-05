@@ -4,7 +4,7 @@ from typing import Tuple
 
 import numpy as np
 from HTAMP.environment.loc_dataclasses import Coordinate
-from HTAMP.plotting.geometry_plotting import GeometryPlottingHelper
+from HTAMP.plotting.environment.geometry_plotting import GeometryPlottingHelper
 
 class GeometryHelper:
 

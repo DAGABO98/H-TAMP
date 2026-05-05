@@ -12,7 +12,7 @@ from HTAMP.environment.traversal_dataclasses import Doorway, TraversalNode, Trav
 from HTAMP.environment.traversal_dataclasses import DoorwaySubgraph, DriveThroughSubgraph, SwitchingPointSubgraph
 from HTAMP.environment.traversal_dataclasses import TraversalGraph
 from HTAMP.environment.geometry_helpers import CurvedConnector
-from HTAMP.plotting.traversal_graph_plotting import TraversalGraphPlottingHelper
+from HTAMP.plotting.environment.traversal_graph_plotting import TraversalGraphPlottingHelper
 
 class TraversalGraphGenerator:
     def __init__(self, occupancy_map_path: str, config_path: str, meters_per_pixel: float = 0.036, factor: int = 1,

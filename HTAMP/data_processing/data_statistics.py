@@ -8,7 +8,7 @@ from typing import Callable, Sequence, Tuple
 import pandas as pd
 
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
-from HTAMP.plotting.data_statistics_plotting import DataStatisticsPlottingHelper
+from HTAMP.plotting.data_exp.data_statistics_plotting import DataStatisticsPlottingHelper
 from HTAMP.data_processing.data_helpers import DataHelpers
 
 

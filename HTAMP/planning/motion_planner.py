@@ -8,7 +8,7 @@ from typing import List, Optional, Set, Tuple, Dict
 
 from HTAMP.environment.grid_world import TimeInterval, GridWorld, GridIndex, RobotProfile
 from HTAMP.planning.planning_dataclasses import CellReservationTable, TimeReservation
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
+from HTAMP.plotting.planning.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 

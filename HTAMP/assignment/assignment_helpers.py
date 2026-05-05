@@ -8,7 +8,7 @@ from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import TaskRequest
 from HTAMP.planning.state import PlanningState, SimulatedState
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
+from HTAMP.plotting.planning.motion_planning_plotting import MotionPlanningPlotter
 
 class TaskQueue:
     def __init__(self):

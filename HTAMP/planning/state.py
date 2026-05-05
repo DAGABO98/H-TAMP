@@ -14,7 +14,7 @@ from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNod
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import RequestsLists, SimulatorConfig, TaskRequest
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
+from HTAMP.plotting.planning.motion_planning_plotting import MotionPlanningPlotter
 
 class PlanningHelpers:
     @staticmethod

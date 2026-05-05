@@ -21,7 +21,7 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, FrameData, RequestsLists, SimulatorConfig, TaskProperties, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
+from HTAMP.plotting.planning.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.assignment.baselines.fleet_manager import FleetManager
 
 class AssignmentEvaluator:

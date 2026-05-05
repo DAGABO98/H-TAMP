@@ -9,7 +9,7 @@ from HTAMP.environment.geometry_helpers import CurvedConnector
 from HTAMP.environment.loc_dataclasses import BoundingIndices, Cell, Coordinate, GridIndex 
 from HTAMP.environment.loc_dataclasses import MotionReservation, RobotOccupancy, TimeInterval
 from HTAMP.environment.robot_dataclasses import RobotProfile
-from HTAMP.plotting.motion_planning_plotting import MotionPlanningPlotter
+from HTAMP.plotting.planning.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.environment.traversal_dataclasses import TraversalGraph, TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 
