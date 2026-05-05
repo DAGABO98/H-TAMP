@@ -299,17 +299,6 @@ class AdaptiveRollout:
                                             minute: int,
                                             look_ahead_minutes: int,
                                             debug: bool):
-        future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(date_stamp=self.date_stamp,
-                                                                                    hour=hour,
-                                                                                    minute=minute,
-                                                                                    look_ahead_minutes=look_ahead_minutes,
-                                                                                    end_hour=self.end_hour,
-                                                                                    planning_request_handler=self.planning_request_handler,
-                                                                                    initial_time=self.initial_time,
-                                                                                    all_task_properties=self.all_task_properties,
-                                                                                    traversal_graph_generator=traversal_graph_generator)
-        
-        
         min_request_id = None
         min_planned_path = None
         min_planned_goal_indices = None
@@ -341,7 +330,6 @@ class AdaptiveRollout:
                                                                                         requests_lists=current_requests_lists,
                                                                                         current_node_reservation_table=current_node_reservation_table,
                                                                                         current_predicted_requests_dict=current_predicted_requests_dict,
-                                                                                        future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                                         future_predicted_requests_dict=future_predicted_requests_dict,
                                                                                         motion_planner=current_motion_planner,
                                                                                         traversal_graph_generator=traversal_graph_generator,
@@ -393,7 +381,6 @@ class AdaptiveRollout:
                                                                                             requests_lists=current_requests_lists,
                                                                                             current_node_reservation_table=current_node_reservation_table,
                                                                                             current_predicted_requests_dict=current_predicted_requests_dict,
-                                                                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                                             future_predicted_requests_dict=future_predicted_requests_dict,
                                                                                             motion_planner=current_motion_planner,
                                                                                             traversal_graph_generator=traversal_graph_generator,

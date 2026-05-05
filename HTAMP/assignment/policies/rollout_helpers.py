@@ -195,7 +195,6 @@ class RolloutHelpers:
                                                                        requests_lists: Optional[RequestsLists],
                                                                        current_node_reservation_table: Optional[NodeReservationTable],
                                                                        current_predicted_requests_dict: dict[float, RequestsLists],
-                                                                       future_scheduled_requests_lists: Optional[RequestsLists],
                                                                        future_predicted_requests_dict: dict[float, RequestsLists],
                                                                        motion_planner: MotionPlanner,
                                                                        traversal_graph_generator: TraversalGraphGenerator,
@@ -231,19 +230,6 @@ class RolloutHelpers:
         
         if debug:
             print(f"2) Node reservation table after assigning current predicted requests: {current_node_reservation_table}")
-        
-        # Cost estimation for future requests
-        cost_estimator.assign_requests_to_robots(state=current_state,
-                                                 simulated_state=simulated_state,
-                                                 node_reservation_table=current_node_reservation_table,
-                                                 requests_lists=future_scheduled_requests_lists,
-                                                 motion_planner=motion_planner,
-                                                 traversal_graph_generator=traversal_graph_generator,
-                                                 add_requests_in_request_lists=True,
-                                                 debug=debug)
-        
-        if debug:
-            print(f"2) Node reservation table after assigning future scheduled requests: {current_node_reservation_table}")
     
         future_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=future_predicted_requests_dict)
         cost_estimator.assign_requests_to_robots(state=current_state,
