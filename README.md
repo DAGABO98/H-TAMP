@@ -66,7 +66,12 @@ python -m HTAMP.plotting.assignment_results_plotting --daily_stat p95
 
 To train all vital sign models:
 ```console
-python -m HTAMP.prediction.run_vital_sign_tpp_model_comparison   --accelerator gpu   --gpu_ids 0,1,2   --max_parallel_runs 3   --wandb_project vital_sign_full_tpp_comparison   --run_prefix vital_sign_full   --max_epochs 100   --batch_size 32   --num_workers 20
+python -m HTAMP.prediction.run_vital_sign_tpp_model_comparison   --accelerator gpu   --gpu_ids 0,1,2   --max_parallel_runs 3   --wandb_project final_vital_sign   --run_prefix final_vital_sign   --max_epochs 300 --patience 50   --num_workers 20 --wandb_init_timeout 600
+```
+
+To train all medicine delivery models:
+```console
+python -m HTAMP.prediction.run_delivery_tpp_model_comparison   --accelerator gpu   --gpu_ids 0,1,2   --max_parallel_runs 3   --wandb_project final_med  --run_prefix final_med --max_epochs 300 --patience 50 --num_workers 20 --wandb_init_timeout 600
 ```
 
 To evaluate vital sign models using OTD with hard event matching:
