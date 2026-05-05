@@ -5,6 +5,7 @@ import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
+from HTAMP.assignment.policies.prediction_cache import OfflinePredictionCache
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -27,7 +28,11 @@ class HeuristicRollout:
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
                  allow_deallocation: bool,
-                 allow_reweighting: bool):
+                 allow_reweighting: bool,
+                 prediction_cache_path: Optional[str] = None,
+                 prediction_cache_run_names: Optional[str] = None,
+                 prediction_match_tolerance_minutes: float = 10.0,
+                 prediction_lookahead_minutes: float = 60.0):
         self.requests_queue = TaskQueue()
         self.predicted_requests_queue = TaskQueue()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
@@ -48,6 +53,18 @@ class HeuristicRollout:
         self.cost_estimator = FutureCostEstimation()
         self.allow_deallocation = allow_deallocation
         self.allow_reweighting = allow_reweighting
+        self.prediction_cache = (
+            OfflinePredictionCache(
+                csv_path=prediction_cache_path,
+                date_stamp=date_stamp,
+                floor_number=floor_number,
+                selected_run_names=prediction_cache_run_names,
+            )
+            if prediction_cache_path
+            else None
+        )
+        self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
+        self.prediction_lookahead_minutes = prediction_lookahead_minutes
         
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -220,18 +237,11 @@ class HeuristicRollout:
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
+                                            prediction_sample_sets: list[dict[float, RequestsLists]],
                                             hour: int,
                                             minute: int,
                                             look_ahead_minutes: int,
                                             debug: bool):
-        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=state, 
-                                                                   hour=hour,
-                                                                   minute=minute)
-        
-        current_predicted_requests_dict, future_predicted_requests_dict = RolloutHelpers._split_predicted_requests_dict(predicted_requests_dict=predicted_requests_dict,
-                                                                                                                        look_ahead_minutes=look_ahead_minutes)
-        
-        
         min_robot_id = None
         min_planned_path = None
         min_planned_goal_indices = None
@@ -270,16 +280,15 @@ class HeuristicRollout:
                                                 motion_planner=current_motion_planner,
                                                 traversal_graph_generator=traversal_graph_generator)
                 
-                self.cost_estimator.reset()
-                unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
+                unmodified_cost, truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
                                                                                         cost_estimator=self.cost_estimator,
                                                                                         current_state=current_state,
                                                                                         requests_lists=requests_lists,
                                                                                         current_node_reservation_table=current_node_reservation_table,
-                                                                                        current_predicted_requests_dict=current_predicted_requests_dict,
-                                                                                        future_predicted_requests_dict=future_predicted_requests_dict,
+                                                                                        prediction_sample_sets=prediction_sample_sets,
                                                                                         motion_planner=current_motion_planner,
-                                                                                        traversal_graph_generator=traversal_graph_generator)
+                                                                                        traversal_graph_generator=traversal_graph_generator,
+                                                                                        look_ahead_minutes=look_ahead_minutes)
 
                 if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
                     min_path_cost = truncated_cost
@@ -297,6 +306,7 @@ class HeuristicRollout:
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
+                                            prediction_sample_sets: list[dict[float, RequestsLists]],
                                             hour: int,
                                             minute: int,
                                             look_ahead_minutes: int,
@@ -334,6 +344,7 @@ class HeuristicRollout:
                                                                 state=state,
                                                                 motion_planner=motion_planner,
                                                                 traversal_graph_generator=traversal_graph_generator,
+                                                                prediction_sample_sets=prediction_sample_sets,
                                                                 hour=hour,
                                                                 minute=minute,
                                                                 look_ahead_minutes=look_ahead_minutes,
@@ -353,6 +364,17 @@ class HeuristicRollout:
             return
         else:
             current_requests_lists = copy.deepcopy(requests_lists)
+        prediction_sample_sets = RolloutHelpers._extract_prediction_sample_sets(
+            prediction_cache=self.prediction_cache,
+            state=state,
+            real_requests_lists=requests_lists,
+            initial_time=self.initial_time,
+            all_task_properties=self.all_task_properties,
+            traversal_graph_generator=traversal_graph_generator,
+            prediction_lookahead_minutes=self.prediction_lookahead_minutes,
+            prediction_match_tolerance_minutes=self.prediction_match_tolerance_minutes,
+            debug=debug,
+        )
 
         while self.requests_queue.heap:
             request_id = self.requests_queue.pop_task()
@@ -366,6 +388,7 @@ class HeuristicRollout:
                                                                      state=state,
                                                                      motion_planner=motion_planner,
                                                                      traversal_graph_generator=traversal_graph_generator,
+                                                                     prediction_sample_sets=prediction_sample_sets,
                                                                      hour=hour,
                                                                      minute=minute,
                                                                      look_ahead_minutes=look_ahead_minutes,

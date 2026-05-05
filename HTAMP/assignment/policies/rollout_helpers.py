@@ -1,3 +1,4 @@
+import copy
 from typing import Optional, Tuple
 
 import pandas as pd
@@ -5,6 +6,7 @@ import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
+from HTAMP.assignment.policies.prediction_cache import OfflinePredictionCache
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists, TaskRequest, TimeSignal
@@ -78,16 +80,44 @@ class RolloutHelpers:
     
     @staticmethod
     def _split_predicted_requests_dict(predicted_requests_dict: dict[float, RequestsLists],
-                                       look_ahead_minutes: int) -> Tuple[dict[float, RequestsLists], dict[float, RequestsLists]]:
-        # TODO: Fix this method to do proper division of predicted requests
+                                       look_ahead_minutes: int,
+                                       current_time: float = 0.0) -> Tuple[dict[float, RequestsLists], dict[float, RequestsLists]]:
         current_predicted_requests_dict = {}
         future_predicted_requests_dict = {}
-        for time_signal, predicted_requests_lists in predicted_requests_dict.items():
-            if time_signal <= look_ahead_minutes:
-                current_predicted_requests_dict[time_signal] = predicted_requests_lists
+        cutoff_time = float(current_time) + float(look_ahead_minutes) * 60.0
+        for request_time, predicted_requests_lists in predicted_requests_dict.items():
+            if float(request_time) <= cutoff_time:
+                current_predicted_requests_dict[request_time] = predicted_requests_lists
             else:
-                future_predicted_requests_dict[time_signal] = predicted_requests_lists
+                future_predicted_requests_dict[request_time] = predicted_requests_lists
         return current_predicted_requests_dict, future_predicted_requests_dict
+
+    @staticmethod
+    def _extract_prediction_sample_sets(
+        prediction_cache: Optional[OfflinePredictionCache],
+        state: PlanningState,
+        real_requests_lists: Optional[RequestsLists],
+        initial_time: pd.Timestamp,
+        all_task_properties: AllTaskProperties,
+        traversal_graph_generator: TraversalGraphGenerator,
+        prediction_lookahead_minutes: float,
+        prediction_match_tolerance_minutes: float,
+        debug: bool = False,
+    ) -> list[dict[float, RequestsLists]]:
+        if prediction_cache is None or not prediction_cache.enabled:
+            return []
+        sample_sets = prediction_cache.prediction_sample_sets(
+            state=state,
+            real_requests_lists=real_requests_lists,
+            initial_time=initial_time,
+            all_task_properties=all_task_properties,
+            traversal_graph_generator=traversal_graph_generator,
+            lookahead_minutes=prediction_lookahead_minutes,
+            match_tolerance_minutes=prediction_match_tolerance_minutes,
+        )
+        if debug:
+            print(f"Extracted {len(sample_sets)} prediction sample request set(s).")
+        return sample_sets
     
     @staticmethod
     def _extract_scheduled_requests(date_stamp: pd.Timestamp,
@@ -247,4 +277,64 @@ class RolloutHelpers:
                                                                                              rejection_penalty=current_state.simulator_config.rejection_penalty)
         
         return unmodified_cost, truncated_cost
+
+    @staticmethod
+    def _estimate_average_future_costs_for_prediction_sample_sets(
+        cost_estimator: FutureCostEstimation,
+        current_state: PlanningState,
+        requests_lists: Optional[RequestsLists],
+        current_node_reservation_table: Optional[NodeReservationTable],
+        prediction_sample_sets: list[dict[float, RequestsLists]],
+        motion_planner: MotionPlanner,
+        traversal_graph_generator: TraversalGraphGenerator,
+        look_ahead_minutes: int,
+        blocked_robots: Optional[set[int]] = None,
+        debug: bool = False,
+    ) -> Tuple[float, float]:
+        if not prediction_sample_sets:
+            cost_estimator.reset()
+            return RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
+                cost_estimator=cost_estimator,
+                current_state=current_state,
+                requests_lists=requests_lists,
+                current_node_reservation_table=current_node_reservation_table,
+                current_predicted_requests_dict={},
+                future_predicted_requests_dict={},
+                motion_planner=motion_planner,
+                traversal_graph_generator=traversal_graph_generator,
+                blocked_robots=blocked_robots,
+                debug=debug,
+            )
+
+        raw_cost_sum = 0.0
+        truncated_cost_sum = 0.0
+        for prediction_sample_set in prediction_sample_sets:
+            sample_state = current_state.fork()
+            sample_motion_planner = motion_planner.fork_with_reservations()
+            sample_node_reservation_table = copy.deepcopy(current_node_reservation_table)
+            current_predicted_requests_dict, future_predicted_requests_dict = (
+                RolloutHelpers._split_predicted_requests_dict(
+                    predicted_requests_dict=copy.deepcopy(prediction_sample_set),
+                    look_ahead_minutes=look_ahead_minutes,
+                    current_time=current_state.simulator_time,
+                )
+            )
+            cost_estimator.reset()
+            unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
+                cost_estimator=cost_estimator,
+                current_state=sample_state,
+                requests_lists=copy.deepcopy(requests_lists),
+                current_node_reservation_table=sample_node_reservation_table,
+                current_predicted_requests_dict=current_predicted_requests_dict,
+                future_predicted_requests_dict=future_predicted_requests_dict,
+                motion_planner=sample_motion_planner,
+                traversal_graph_generator=traversal_graph_generator,
+                blocked_robots=copy.deepcopy(blocked_robots),
+                debug=debug,
+            )
+            raw_cost_sum += unmodified_cost
+            truncated_cost_sum += truncated_cost
+
+        sample_count = float(len(prediction_sample_sets))
+        return raw_cost_sum / sample_count, truncated_cost_sum / sample_count
         

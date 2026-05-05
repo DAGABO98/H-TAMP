@@ -5,6 +5,7 @@ import pandas as pd
 from HTAMP.assignment.assignment_helpers import RequestsDict
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
+from HTAMP.assignment.policies.prediction_cache import OfflinePredictionCache
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -27,7 +28,11 @@ class AdaptiveRollout:
                  initial_time: pd.Timestamp,
                  all_task_properties:AllTaskProperties,
                  allow_deallocation: bool,
-                 allow_reweighting: bool):
+                 allow_reweighting: bool,
+                 prediction_cache_path: Optional[str] = None,
+                 prediction_cache_run_names: Optional[str] = None,
+                 prediction_match_tolerance_minutes: float = 10.0,
+                 prediction_lookahead_minutes: float = 60.0):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -50,6 +55,18 @@ class AdaptiveRollout:
         self.cost_estimator = FutureCostEstimation()
         self.allow_deallocation = allow_deallocation
         self.allow_reweighting = allow_reweighting
+        self.prediction_cache = (
+            OfflinePredictionCache(
+                csv_path=prediction_cache_path,
+                date_stamp=date_stamp,
+                floor_number=floor_number,
+                selected_run_names=prediction_cache_run_names,
+            )
+            if prediction_cache_path
+            else None
+        )
+        self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
+        self.prediction_lookahead_minutes = prediction_lookahead_minutes
 
     def _extract_assigned_requests_from_state(self, 
                                               state: PlanningState):
@@ -224,7 +241,6 @@ class AdaptiveRollout:
     
     def _determine_potential_assignments_for_robot(self,
                                                    robot_id: int,
-                                                   current_predicted_requests: dict[float, RequestsLists],
                                                    state: PlanningState,
                                                    motion_planner: MotionPlanner,
                                                    traversal_graph_generator: TraversalGraphGenerator):
@@ -247,51 +263,18 @@ class AdaptiveRollout:
                 continue
             potential_assignments.append((request_id, heuristic_cost))
         
-        new_state = None
-        
-        # TODO: Change inclusion of predicted requests based on weight of the prediction 
-        if self.allow_reweighting:
-            new_state = state.fork()
-            for time_for_predicted_request, predicted_requests_lists in current_predicted_requests.items():
-                if robot_type == "delivery":
-                    predicted_requests = predicted_requests_lists.medications_requests
-                    predicted_request_ids = [request.request_id for request in predicted_requests]
-                else:
-                    predicted_requests = []
-                    predicted_request_ids = []
-                    for data_field in predicted_requests_lists.__dataclass_fields__.keys():
-                        requests_list = getattr(predicted_requests_lists, data_field)
-                        predicted_requests.extend(requests_list)
-                        predicted_request_ids.extend([request.request_id for request in requests_list])
-                new_state.add_new_requests(predicted_requests)
-                for request_id in predicted_request_ids:
-                    heuristic_cost = RolloutHelpers._estimate_heuristic_cost_to_fulfill_request(assigned_requests=self.assigned_requests,
-                                                                                                node_reservation_table=self.node_reservation_table,
-                                                                                                robot_id=robot_id,
-                                                                                                request_id=request_id,
-                                                                                                state=new_state,
-                                                                                                motion_planner=motion_planner,
-                                                                                                traversal_graph_generator=traversal_graph_generator)
-                    if heuristic_cost == float('inf'):
-                        continue
-                    potential_assignments.append((request_id, heuristic_cost))
-
         potential_assignments.sort(key=lambda x: x[1])
         if len(potential_assignments) > 0:
             potential_assignments.append((-1, 0))
 
-        if new_state is None:
-            new_state = state
-
-        return potential_assignments, new_state
+        return potential_assignments, state
         
 
     def _get_assignment_with_minimum_future_costs(self,
                                             robot_id: str,
                                             requests_lists: RequestsLists,
                                             potential_assignments: list[int],
-                                            current_predicted_requests_dict: dict[float, RequestsLists],
-                                            future_predicted_requests_dict: dict[float, RequestsLists],
+                                            prediction_sample_sets: list[dict[float, RequestsLists]],
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
@@ -323,16 +306,15 @@ class AdaptiveRollout:
                 current_requests_lists = copy.deepcopy(requests_lists)
                 current_blocked_robots = copy.deepcopy(self.blocked_robots)
                 current_blocked_robots.add(robot_id)
-                self.cost_estimator.reset()
-                unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
+                unmodified_cost, truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
                                                                                         cost_estimator=self.cost_estimator,
                                                                                         current_state=current_state,
                                                                                         requests_lists=current_requests_lists,
                                                                                         current_node_reservation_table=current_node_reservation_table,
-                                                                                        current_predicted_requests_dict=current_predicted_requests_dict,
-                                                                                        future_predicted_requests_dict=future_predicted_requests_dict,
+                                                                                        prediction_sample_sets=prediction_sample_sets,
                                                                                         motion_planner=current_motion_planner,
                                                                                         traversal_graph_generator=traversal_graph_generator,
+                                                                                        look_ahead_minutes=look_ahead_minutes,
                                                                                         blocked_robots=current_blocked_robots)
 
                 if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
@@ -374,16 +356,15 @@ class AdaptiveRollout:
                     RolloutHelpers._remove_request_from_requests_lists(request_id=request_id,
                                                                        requests_lists=current_requests_lists)
                     current_blocked_robots = copy.deepcopy(self.blocked_robots)
-                    self.cost_estimator.reset()
-                    unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
+                    unmodified_cost, truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
                                                                                             cost_estimator=self.cost_estimator,
                                                                                             current_state=current_state,
                                                                                             requests_lists=current_requests_lists,
                                                                                             current_node_reservation_table=current_node_reservation_table,
-                                                                                            current_predicted_requests_dict=current_predicted_requests_dict,
-                                                                                            future_predicted_requests_dict=future_predicted_requests_dict,
+                                                                                            prediction_sample_sets=prediction_sample_sets,
                                                                                             motion_planner=current_motion_planner,
                                                                                             traversal_graph_generator=traversal_graph_generator,
+                                                                                            look_ahead_minutes=look_ahead_minutes,
                                                                                             blocked_robots=current_blocked_robots)
 
                     if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
@@ -401,19 +382,13 @@ class AdaptiveRollout:
                                    state: PlanningState,
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator,
+                                   prediction_sample_sets: list[dict[float, RequestsLists]],
                                    hour: int,
                                    minute: int,
                                    look_ahead_minutes: int,
                                    debug: bool):
-        predicted_requests_dict = RolloutHelpers._extract_predicted_requests(state=state, 
-                                                                   hour=hour,
-                                                                   minute=minute)
-        
-        current_predicted_requests_dict, future_predicted_requests_dict = RolloutHelpers._split_predicted_requests_dict(predicted_requests_dict=predicted_requests_dict,
-                                                                                                                        look_ahead_minutes=look_ahead_minutes)
         
         potential_assignments, new_state = self._determine_potential_assignments_for_robot(robot_id=robot_id,
-                                                                                           current_predicted_requests=current_predicted_requests_dict,
                                                                                            state=state,
                                                                                            motion_planner=motion_planner,
                                                                                            traversal_graph_generator=traversal_graph_generator)
@@ -433,8 +408,7 @@ class AdaptiveRollout:
             path_results = self._get_assignment_with_minimum_future_costs(robot_id=robot_id,
                                                                 requests_lists=requests_lists,
                                                                 potential_assignments=potential_assignments,
-                                                                current_predicted_requests_dict=current_predicted_requests_dict,
-                                                                future_predicted_requests_dict=future_predicted_requests_dict,
+                                                                prediction_sample_sets=prediction_sample_sets,
                                                                 state=new_state,
                                                                 motion_planner=motion_planner,
                                                                 traversal_graph_generator=traversal_graph_generator,
@@ -452,6 +426,7 @@ class AdaptiveRollout:
                                   available_robots: set[int],
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
+                                  prediction_sample_sets: list[dict[float, RequestsLists]],
                                   hour: int,
                                   minute: int,
                                   look_ahead_minutes: int,
@@ -463,6 +438,7 @@ class AdaptiveRollout:
                                                             state=state,
                                                             motion_planner=motion_planner,
                                                             traversal_graph_generator=traversal_graph_generator,
+                                                            prediction_sample_sets=prediction_sample_sets,
                                                             hour=hour,
                                                             minute=minute,
                                                             look_ahead_minutes=look_ahead_minutes,
@@ -540,6 +516,17 @@ class AdaptiveRollout:
         min_pickup_deadline = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists,
                                                                            motion_planner=motion_planner,
                                                                            traversal_graph_generator=traversal_graph_generator)
+        prediction_sample_sets = RolloutHelpers._extract_prediction_sample_sets(
+            prediction_cache=self.prediction_cache,
+            state=state,
+            real_requests_lists=requests_lists,
+            initial_time=self.initial_time,
+            all_task_properties=self.all_task_properties,
+            traversal_graph_generator=traversal_graph_generator,
+            prediction_lookahead_minutes=self.prediction_lookahead_minutes,
+            prediction_match_tolerance_minutes=self.prediction_match_tolerance_minutes,
+            debug=debug,
+        )
 
         available_robots = self._get_available_robots(state=state,
                                                       min_pickup_deadline=min_pickup_deadline,
@@ -557,6 +544,7 @@ class AdaptiveRollout:
                                             available_robots=available_robots,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
+                                            prediction_sample_sets=prediction_sample_sets,
                                             hour=hour,
                                             minute=minute,
                                             look_ahead_minutes=look_ahead_minutes,

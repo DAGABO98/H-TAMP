@@ -169,7 +169,11 @@ class AssignmentEvaluator:
                                        initial_time=self.simulator_config.initial_time,
                                        all_task_properties=self.all_task_properties,
                                        allow_deallocation=allow_deallocation,
-                                       allow_reweighting=allow_reweighting)
+                                       allow_reweighting=allow_reweighting,
+                                       prediction_cache_path=getattr(self.args, "prediction_cache_path", None),
+                                       prediction_cache_run_names=getattr(self.args, "prediction_cache_run_names", None),
+                                       prediction_match_tolerance_minutes=getattr(self.args, "prediction_match_tolerance_minutes", 10.0),
+                                       prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0))
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -579,6 +583,10 @@ def main():
     parser.add_argument("--respiratory_rate_orders_file", type=str, default="data/processed/respiratory_rate_orders_annotated.csv", help="Path to the respiratory rate orders CSV file.")
     parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
+    parser.add_argument("--prediction_cache_path", type=str, default=None, help="Path to the offline sampled prediction cache CSV for rollout policies.")
+    parser.add_argument("--prediction_cache_run_names", type=str, default=None, help="Comma-separated run_name values to read from the prediction cache.")
+    parser.add_argument("--prediction_match_tolerance_minutes", type=float, default=10.0, help="Tolerance for removing cached predictions that match real scheduled requests.")
+    parser.add_argument("--prediction_lookahead_minutes", type=float, default=60.0, help="Prediction-cache horizon, in minutes, from the current simulator time.")
 
     # environment parameters
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")
