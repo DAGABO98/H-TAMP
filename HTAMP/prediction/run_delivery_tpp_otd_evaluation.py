@@ -31,6 +31,7 @@ from HTAMP.prediction.data_provider.delivery_tpp_dataset import (
     build_delivery_tpp_dataset_bundle,
 )
 from HTAMP.prediction.data_provider.vital_sign_tpp_dataset import EOS_EVENT_TYPE_NAME
+from HTAMP.plotting.prediction.otd_plotting import plot_otd_results
 
 DEFAULT_COMPARISON_SUMMARY_GLOB = "data/prediction/delivery_tpp_comparison/*_summary.csv"
 DEFAULT_OUTPUT_DIR = "data/prediction/delivery_tpp_otd_evaluation"
@@ -338,10 +339,13 @@ def main() -> int:
 
     plot_paths: list[Path] = []
     if not args.skip_plots:
-        plot_paths = base._plot_results(
+        plot_paths = plot_otd_results(
             output_dir=output_dir,
             detail_path=detail_path,
             summary_path=summary_path,
+            descending_cost_order=True,
+            task_label="Delivery TPP",
+            log=base._log,
         )
         for plot_path in plot_paths:
             base._log(f"Plot saved to {plot_path}")
