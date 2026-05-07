@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import traceback
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -869,6 +870,149 @@ def _easy_records_by_key(
     }
 
 
+def _project_easy_record_to_bundle_schema(
+    *,
+    record: VitalSignEasyTPPSequenceRecord,
+    easy_bundle: VitalSignEasyTPPDatasetBundle,
+) -> VitalSignEasyTPPSequenceRecord:
+    mark_encoder = DiscreteMarkEncoder(easy_bundle.metadata)
+    time_seqs: list[float] = []
+    type_seqs: list[int] = []
+    mark_names: list[str] = []
+    raw_events: list[dict[str, Any]] = []
+
+    for event_time, raw_event, canonical_mark_name in zip(
+        record.time_seqs,
+        record.raw_events,
+        record.mark_names,
+    ):
+        if canonical_mark_name == EOS_EVENT_TYPE_NAME:
+            continue
+        task_name = str(raw_event.get("task_name", ""))
+        if task_name == EOS_EVENT_TYPE_NAME:
+            continue
+        mark_name = next(
+            (
+                candidate
+                for candidate in (
+                    str(raw_event.get("easy_tpp_mark", "")),
+                    str(raw_event.get("delivery_event_type", "")),
+                    str(raw_event.get("event_type", "")),
+                    task_name,
+                )
+                if candidate and candidate in easy_bundle.mark_to_index
+            ),
+            None,
+        )
+        if mark_name is None:
+            properties = dict(raw_event.get("properties", {}))
+            for property_name in ("medication_code_index", "medication_code"):
+                if property_name in raw_event and property_name not in properties:
+                    properties[property_name] = raw_event[property_name]
+            mark_name = mark_encoder.label_event(
+                task_name=task_name,
+                properties=properties,
+            )
+        if mark_name is None or mark_name == EOS_EVENT_TYPE_NAME:
+            continue
+        if mark_name not in easy_bundle.mark_to_index:
+            continue
+
+        time_seqs.append(float(event_time))
+        type_seqs.append(int(easy_bundle.mark_to_index[mark_name]))
+        mark_names.append(str(mark_name))
+        enriched_event = dict(raw_event)
+        enriched_event["easy_tpp_mark"] = str(mark_name)
+        raw_events.append(enriched_event)
+
+    if (
+        time_seqs
+        and EOS_EVENT_TYPE_NAME in easy_bundle.mark_to_index
+        and bool(easy_bundle.metadata.get("include_eos_event", True))
+    ):
+        eos_offset_hours = float(easy_bundle.metadata.get("eos_offset_minutes", 5.0)) / 60.0
+        time_seqs.append(float(time_seqs[-1]) + eos_offset_hours)
+        type_seqs.append(int(easy_bundle.mark_to_index[EOS_EVENT_TYPE_NAME]))
+        mark_names.append(EOS_EVENT_TYPE_NAME)
+        raw_events.append(
+            {
+                "timestamp": record.sequence_end_timestamp,
+                "task_name": EOS_EVENT_TYPE_NAME,
+                "easy_tpp_mark": EOS_EVENT_TYPE_NAME,
+                "properties": {},
+            }
+        )
+
+    time_delta_seqs: list[float] = []
+    previous_time: float | None = None
+    for event_time in time_seqs:
+        if previous_time is None:
+            time_delta_seqs.append(0.0)
+        else:
+            time_delta_seqs.append(float(max(0.0, event_time - previous_time)))
+        previous_time = event_time
+
+    return VitalSignEasyTPPSequenceRecord(
+        split=record.split,
+        patient_id=record.patient_id,
+        encounter_id=record.encounter_id,
+        segment_id=record.segment_id,
+        sequence_start_timestamp=record.sequence_start_timestamp,
+        sequence_end_timestamp=record.sequence_end_timestamp,
+        time_seqs=time_seqs,
+        time_delta_seqs=time_delta_seqs,
+        type_seqs=type_seqs,
+        mark_names=mark_names,
+        raw_events=raw_events,
+    )
+
+
+def _model_prefix_len_for_canonical_prefix(
+    *,
+    canonical_record: VitalSignEasyTPPSequenceRecord,
+    model_record: VitalSignEasyTPPSequenceRecord,
+    canonical_prefix_len: int,
+) -> int:
+    prefix_key_counts = Counter(
+        _raw_event_key(raw_event)
+        for raw_event in _easy_record_non_eos_raw_events(canonical_record)[
+            :canonical_prefix_len
+        ]
+    )
+    model_prefix_len = 0
+    for raw_event in _easy_record_non_eos_raw_events(model_record):
+        raw_event_key = _raw_event_key(raw_event)
+        if prefix_key_counts[raw_event_key] <= 0:
+            continue
+        prefix_key_counts[raw_event_key] -= 1
+        model_prefix_len += 1
+    return model_prefix_len
+
+
+def _model_schema_record_for_canonical_record(
+    *,
+    canonical_record: VitalSignEasyTPPSequenceRecord,
+    model_records: Mapping[tuple[str, str, str, str], VitalSignEasyTPPSequenceRecord],
+    model_bundle: VitalSignEasyTPPDatasetBundle,
+    run_name: str,
+    sequence_index: int,
+) -> VitalSignEasyTPPSequenceRecord:
+    model_record = model_records.get(_easy_record_key(canonical_record))
+    if model_record is not None:
+        return model_record
+
+    projected_record = _project_easy_record_to_bundle_schema(
+        record=canonical_record,
+        easy_bundle=model_bundle,
+    )
+    _log(
+        f"{run_name}: canonical sequence {sequence_index} was not present in "
+        "the model-schema dataset; using a raw-event projection with "
+        f"{len(_easy_record_non_eos_raw_events(projected_record))} encodable event(s)."
+    )
+    return projected_record
+
+
 def _flex_records_by_key(
     flex_bundle: VitalSignTPPDatasetBundle,
     split: str,
@@ -1488,23 +1632,30 @@ def _evaluate_easy_model(
     )
 
     for sequence_index, record in enumerate(context.easy_records):
-        model_record = model_records.get(_easy_record_key(record))
-        if model_record is None:
-            raise ValueError(
-                f"No matching EasyTPP model-schema record for canonical sequence {sequence_index}."
-            )
+        model_record = _model_schema_record_for_canonical_record(
+            canonical_record=record,
+            model_records=model_records,
+            model_bundle=model_easy_bundle,
+            run_name=spec.run_name,
+            sequence_index=sequence_index,
+        )
         true_events = _easy_record_events(record=record, mark_encoder=context.mark_encoder)
         for prefix_len in _prefix_lengths(args, true_events):
             future_count = _future_event_count(args, true_events, prefix_len)
             if future_count <= 0:
                 continue
             true_future = true_events[prefix_len : prefix_len + future_count]
+            model_prefix_len = _model_prefix_len_for_canonical_prefix(
+                canonical_record=record,
+                model_record=model_record,
+                canonical_prefix_len=prefix_len,
+            )
             for sample_index in range(int(args.num_samples)):
                 inference_started_at = _start_inference_timer(device)
                 predicted = _sample_easy_rollout(
                     model=model,
                     record=model_record,
-                    prefix_len=prefix_len,
+                    prefix_len=model_prefix_len,
                     max_future_events=future_count,
                     easy_bundle=model_easy_bundle,
                     first_event_pool=first_event_pool,
@@ -1605,23 +1756,30 @@ def _evaluate_multittpp_model(
     )
 
     for sequence_index, record in enumerate(context.easy_records):
-        model_record = model_records.get(_easy_record_key(record))
-        if model_record is None:
-            raise ValueError(
-                f"No matching MultiTTPP model-schema record for canonical sequence {sequence_index}."
-            )
+        model_record = _model_schema_record_for_canonical_record(
+            canonical_record=record,
+            model_records=model_records,
+            model_bundle=model_multittpp_bundle,
+            run_name=spec.run_name,
+            sequence_index=sequence_index,
+        )
         true_events = _easy_record_events(record=record, mark_encoder=context.mark_encoder)
         for prefix_len in _prefix_lengths(args, true_events):
             future_count = _future_event_count(args, true_events, prefix_len)
             if future_count <= 0:
                 continue
             true_future = true_events[prefix_len : prefix_len + future_count]
+            model_prefix_len = _model_prefix_len_for_canonical_prefix(
+                canonical_record=record,
+                model_record=model_record,
+                canonical_prefix_len=prefix_len,
+            )
             for sample_index in range(int(args.num_samples)):
                 inference_started_at = _start_inference_timer(device)
                 sampled_times, sampled_types = _sample_multittpp_rollout(
                     model=model,
                     record=model_record,
-                    prefix_len=prefix_len,
+                    prefix_len=model_prefix_len,
                     max_future_events=future_count,
                     device=device,
                 )
