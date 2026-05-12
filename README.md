@@ -91,5 +91,5 @@ python -m HTAMP.prediction.run_delivery_tpp_otd_evaluation   --comparison_summar
 
 To cache predictions:
 ```console
-python -m HTAMP.prediction.prediction_handlers.offline_request_prediction_cache --tasks vital_sign,delivery --split test --demand_level all --num_samples 20 --max_future_events 8 --selected_vital_runs final_vital_flex_tpp_stp --selected_delivery_runs final_med_flex_tpp_stp
+python -m HTAMP.prediction.prediction_handlers.offline_request_prediction_cache --parallel_workers 3 --gpu_ids 0,1,2 --sequence_shard_strategy balanced --output_csv data/prediction/offline_request_prediction_cache.csv --num_samples 20 --max_future_events 8 --selected_vital_runs final_vital_sign_flex_tpp_st_enhanced_marks --selected_delivery_runs final_med_flex_tpp_st_no_conditioning
 ```
