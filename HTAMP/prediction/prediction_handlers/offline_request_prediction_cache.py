@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import traceback
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -32,7 +33,10 @@ from HTAMP.prediction.data_provider.request_events_dataset import (
     FLOOR_COLUMN,
     _normalize_identifier_series,
 )
-from HTAMP.prediction.data_provider.vital_sign_tpp_dataset import EOS_EVENT_TYPE_NAME
+from HTAMP.prediction.data_provider.vital_sign_tpp_dataset import (
+    EOS_EVENT_TYPE_NAME,
+    VitalSignTPPSequenceRecord,
+)
 from HTAMP.prediction.metrics.otd_metric import Event
 
 VITAL_TASK = "vital_sign"
@@ -848,6 +852,169 @@ def _record_work_units(*, otd: Any, args: argparse.Namespace, context: Any, reco
     return max(1, work_units)
 
 
+def _raw_event_properties(raw_event: Mapping[str, Any]) -> dict[str, Any]:
+    properties = dict(raw_event.get("properties", {}))
+    for property_name in ("medication_code_index", "medication_code"):
+        if property_name in raw_event and property_name not in properties:
+            properties[property_name] = raw_event[property_name]
+    return properties
+
+
+def _flex_event_type_for_raw_event(
+    *,
+    raw_event: Mapping[str, Any],
+    flex_bundle: Any,
+    mark_encoder: Any,
+) -> str | None:
+    event_type_to_index = dict(getattr(flex_bundle, "event_type_to_index", {}))
+    event_type_names = [
+        str(event_type_name)
+        for event_type_name in event_type_to_index
+        if str(event_type_name) != EOS_EVENT_TYPE_NAME
+    ]
+    for candidate in (
+        raw_event.get("flex_tpp_event_type"),
+        raw_event.get("delivery_event_type"),
+        raw_event.get("easy_tpp_mark"),
+        raw_event.get("event_type"),
+        raw_event.get("task_name"),
+    ):
+        candidate_name = str(candidate or "")
+        if candidate_name and candidate_name in event_type_to_index:
+            return candidate_name
+
+    task_name = str(raw_event.get("task_name", ""))
+    if task_name and task_name in event_type_to_index:
+        return task_name
+
+    base_task = None
+    if task_name:
+        base_task = str(mark_encoder.base_task(task_name))
+    if base_task and base_task in event_type_to_index:
+        return base_task
+
+    properties = _raw_event_properties(raw_event)
+    encoded_mark = mark_encoder.label_event(task_name=task_name, properties=properties)
+    if encoded_mark is not None:
+        encoded_mark_name = str(encoded_mark)
+        if encoded_mark_name in event_type_to_index:
+            return encoded_mark_name
+        encoded_base_task = str(mark_encoder.base_task(encoded_mark_name))
+        if encoded_base_task in event_type_to_index:
+            return encoded_base_task
+
+    if base_task is not None:
+        for event_type_name in event_type_names:
+            if str(mark_encoder.base_task(event_type_name)) == base_task:
+                return event_type_name
+    return None
+
+
+def _project_flex_record_to_bundle_schema(
+    *,
+    record: Any,
+    flex_bundle: Any,
+    mark_encoder: Any,
+    run_name: str,
+    sequence_index: int,
+) -> VitalSignTPPSequenceRecord:
+    events: list[tuple[float, float, int, dict[str, float]]] = []
+    raw_events: list[dict[str, Any]] = []
+    for event_time, raw_event in zip(record.time_seqs, record.raw_events):
+        if str(raw_event.get("task_name", "")) == EOS_EVENT_TYPE_NAME:
+            continue
+        event_type_name = _flex_event_type_for_raw_event(
+            raw_event=raw_event,
+            flex_bundle=flex_bundle,
+            mark_encoder=mark_encoder,
+        )
+        if event_type_name is None:
+            continue
+
+        property_schema = list(
+            dict(getattr(flex_bundle, "property_schema_by_event_type", {})).get(
+                event_type_name,
+                [],
+            )
+        )
+        raw_properties = _raw_event_properties(raw_event)
+        event_properties: dict[str, float] = {}
+        for property_name in property_schema:
+            numeric_value = _finite_float_or_none(raw_properties.get(property_name))
+            event_properties[str(property_name)] = (
+                float("nan") if numeric_value is None else float(numeric_value)
+            )
+
+        event_type_index = int(flex_bundle.event_type_to_index[event_type_name])
+        event_time_value = float(event_time)
+        events.append(
+            (
+                event_time_value,
+                event_time_value,
+                event_type_index,
+                event_properties,
+            )
+        )
+        enriched_event = dict(raw_event)
+        enriched_event["flex_tpp_event_type"] = event_type_name
+        enriched_event["properties"] = raw_properties
+        raw_events.append(enriched_event)
+
+    condition = None
+    condition_dim = int(getattr(flex_bundle, "condition_dim", 0) or 0)
+    if condition_dim > 0:
+        condition = [0.0] * condition_dim
+
+    _log(
+        f"{run_name}: projected canonical sequence {sequence_index} into the "
+        f"FlexTPP model schema with {len(events)} encodable event(s)."
+    )
+    return VitalSignTPPSequenceRecord(
+        split=str(record.split),
+        patient_id=str(record.patient_id),
+        encounter_id=str(record.encounter_id),
+        segment_id=int(record.segment_id),
+        sequence_start_timestamp=str(record.sequence_start_timestamp),
+        sequence_end_timestamp=str(record.sequence_end_timestamp),
+        events=events,
+        raw_events=raw_events,
+        condition=condition,
+    )
+
+
+def _raw_event_key(raw_event: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(raw_event.get("timestamp", "")),
+        str(raw_event.get("task_name", "")),
+        str(raw_event.get("task_index", "")),
+    )
+
+
+def _flex_prefix_len_for_canonical_prefix(
+    *,
+    canonical_record: Any,
+    flex_record: VitalSignTPPSequenceRecord,
+    canonical_prefix_len: int,
+) -> int:
+    canonical_events = [
+        dict(raw_event)
+        for raw_event in canonical_record.raw_events
+        if str(raw_event.get("task_name", "")) != EOS_EVENT_TYPE_NAME
+    ]
+    prefix_key_counts = Counter(
+        _raw_event_key(raw_event)
+        for raw_event in canonical_events[:canonical_prefix_len]
+    )
+    model_prefix_len = 0
+    for raw_event in flex_record.raw_events:
+        raw_event_key = _raw_event_key(raw_event)
+        if prefix_key_counts[raw_event_key] <= 0:
+            continue
+        prefix_key_counts[raw_event_key] -= 1
+        model_prefix_len += 1
+    return model_prefix_len
+
+
 def _sequence_indices_for_shard(
     *,
     records: Sequence[Any],
@@ -1115,12 +1282,39 @@ def _write_rows_for_flex_model(
         start=1,
     ):
         flex_record = flex_records.get(otd._easy_record_key(record))
+        projected_flex_record = False
         if flex_record is None:
-            raise ValueError(f"No matching FlexTPP record for sequence {sequence_index}.")
-        matched_flex_events = otd._matched_flex_events_for_easy_record(
-            easy_record=record,
-            flex_record=flex_record,
-        )
+            flex_record = _project_flex_record_to_bundle_schema(
+                record=record,
+                flex_bundle=flex_bundle,
+                mark_encoder=context.mark_encoder,
+                run_name=str(spec.run_name),
+                sequence_index=int(sequence_index),
+            )
+            projected_flex_record = True
+            if not flex_record.events:
+                raise ValueError(
+                    f"No matching FlexTPP record for sequence {sequence_index}, and "
+                    "the canonical record could not be projected into the model schema."
+                )
+        if projected_flex_record:
+            matched_flex_events = [
+                (
+                    float(start_time),
+                    float(end_time),
+                    int(event_type),
+                    {
+                        str(key): float(value)
+                        for key, value in dict(event_properties).items()
+                    },
+                )
+                for start_time, end_time, event_type, event_properties in flex_record.events
+            ]
+        else:
+            matched_flex_events = otd._matched_flex_events_for_easy_record(
+                easy_record=record,
+                flex_record=flex_record,
+            )
         true_events = otd._easy_record_events(record=record, mark_encoder=context.mark_encoder)
 
         def sample_flex_requests(
@@ -1150,7 +1344,12 @@ def _write_rows_for_flex_model(
             future_count = otd._future_event_count(args, true_events, prefix_len)
             if future_count <= 0:
                 continue
-            prefix_events = matched_flex_events[:prefix_len]
+            model_prefix_len = _flex_prefix_len_for_canonical_prefix(
+                canonical_record=record,
+                flex_record=flex_record,
+                canonical_prefix_len=prefix_len,
+            )
+            prefix_events = matched_flex_events[:model_prefix_len]
             row_count += _write_rows_for_prefix_samples(
                 writer=writer,
                 prediction_task=prediction_task,
