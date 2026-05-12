@@ -46,6 +46,8 @@ DEFAULT_DELIVERY_EASY_CONFIG_PATH = (
     "HTAMP/prediction/configs/config_files/prediction/"
     "delivery_easy_tpp_training.json"
 )
+DEFAULT_ANNOTATED_VISITS_PATH = "data/processed/patient_room_stays.csv"
+DEFAULT_ANNOTATED_ADMISSIONS_DISCHARGES_PATH = "data/processed/admissions_discharges.csv"
 SCHEMA_VERSION = 1
 
 CSV_FIELDS = [
@@ -137,6 +139,16 @@ def _stable_int_seed(value: Any) -> int:
 
 def _resolve_repo_relative_path(path_str: str | Path | None) -> Path | None:
     return vital_otd._resolve_repo_relative_path(path_str)
+
+
+def _resolve_optional_path_with_default(
+    path_str: str | Path | None,
+    default_path: str,
+) -> Path | None:
+    resolved = _resolve_repo_relative_path(path_str)
+    if resolved is not None:
+        return resolved
+    return _resolve_repo_relative_path(default_path)
 
 
 def _parse_csv_set(raw_value: str | None) -> set[str] | None:
@@ -345,7 +357,10 @@ class EncounterLocationLookup:
         )
 
     def _load_room_stays(self, path_value: str | None) -> pd.DataFrame:
-        path = _resolve_repo_relative_path(path_value)
+        path = _resolve_optional_path_with_default(
+            path_value,
+            DEFAULT_ANNOTATED_VISITS_PATH,
+        )
         columns = [self.patient_id_col, "location", "start", "end", "space_id"]
         if path is None or not path.exists():
             _log(f"Room-stay file not found at {path}; predicted locations may be blank.")
@@ -387,9 +402,16 @@ class EncounterLocationLookup:
         return normalized
 
     def _load_admissions(self, path_value: str | None) -> pd.DataFrame:
-        path = _resolve_repo_relative_path(path_value)
+        path = _resolve_optional_path_with_default(
+            path_value,
+            DEFAULT_ANNOTATED_ADMISSIONS_DISCHARGES_PATH,
+        )
         columns = [self.patient_id_col, ENCOUNTER_ID_COLUMN, "admission_start", "discharge_end"]
         if path is None or not path.exists():
+            _log(
+                f"Admissions/discharges file not found at {path}; encounter-window "
+                "checks will be skipped."
+            )
             return pd.DataFrame(columns=columns)
 
         admissions_df = pd.read_csv(path)

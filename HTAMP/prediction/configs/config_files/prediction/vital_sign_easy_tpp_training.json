@@ -1,8 +1,8 @@
 {
   "dataset_config": {
     "annotated_data_files": {
-      "annotated_visits": "",
-      "annotated_admissions_discharges": "",
+      "annotated_visits": "data/processed/patient_room_stays.csv",
+      "annotated_admissions_discharges": "data/processed/admissions_discharges.csv",
       "annotated_medications": "data/processed/medication_orders_annotated.csv",
       "annotated_blood_pressure": "data/processed/blood_pressure_orders_annotated.csv",
       "annotated_heart_rate": "data/processed/heart_rate_orders_annotated.csv",
