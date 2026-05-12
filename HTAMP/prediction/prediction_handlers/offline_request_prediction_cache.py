@@ -7,9 +7,11 @@ import hashlib
 import json
 import math
 import random
+import subprocess
+import sys
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -128,6 +130,11 @@ def _hash_payload(value: Any) -> str:
     return hashlib.sha256(_json_dumps(value).encode("utf-8")).hexdigest()[:24]
 
 
+def _stable_int_seed(value: Any) -> int:
+    digest = hashlib.sha256(_json_dumps(value).encode("utf-8")).hexdigest()
+    return int(digest[:16], 16) % (2**31 - 1)
+
+
 def _resolve_repo_relative_path(path_str: str | Path | None) -> Path | None:
     return vital_otd._resolve_repo_relative_path(path_str)
 
@@ -163,6 +170,47 @@ def _parse_tasks(raw_value: str) -> tuple[str, ...]:
         if task not in tasks:
             tasks.append(task)
     return tuple(tasks)
+
+
+def _parse_gpu_devices(raw_value: str | None) -> list[str]:
+    if raw_value is None or not str(raw_value).strip():
+        return []
+    return [
+        vital_otd._normalize_gpu_device_arg(item)
+        for item in vital_otd._parse_csv_list(str(raw_value))
+    ]
+
+
+def _devices_for_parallel_workers(args: argparse.Namespace) -> list[str]:
+    worker_count = int(args.parallel_workers)
+    if worker_count <= 0:
+        raise ValueError("--parallel_workers must be positive.")
+
+    explicit_devices = _parse_gpu_devices(args.gpu_ids)
+    if explicit_devices:
+        return [
+            explicit_devices[worker_index % len(explicit_devices)]
+            for worker_index in range(worker_count)
+        ]
+
+    if args.device:
+        _log(
+            f"No --gpu_ids provided; all {worker_count} worker(s) will use "
+            f"--device {args.device}."
+        )
+        return [str(args.device)] * worker_count
+
+    if torch.cuda.is_available():
+        device_count = max(1, int(torch.cuda.device_count()))
+        if worker_count > device_count:
+            _log(
+                f"Requested {worker_count} worker(s) but only {device_count} CUDA "
+                "device(s) are visible; devices will be reused round-robin."
+            )
+        return [f"cuda:{worker_index % device_count}" for worker_index in range(worker_count)]
+
+    _log("CUDA is not available; parallel workers will run on CPU.")
+    return ["cpu"] * worker_count
 
 
 def _tasks_in_safe_runtime_order(tasks: Sequence[str]) -> tuple[str, ...]:
@@ -767,6 +815,101 @@ def _otd_args_for_task(
     )
 
 
+def _record_work_units(*, otd: Any, args: argparse.Namespace, context: Any, record: Any) -> int:
+    true_events = otd._easy_record_events(record=record, mark_encoder=context.mark_encoder)
+    work_units = 0
+    for prefix_len in otd._prefix_lengths(args, true_events):
+        future_count = otd._future_event_count(args, true_events, prefix_len)
+        if future_count <= 0:
+            continue
+        work_units += max(1, int(future_count)) * max(1, int(args.num_samples))
+    return max(1, work_units)
+
+
+def _sequence_indices_for_shard(
+    *,
+    records: Sequence[Any],
+    work_units: Sequence[int],
+    shard_id: int,
+    num_shards: int,
+    strategy: str,
+) -> list[int]:
+    if num_shards <= 1:
+        return list(range(len(records)))
+    if shard_id < 0 or shard_id >= num_shards:
+        raise ValueError(
+            f"--sequence_shard_id must be between 0 and {num_shards - 1}; got {shard_id}."
+        )
+
+    if strategy == "round_robin":
+        return [
+            sequence_index
+            for sequence_index in range(len(records))
+            if sequence_index % num_shards == shard_id
+        ]
+    if strategy != "balanced":
+        raise ValueError(f"Unsupported sequence shard strategy '{strategy}'.")
+
+    shard_assignments: list[list[int]] = [[] for _ in range(num_shards)]
+    shard_totals = [0 for _ in range(num_shards)]
+    ranked_records = sorted(
+        enumerate(work_units),
+        key=lambda item: (-int(item[1]), int(item[0])),
+    )
+    for sequence_index, estimated_work in ranked_records:
+        target_shard = min(
+            range(num_shards),
+            key=lambda candidate: (shard_totals[candidate], candidate),
+        )
+        shard_assignments[target_shard].append(int(sequence_index))
+        shard_totals[target_shard] += int(estimated_work)
+    return sorted(shard_assignments[shard_id])
+
+
+def _apply_sequence_shard(
+    *,
+    otd: Any,
+    otd_args: argparse.Namespace,
+    context: Any,
+    args: argparse.Namespace,
+    prediction_task: str,
+) -> tuple[Any, list[int], int, int]:
+    full_sequence_count = len(context.easy_records)
+    num_shards = int(args.sequence_num_shards or 1)
+    shard_id = int(args.sequence_shard_id or 0)
+    if num_shards <= 1:
+        return context, list(range(full_sequence_count)), full_sequence_count, full_sequence_count
+
+    work_units = [
+        _record_work_units(otd=otd, args=otd_args, context=context, record=record)
+        for record in context.easy_records
+    ]
+    selected_indices = _sequence_indices_for_shard(
+        records=context.easy_records,
+        work_units=work_units,
+        shard_id=shard_id,
+        num_shards=num_shards,
+        strategy=str(args.sequence_shard_strategy),
+    )
+    selected_records = [
+        context.easy_records[sequence_index]
+        for sequence_index in selected_indices
+    ]
+    selected_work = sum(work_units[sequence_index] for sequence_index in selected_indices)
+    total_work = sum(work_units)
+    _log(
+        f"{prediction_task}: shard {shard_id + 1}/{num_shards} selected "
+        f"{len(selected_records)}/{full_sequence_count} sequence(s), estimated "
+        f"sample work {selected_work}/{total_work}."
+    )
+    return (
+        replace(context, easy_records=selected_records),
+        selected_indices,
+        full_sequence_count,
+        selected_work,
+    )
+
+
 def _write_rows_for_easy_model(
     *,
     writer: csv.DictWriter,
@@ -774,6 +917,7 @@ def _write_rows_for_easy_model(
     otd: Any,
     spec: Any,
     context: Any,
+    sequence_indices: Sequence[int],
     args: argparse.Namespace,
     device: torch.device,
     location_lookup: EncounterLocationLookup,
@@ -787,15 +931,21 @@ def _write_rows_for_easy_model(
     )
     first_event_pool = otd._first_event_pool(model_easy_bundle)
     model_records = otd._easy_records_by_key(model_easy_bundle, args.split)
-    rng = random.Random(args.seed)
     row_count = 0
-    for sequence_index, record in enumerate(context.easy_records):
+    for local_index, (sequence_index, record) in enumerate(
+        zip(sequence_indices, context.easy_records),
+        start=1,
+    ):
         model_record = model_records.get(otd._easy_record_key(record))
         if model_record is None:
             raise ValueError(f"No matching EasyTPP record for sequence {sequence_index}.")
         true_events = otd._easy_record_events(record=record, mark_encoder=context.mark_encoder)
 
-        def sample_easy_requests(prefix_len: int, future_count: int) -> list[SampledRequest]:
+        def sample_easy_requests(
+            prefix_len: int,
+            future_count: int,
+            sample_seed: int,
+        ) -> list[SampledRequest]:
             return _sampled_requests_from_events(
                 events=otd._sample_easy_rollout(
                     model=model,
@@ -804,7 +954,7 @@ def _write_rows_for_easy_model(
                     max_future_events=future_count,
                     easy_bundle=model_easy_bundle,
                     first_event_pool=first_event_pool,
-                    rng=rng,
+                    rng=random.Random(int(sample_seed)),
                     device=device,
                 ),
                 prediction_task=prediction_task,
@@ -828,14 +978,14 @@ def _write_rows_for_easy_model(
                 location_lookup=location_lookup,
                 medication_metadata=medication_metadata,
                 include_observed_events_json=include_observed_events_json,
-                sample_fn=lambda prefix_len=prefix_len, future_count=future_count: (
-                    sample_easy_requests(prefix_len, future_count)
+                sample_fn=lambda sample_seed, prefix_len=prefix_len, future_count=future_count: (
+                    sample_easy_requests(prefix_len, future_count, sample_seed)
                 ),
             )
-        if args.progress_every and (sequence_index + 1) % int(args.progress_every) == 0:
+        if args.progress_every and local_index % int(args.progress_every) == 0:
             _log(
                 f"{prediction_task}/{spec.run_name}: processed "
-                f"{sequence_index + 1}/{len(context.easy_records)} sequences; "
+                f"{local_index}/{len(context.easy_records)} sequences; "
                 f"rows={row_count}."
             )
     return row_count
@@ -848,6 +998,7 @@ def _write_rows_for_multittpp_model(
     otd: Any,
     spec: Any,
     context: Any,
+    sequence_indices: Sequence[int],
     args: argparse.Namespace,
     device: torch.device,
     location_lookup: EncounterLocationLookup,
@@ -861,7 +1012,10 @@ def _write_rows_for_multittpp_model(
     )
     model_records = otd._easy_records_by_key(multittpp_bundle, args.split)
     row_count = 0
-    for sequence_index, record in enumerate(context.easy_records):
+    for local_index, (sequence_index, record) in enumerate(
+        zip(sequence_indices, context.easy_records),
+        start=1,
+    ):
         model_record = model_records.get(otd._easy_record_key(record))
         if model_record is None:
             raise ValueError(f"No matching MultiTTPP record for sequence {sequence_index}.")
@@ -903,14 +1057,14 @@ def _write_rows_for_multittpp_model(
                 location_lookup=location_lookup,
                 medication_metadata=medication_metadata,
                 include_observed_events_json=include_observed_events_json,
-                sample_fn=lambda prefix_len=prefix_len, future_count=future_count: (
+                sample_fn=lambda sample_seed, prefix_len=prefix_len, future_count=future_count: (
                     sample_multittpp_requests(prefix_len, future_count)
                 ),
             )
-        if args.progress_every and (sequence_index + 1) % int(args.progress_every) == 0:
+        if args.progress_every and local_index % int(args.progress_every) == 0:
             _log(
                 f"{prediction_task}/{spec.run_name}: processed "
-                f"{sequence_index + 1}/{len(context.easy_records)} sequences; "
+                f"{local_index}/{len(context.easy_records)} sequences; "
                 f"rows={row_count}."
             )
     return row_count
@@ -923,6 +1077,7 @@ def _write_rows_for_flex_model(
     otd: Any,
     spec: Any,
     context: Any,
+    sequence_indices: Sequence[int],
     args: argparse.Namespace,
     device: torch.device,
     location_lookup: EncounterLocationLookup,
@@ -933,7 +1088,10 @@ def _write_rows_for_flex_model(
     flex_records = otd._flex_records_by_key(flex_bundle, args.split)
     flex_dataset = flex_bundle.get_dataset(args.split)
     row_count = 0
-    for sequence_index, record in enumerate(context.easy_records):
+    for local_index, (sequence_index, record) in enumerate(
+        zip(sequence_indices, context.easy_records),
+        start=1,
+    ):
         flex_record = flex_records.get(otd._easy_record_key(record))
         if flex_record is None:
             raise ValueError(f"No matching FlexTPP record for sequence {sequence_index}.")
@@ -983,14 +1141,14 @@ def _write_rows_for_flex_model(
                 location_lookup=location_lookup,
                 medication_metadata=medication_metadata,
                 include_observed_events_json=include_observed_events_json,
-                sample_fn=lambda prefix_events=prefix_events, future_count=future_count: (
+                sample_fn=lambda sample_seed, prefix_events=prefix_events, future_count=future_count: (
                     sample_flex_requests(prefix_events, future_count)
                 ),
             )
-        if args.progress_every and (sequence_index + 1) % int(args.progress_every) == 0:
+        if args.progress_every and local_index % int(args.progress_every) == 0:
             _log(
                 f"{prediction_task}/{spec.run_name}: processed "
-                f"{sequence_index + 1}/{len(context.easy_records)} sequences; "
+                f"{local_index}/{len(context.easy_records)} sequences; "
                 f"rows={row_count}."
             )
     return row_count
@@ -1048,8 +1206,24 @@ def _write_rows_for_prefix_samples(
             sampled_sequence_id=sampled_sequence_id,
             anchor_timestamp=anchor_timestamp,
         )
+        sample_seed = _stable_int_seed(
+            {
+                "base_seed": int(args.seed),
+                "prediction_task": prediction_task,
+                "run_name": str(spec.run_name),
+                "sequence_index": int(sequence_index),
+                "prefix_event_count": int(prefix_len),
+                "sample_index": int(sample_index),
+                "observed_sequence_key": observed_sequence_key,
+            }
+        )
         sample_started_at = time.perf_counter()
-        sampled_requests = sample_fn()
+        random.seed(sample_seed)
+        np.random.seed(sample_seed % (2**32 - 1))
+        torch.manual_seed(sample_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(sample_seed)
+        sampled_requests = sample_fn(sample_seed=sample_seed)
         inference_seconds = round(time.perf_counter() - sample_started_at, 6)
         base_row["inference_seconds"] = inference_seconds
         if not sampled_requests:
@@ -1075,7 +1249,18 @@ def _prepare_task_runtime(
     *,
     prediction_task: str,
     args: argparse.Namespace,
-) -> tuple[Any, argparse.Namespace, Path, list[Any], Any, EncounterLocationLookup, MedicationMetadata | None]:
+) -> tuple[
+    Any,
+    argparse.Namespace,
+    Path,
+    list[Any],
+    Any,
+    list[int],
+    int,
+    int,
+    EncounterLocationLookup,
+    MedicationMetadata | None,
+]:
     if prediction_task == VITAL_TASK:
         otd = vital_otd
         comparison_summary_path = otd._coerce_comparison_summary_path(
@@ -1105,6 +1290,13 @@ def _prepare_task_runtime(
         selected_runs=selected_runs,
     )
     context = otd._build_evaluation_context(args=otd_args, model_specs=specs)
+    context, sequence_indices, full_sequence_count, shard_work_units = _apply_sequence_shard(
+        otd=otd,
+        otd_args=otd_args,
+        context=context,
+        args=args,
+        prediction_task=prediction_task,
+    )
     canonical_training_config = otd._canonical_easy_training_config(
         args=otd_args,
         model_specs=specs,
@@ -1125,6 +1317,9 @@ def _prepare_task_runtime(
         comparison_summary_path,
         specs,
         context,
+        sequence_indices,
+        full_sequence_count,
+        shard_work_units,
         location_lookup,
         medication_metadata,
     )
@@ -1142,13 +1337,17 @@ def _generate_task_cache(
         comparison_summary_path,
         specs,
         context,
+        sequence_indices,
+        full_sequence_count,
+        shard_work_units,
         location_lookup,
         medication_metadata,
     ) = _prepare_task_runtime(prediction_task=prediction_task, args=args)
     device = otd._device_from_args(otd_args)
     _log(
         f"{prediction_task}: generating cache from {comparison_summary_path} on {device} "
-        f"for {len(specs)} model(s), {len(context.easy_records)} sequence(s)."
+        f"for {len(specs)} model(s), {len(context.easy_records)}/{full_sequence_count} "
+        "sequence(s)."
     )
 
     row_count = 0
@@ -1166,6 +1365,7 @@ def _generate_task_cache(
                 otd=otd,
                 spec=spec,
                 context=context,
+                sequence_indices=sequence_indices,
                 args=otd_args,
                 device=device,
                 location_lookup=location_lookup,
@@ -1179,6 +1379,7 @@ def _generate_task_cache(
                 otd=otd,
                 spec=spec,
                 context=context,
+                sequence_indices=sequence_indices,
                 args=otd_args,
                 device=device,
                 location_lookup=location_lookup,
@@ -1192,6 +1393,7 @@ def _generate_task_cache(
                 otd=otd,
                 spec=spec,
                 context=context,
+                sequence_indices=sequence_indices,
                 args=otd_args,
                 device=device,
                 location_lookup=location_lookup,
@@ -1209,6 +1411,11 @@ def _generate_task_cache(
         "comparison_summary_path": str(comparison_summary_path),
         "model_count": len(specs),
         "sequence_count": len(context.easy_records),
+        "full_sequence_count": full_sequence_count,
+        "sequence_shard_id": args.sequence_shard_id,
+        "sequence_num_shards": args.sequence_num_shards,
+        "sequence_shard_strategy": args.sequence_shard_strategy,
+        "estimated_shard_work_units": shard_work_units,
         "row_count": row_count,
         "duration_seconds": round(time.perf_counter() - started_at, 3),
     }
@@ -1220,6 +1427,8 @@ def _write_metadata(
     metadata_path: Path,
     args: argparse.Namespace,
     task_summaries: Sequence[Mapping[str, Any]],
+    parallel_shards: Sequence[Mapping[str, Any]] | None = None,
+    merged_row_count: int | None = None,
 ) -> None:
     metadata = {
         "schema_version": SCHEMA_VERSION,
@@ -1229,9 +1438,244 @@ def _write_metadata(
         "csv_fields": CSV_FIELDS,
         "task_summaries": list(task_summaries),
     }
+    if parallel_shards is not None:
+        metadata["parallel_shards"] = list(parallel_shards)
+    if merged_row_count is not None:
+        metadata["merged_row_count"] = int(merged_row_count)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
         json.dump(metadata, metadata_file, indent=2, default=str)
+
+
+def _parallel_child_args(
+    *,
+    parent_argv: Sequence[str],
+    shard_id: int,
+    num_shards: int,
+    device: str,
+    output_csv: Path,
+    metadata_path: Path,
+) -> list[str]:
+    parent_only_options = {
+        "--parallel_workers",
+        "--gpu_ids",
+        "--shard_temp_dir",
+        "--keep_shard_parts",
+        "--sequence_shard_id",
+        "--sequence_num_shards",
+        "--output_csv",
+        "--metadata_path",
+        "--device",
+    }
+    child_args = vital_otd._strip_option(list(parent_argv), parent_only_options)
+    child_args.extend(
+        [
+            "--parallel_workers",
+            "1",
+            "--sequence_num_shards",
+            str(num_shards),
+            "--sequence_shard_id",
+            str(shard_id),
+            "--device",
+            str(device),
+            "--output_csv",
+            str(output_csv),
+            "--metadata_path",
+            str(metadata_path),
+        ]
+    )
+    return child_args
+
+
+def _merge_shard_csvs(*, shard_csvs: Sequence[Path], output_csv: Path) -> int:
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    merged_rows = 0
+    with output_csv.open("w", newline="", encoding="utf-8") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for shard_csv in shard_csvs:
+            if not shard_csv.exists():
+                raise FileNotFoundError(f"Shard CSV was not produced: {shard_csv}")
+            with shard_csv.open("r", newline="", encoding="utf-8") as shard_file:
+                reader = csv.DictReader(shard_file)
+                if reader.fieldnames != CSV_FIELDS:
+                    _log(
+                        f"Shard CSV {shard_csv} has unexpected fields; merging by known schema."
+                    )
+                for row in reader:
+                    writer.writerow(row)
+                    merged_rows += 1
+    return merged_rows
+
+
+def _load_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as json_file:
+        payload = json.load(json_file)
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def _cleanup_shard_parts(shard_files: Sequence[tuple[Path, Path]], shard_temp_dir: Path) -> None:
+    for shard_csv, shard_metadata_path in shard_files:
+        for path in (shard_csv, shard_metadata_path):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+    try:
+        shard_temp_dir.rmdir()
+    except OSError:
+        pass
+
+
+def _run_parallel_generation(
+    *,
+    args: argparse.Namespace,
+    parent_argv: Sequence[str],
+    output_csv: Path,
+    metadata_path: Path,
+) -> int:
+    worker_count = int(args.parallel_workers)
+    if worker_count <= 1:
+        raise ValueError("_run_parallel_generation requires more than one worker.")
+    if args.sequence_shard_id is not None or args.sequence_num_shards is not None:
+        raise ValueError(
+            "--parallel_workers cannot be combined with manual --sequence_shard_id/"
+            "--sequence_num_shards. Let the parent process assign shards."
+        )
+
+    devices = _devices_for_parallel_workers(args)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    shard_temp_dir = (
+        _resolve_repo_relative_path(args.shard_temp_dir)
+        if args.shard_temp_dir
+        else output_csv.parent / f"{output_csv.stem}_shards_{timestamp}"
+    )
+    if shard_temp_dir is None:
+        shard_temp_dir = output_csv.parent / f"{output_csv.stem}_shards_{timestamp}"
+    shard_temp_dir.mkdir(parents=True, exist_ok=True)
+
+    _log(
+        f"Launching {worker_count} shard worker(s); temp outputs will be written to "
+        f"{shard_temp_dir}."
+    )
+    processes: list[dict[str, Any]] = []
+    for shard_id, device in enumerate(devices):
+        shard_csv = shard_temp_dir / (
+            f"{output_csv.stem}.shard{shard_id:03d}of{worker_count:03d}.csv"
+        )
+        shard_metadata_path = _metadata_path_for_csv(shard_csv)
+        child_args = _parallel_child_args(
+            parent_argv=parent_argv,
+            shard_id=shard_id,
+            num_shards=worker_count,
+            device=device,
+            output_csv=shard_csv,
+            metadata_path=shard_metadata_path,
+        )
+        command = [
+            sys.executable,
+            "-m",
+            "HTAMP.prediction.prediction_handlers.offline_request_prediction_cache",
+            *child_args,
+        ]
+        _log(f"Starting shard {shard_id + 1}/{worker_count} on {device}: {shard_csv}")
+        process = subprocess.Popen(command, cwd=str(vital_otd._repo_root()))
+        processes.append(
+            {
+                "shard_id": shard_id,
+                "num_shards": worker_count,
+                "device": device,
+                "output_csv": shard_csv,
+                "metadata_path": shard_metadata_path,
+                "process": process,
+                "started_at": time.perf_counter(),
+            }
+        )
+
+    failed = False
+    for process_info in processes:
+        process = process_info["process"]
+        return_code = int(process.wait())
+        process_info["return_code"] = return_code
+        process_info["duration_seconds"] = round(
+            time.perf_counter() - float(process_info["started_at"]),
+            3,
+        )
+        _log(
+            f"Shard {int(process_info['shard_id']) + 1}/{worker_count} finished "
+            f"with status={return_code} in {process_info['duration_seconds']}s."
+        )
+        if return_code != 0:
+            failed = True
+
+    if failed:
+        _log(f"At least one shard failed; keeping shard outputs in {shard_temp_dir}.")
+        return 1
+
+    shard_csvs = [process_info["output_csv"] for process_info in processes]
+    merged_row_count = _merge_shard_csvs(shard_csvs=shard_csvs, output_csv=output_csv)
+    _log(f"Merged {merged_row_count} rows from {len(shard_csvs)} shard CSV(s).")
+
+    task_summaries: list[Mapping[str, Any]] = []
+    parallel_shards: list[dict[str, Any]] = []
+    for process_info in processes:
+        shard_metadata = _load_json_if_exists(process_info["metadata_path"])
+        for task_summary in shard_metadata.get("task_summaries", []):
+            if isinstance(task_summary, Mapping):
+                task_summaries.append(dict(task_summary))
+        parallel_shards.append(
+            {
+                "shard_id": process_info["shard_id"],
+                "num_shards": process_info["num_shards"],
+                "device": process_info["device"],
+                "output_csv": str(process_info["output_csv"]),
+                "metadata_path": str(process_info["metadata_path"]),
+                "return_code": process_info["return_code"],
+                "duration_seconds": process_info["duration_seconds"],
+                "task_summaries": shard_metadata.get("task_summaries", []),
+            }
+        )
+
+    _write_metadata(
+        output_csv=output_csv,
+        metadata_path=metadata_path,
+        args=args,
+        task_summaries=task_summaries,
+        parallel_shards=parallel_shards,
+        merged_row_count=merged_row_count,
+    )
+    if not args.keep_shard_parts:
+        _cleanup_shard_parts(
+            [
+                (process_info["output_csv"], process_info["metadata_path"])
+                for process_info in processes
+            ],
+            shard_temp_dir=shard_temp_dir,
+        )
+    _log(f"Offline prediction cache saved to {output_csv}")
+    _log(f"Offline prediction metadata saved to {metadata_path}")
+    return 0
+
+
+def _validate_sharding_args(args: argparse.Namespace) -> None:
+    if int(args.parallel_workers) <= 0:
+        raise ValueError("--parallel_workers must be positive.")
+    if args.sequence_num_shards is None and args.sequence_shard_id is not None:
+        raise ValueError("--sequence_shard_id requires --sequence_num_shards.")
+    if args.sequence_num_shards is not None:
+        if int(args.sequence_num_shards) <= 0:
+            raise ValueError("--sequence_num_shards must be positive.")
+        if args.sequence_shard_id is None:
+            raise ValueError("--sequence_num_shards requires --sequence_shard_id.")
+        if int(args.sequence_shard_id) < 0 or int(args.sequence_shard_id) >= int(
+            args.sequence_num_shards
+        ):
+            raise ValueError(
+                "--sequence_shard_id must be between 0 and "
+                f"{int(args.sequence_num_shards) - 1}."
+            )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1283,6 +1727,51 @@ def build_parser() -> argparse.ArgumentParser:
         default="first",
     )
     parser.add_argument(
+        "--parallel_workers",
+        type=int,
+        default=1,
+        help=(
+            "Launch N shard workers and merge their part CSVs. Each worker receives "
+            "a disjoint sequence shard."
+        ),
+    )
+    parser.add_argument(
+        "--gpu_ids",
+        default=None,
+        help=(
+            "Comma-separated GPU ids or device strings for parallel workers. "
+            "Examples: 0,1,2 or cuda:0,cuda:1,cuda:2."
+        ),
+    )
+    parser.add_argument(
+        "--shard_temp_dir",
+        default=None,
+        help="Directory for per-worker temporary CSV parts when --parallel_workers > 1.",
+    )
+    parser.add_argument(
+        "--keep_shard_parts",
+        action="store_true",
+        help="Keep per-worker CSV and metadata files after a successful merge.",
+    )
+    parser.add_argument(
+        "--sequence_num_shards",
+        type=int,
+        default=None,
+        help="Manual sharding: total number of sequence shards.",
+    )
+    parser.add_argument(
+        "--sequence_shard_id",
+        type=int,
+        default=None,
+        help="Manual sharding: zero-based shard id to generate.",
+    )
+    parser.add_argument(
+        "--sequence_shard_strategy",
+        choices=("balanced", "round_robin"),
+        default="balanced",
+        help="How to assign selected sequences to shards.",
+    )
+    parser.add_argument(
         "--demand_level",
         choices=vital_otd.DEMAND_LEVEL_CHOICES,
         default="all",
@@ -1319,6 +1808,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     started_at = time.perf_counter()
     args = build_parser().parse_args()
+    _validate_sharding_args(args)
     torch.manual_seed(int(args.seed))
     np.random.seed(int(args.seed))
     random.seed(int(args.seed))
@@ -1332,6 +1822,16 @@ def main() -> int:
         else _metadata_path_for_csv(output_csv)
     )
     output_csv.parent.mkdir(parents=True, exist_ok=True)
+
+    if int(args.parallel_workers) > 1:
+        status = _run_parallel_generation(
+            args=args,
+            parent_argv=sys.argv[1:],
+            output_csv=output_csv,
+            metadata_path=metadata_path,
+        )
+        _log(f"Finished in {vital_otd._format_duration(time.perf_counter() - started_at)}")
+        return status
 
     tasks = _tasks_in_safe_runtime_order(_parse_tasks(args.tasks))
     task_summaries: list[dict[str, Any]] = []
