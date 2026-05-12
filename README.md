@@ -76,15 +76,20 @@ python -m HTAMP.prediction.run_delivery_tpp_model_comparison   --accelerator gpu
 
 To evaluate vital sign models using OTD with hard event matching:
 ```console
-python -m HTAMP.prediction.run_vital_sign_tpp_otd_evaluation   --comparison_summary_path data/prediction/vital_sign_tpp_comparison/vital_sign_full_summary.csv   --easy_config_path HTAMP/prediction/configs/config_files/prediction/vital_sign_easy_tpp_training.json   --num_samples 4   --max_future_events 5   --max_sequences 2   --sequence_subset_strategy random   --seed 42   --prefix_stride 5 --run_demand_strata   --demand_gpu_ids 0,1,2   --output_dir data/prediction/vital_sign_tpp_otd_by_demand --wandb_project vital_sign_full_tpp_comparison  --wandb
+python -m HTAMP.prediction.run_vital_sign_tpp_otd_evaluation   --comparison_summary_path data/prediction/vital_sign_tpp_comparison/final_vital_sign_summary.csv   --easy_config_path HTAMP/prediction/configs/config_files/prediction/vital_sign_easy_tpp_training.json   --num_samples 20   --max_future_events 8   --max_sequences 50   --sequence_subset_strategy random   --seed 42   --prefix_stride 8 --run_demand_strata  --demand_gpu_ids 0,1,2   --output_dir data/prediction/vital_sign_tpp_otd_by_demand_hard --wandb_project final_vital_sign  --wandb
 ```
 
 To evaluate vital sign models using OTD with soft event matching:
 ```console
-python -m HTAMP.prediction.run_vital_sign_tpp_otd_evaluation   --comparison_summary_path data/prediction/vital_sign_tpp_comparison/vital_sign_full_summary.csv   --easy_config_path HTAMP/prediction/configs/config_files/prediction/vital_sign_easy_tpp_training.json   --num_samples 4   --max_future_events 5   --max_sequences 2   --sequence_subset_strategy random   --seed 42   --prefix_stride 5 --run_demand_strata   --demand_gpu_ids 0,1,2   --output_dir data/prediction/vital_sign_tpp_otd_by_demand --wandb_project vital_sign_full_tpp_comparison  --wandb --soft_type_matching --type_weight 1.0
+python -m HTAMP.prediction.run_vital_sign_tpp_otd_evaluation   --comparison_summary_path data/prediction/vital_sign_tpp_comparison/final_vital_sign_summary.csv   --easy_config_path HTAMP/prediction/configs/config_files/prediction/vital_sign_easy_tpp_training.json   --num_samples 20   --max_future_events 8   --max_sequences 50   --sequence_subset_strategy random   --seed 42   --prefix_stride 8 --run_demand_strata  --demand_gpu_ids 0,1,2   --output_dir data/prediction/vital_sign_tpp_otd_by_demand --wandb_project final_vital_sign  --wandb --soft_type_matching --type_weight 0.5
+```
+
+To evaluate medicine delivery models using OTD with hard matching:
+```console
+python -m HTAMP.prediction.run_delivery_tpp_otd_evaluation   --comparison_summary_path data/prediction/delivery_tpp_comparison/final_med_summary.csv   --easy_config_path HTAMP/prediction/configs/config_files/prediction/delivery_easy_tpp_training.json   --num_samples 20   --max_future_events 8   --max_sequences 200   --sequence_subset_strategy random   --seed 42   --prefix_stride 8 --run_demand_strata   --demand_gpu_ids 0,1,2   --output_dir data/prediction/delivery_tpp_otd_by_demand --wandb_project final_med  --wandb 
 ```
 
 To cache predictions:
 ```console
-python -m HTAMP.prediction.prediction_handlers.offline_request_prediction_cache --tasks vital_sign,delivery --split test --demand_level all --num_samples 20 --max_future_events 8 --selected_vital_runs final_vital_flex_tpp_stp --selected_delivery_runs final_med_flex_tpp_stp
+python -m HTAMP.prediction.prediction_handlers.offline_request_prediction_cache --parallel_workers 3 --gpu_ids 0,1,2 --sequence_shard_strategy balanced --output_csv data/prediction/offline_request_prediction_cache.csv --num_samples 20 --max_future_events 8 --selected_vital_runs final_vital_sign_flex_tpp_st_enhanced_marks --selected_delivery_runs final_med_flex_tpp_st_no_conditioning
 ```
