@@ -85,6 +85,46 @@ def _int_or_none(value: Any) -> int | None:
     return int(numeric_value)
 
 
+def _safe_cache_component(value: Any, *, unknown: str = "unknown") -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "none", "<na>", "nat"}:
+        text = unknown
+    cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in text)
+    return cleaned.strip("_") or unknown
+
+
+def _split_cache_shard_path(
+    *,
+    cache_dir: Path,
+    floor_number: int,
+    date_stamp: pd.Timestamp,
+) -> Path | None:
+    floor = _safe_cache_component(str(int(floor_number)))
+    day = pd.Timestamp(date_stamp).date().isoformat()
+    for suffix in (".csv", ".csv.gz"):
+        shard_path = cache_dir / f"floor_{floor}" / f"day_{day}{suffix}"
+        if shard_path.exists():
+            return shard_path
+
+    manifest_path = cache_dir / "manifest.csv"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = pd.read_csv(manifest_path, dtype=str)
+    except Exception:
+        return None
+    if manifest.empty or not {"floor", "day", "relative_path"}.issubset(manifest.columns):
+        return None
+    matches = manifest[
+        manifest["floor"].astype(str).eq(str(int(floor_number)))
+        & manifest["day"].astype(str).eq(day)
+    ]
+    if matches.empty:
+        return None
+    shard_path = cache_dir / str(matches.iloc[0]["relative_path"])
+    return shard_path if shard_path.exists() else None
+
+
 def _task_properties_for_request_type(
     all_task_properties: AllTaskProperties,
     request_type: str,
@@ -200,7 +240,17 @@ class OfflinePredictionCache:
         if not self.csv_path.exists():
             raise FileNotFoundError(f"Prediction cache CSV not found: {self.csv_path}")
 
-        frame = pd.read_csv(self.csv_path)
+        cache_csv_path = self.csv_path
+        if self.csv_path.is_dir():
+            cache_csv_path = _split_cache_shard_path(
+                cache_dir=self.csv_path,
+                floor_number=self.floor_number,
+                date_stamp=pd.Timestamp(self.date_stamp),
+            )
+            if cache_csv_path is None:
+                return pd.DataFrame()
+
+        frame = pd.read_csv(cache_csv_path, compression="infer")
         if frame.empty:
             return frame
         if self.selected_run_names is not None and "run_name" in frame.columns:
