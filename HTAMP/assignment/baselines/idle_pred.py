@@ -124,6 +124,40 @@ class IdleTaskPrediction:
                 f"{prediction_task.request_id}."
             )
 
+    def _release_all_prediction_assignments(
+        self,
+        *,
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        consumed: bool,
+        clear_reservations: bool,
+        debug: bool,
+    ) -> None:
+        for robot_id in list(self.robots_servicing_pred_requests):
+            self._release_prediction_assignment(
+                robot_id=robot_id,
+                state=state,
+                motion_planner=motion_planner,
+                consumed=consumed,
+                clear_reservations=clear_reservations,
+                debug=debug,
+            )
+
+    def _motion_planner_without_prediction_reservations(
+        self,
+        *,
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+    ) -> MotionPlanner:
+        if not self.robots_servicing_pred_requests:
+            return motion_planner
+        candidate_motion_planner = motion_planner.fork_with_reservations()
+        for robot_id in self.robots_servicing_pred_requests:
+            candidate_motion_planner.clear_reservations_for_agent(
+                robot_profile=state.simulator_config.robot_profiles[robot_id]
+            )
+        return candidate_motion_planner
+
     def _flatten_prediction_sample(
         self,
         sample_bucket: dict[float, RequestsLists],
@@ -315,14 +349,12 @@ class IdleTaskPrediction:
         closest_path = []
         closest_planned_goal_indices = []
         shortest_time = float("inf")
+        candidate_motion_planner = self._motion_planner_without_prediction_reservations(
+            state=state,
+            motion_planner=motion_planner,
+        )
 
         for robot_id in available_robots:
-            candidate_motion_planner = motion_planner
-            if robot_id in self.robots_servicing_pred_requests:
-                candidate_motion_planner = motion_planner.fork_with_reservations()
-                candidate_motion_planner.clear_reservations_for_agent(
-                    robot_profile=state.simulator_config.robot_profiles[robot_id]
-                )
             path, planned_goal_indices, planned_time = (
                 AssignmentHelpers.determine_path_from_robot_location_to_request(
                     request_id=request_id,
@@ -374,8 +406,7 @@ class IdleTaskPrediction:
             print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
             
             if closest_robot is not None:
-                self._release_prediction_assignment(
-                    robot_id=closest_robot,
+                self._release_all_prediction_assignments(
                     state=state,
                     motion_planner=motion_planner,
                     consumed=False,
@@ -399,7 +430,27 @@ class IdleTaskPrediction:
 
         for request in requests_to_add_back:
             AssignmentHelpers.add_request_to_queue(request, requests_queue)
-        
+
+        self._assign_predictions_to_idle_robots(
+            state=state,
+            motion_planner=motion_planner,
+            traversal_graph_generator=traversal_graph_generator,
+            robot_type=robot_type,
+            requests_lists=requests_lists,
+            debug=debug,
+        )
+
+    def _assign_predictions_to_idle_robots(
+        self,
+        *,
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        traversal_graph_generator: TraversalGraphGenerator,
+        robot_type: str,
+        requests_lists: Optional[RequestsLists],
+        debug: bool,
+    ) -> None:
+        available_robots = state.get_available_robots(robot_type=robot_type)
         prediction_available_robots = [
             robot_id
             for robot_id in available_robots
@@ -473,3 +524,20 @@ class IdleTaskPrediction:
                                                  traversal_graph_generator,
                                                  requests_lists=requests_lists,
                                                  debug=debug)
+
+        self._assign_predictions_to_idle_robots(
+            state=state,
+            motion_planner=motion_planner,
+            traversal_graph_generator=traversal_graph_generator,
+            robot_type="monitoring",
+            requests_lists=requests_lists,
+            debug=debug,
+        )
+        self._assign_predictions_to_idle_robots(
+            state=state,
+            motion_planner=motion_planner,
+            traversal_graph_generator=traversal_graph_generator,
+            robot_type="delivery",
+            requests_lists=requests_lists,
+            debug=debug,
+        )
