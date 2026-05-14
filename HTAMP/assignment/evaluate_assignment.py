@@ -145,6 +145,18 @@ class AssignmentEvaluator:
         if mode in [1, 2]:  # If the selected policy is one of the token passing variants that use alpha
             policy = policy_dict[mode](alpha=alpha)
             print(f"Initialized policy with alpha: {alpha}")
+        elif mode == 3:
+            policy = policy_dict[mode](date_stamp=self.date_stamp.time_stamp,
+                                       end_hour=self.args.hour_end,
+                                       floor_number=self.floor_number,
+                                       initial_time=self.simulator_config.initial_time,
+                                       all_task_properties=self.all_task_properties,
+                                       annotated_data_files=self.annotated_data_files,
+                                       prediction_cache_path=getattr(self.args, "prediction_cache_path", None),
+                                       prediction_cache_run_names=getattr(self.args, "prediction_cache_run_names", None),
+                                       prediction_match_tolerance_minutes=getattr(self.args, "prediction_match_tolerance_minutes", 10.0),
+                                       prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0))
+            print("Initialized IdleTaskPrediction policy with prediction-cache support.")
         elif mode in [5, 6, 7, 8]:
             if mode == 5:
                 allow_deallocation = True
@@ -173,7 +185,8 @@ class AssignmentEvaluator:
                                        prediction_cache_path=getattr(self.args, "prediction_cache_path", None),
                                        prediction_cache_run_names=getattr(self.args, "prediction_cache_run_names", None),
                                        prediction_match_tolerance_minutes=getattr(self.args, "prediction_match_tolerance_minutes", 10.0),
-                                       prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0))
+                                       prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0),
+                                       prediction_cache_patient_filter_mode=getattr(self.args, "prediction_cache_patient_filter_mode", "active_floor"))
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -330,6 +343,9 @@ class AssignmentEvaluator:
                                                  frame_data=frame_data,
                                                  save_frame_data=save_frame_data,
                                                  debug=debug)
+        
+        
+
     
     def _generate_results_summary(self) -> pd.DataFrame:
         results_df = pd.DataFrame([r.to_dict() for r in self.state.requests.values()])
@@ -419,8 +435,8 @@ class Experiment():
         print(f"Generated Robot Profiles: {robot_profiles}")
         all_task_properties = self._generate_task_properties()
         annotated_data_files = AnnotatedDataFiles(
-            annotated_visits=None,
-            annotated_admissions_discharges=None,
+            annotated_visits=args.patient_room_stays_file,
+            annotated_admissions_discharges=args.admissions_discharges_file,
             annotated_medications=args.medications_orders_file,
             annotated_blood_pressure=args.blood_pressure_orders_file,
             annotated_heart_rate=args.heart_rate_orders_file,
@@ -564,9 +580,9 @@ def main():
     parser = argparse.ArgumentParser(prog='evaluate_assignment.py',
                                      description='Evaluate assignment algorithms in a hospital floor environment.')
     # date_operational_range parameters
-    parser.add_argument("--year", type=int, dest='year', default=2025, help='Select year of interest.')
-    parser.add_argument("--month", type=int, dest='month', default=4, help='Select month of interest.')
-    parser.add_argument("--day", type=int, dest='day', default=6, help='Select day of interest.')
+    parser.add_argument("--year", type=int, dest='year', default=2024, help='Select year of interest.')
+    parser.add_argument("--month", type=int, dest='month', default=6, help='Select month of interest.')
+    parser.add_argument("--day", type=int, dest='day', default=24, help='Select day of interest.')
     parser.add_argument("--hour_start", type=int, dest='hour_start', default=8, help='Select starting hour of operational range.')
     parser.add_argument("--hour_end", type=int, dest='hour_end', default=9, help='Select ending hour of operational range.')
     parser.add_argument("--floor_number", type=int, dest='floor_number', default=9, help='Select floor number of interest.')
@@ -575,15 +591,18 @@ def main():
     parser.add_argument("--request_dir", type=str, default="data/requests", help="Directory to save global requests data.")
     parser.add_argument("--use_saved_request_data", action='store_true', help="Flag to use previously saved request data.")
     parser.add_argument("--medications_orders_file", type=str, default="data/processed/medication_orders_annotated.csv", help="Path to the medications orders CSV file.")
+    parser.add_argument("--patient_room_stays_file", type=str, default="data/processed/patient_room_stays.csv", help="Path to the patient room-stays CSV file.")
+    parser.add_argument("--admissions_discharges_file", type=str, default="data/processed/admissions_discharges.csv", help="Path to the admissions/discharges CSV file.")
     parser.add_argument("--blood_pressure_orders_file", type=str, default="data/processed/blood_pressure_orders_annotated.csv", help="Path to the blood pressure orders CSV file.")
     parser.add_argument("--heart_rate_orders_file", type=str, default="data/processed/heart_rate_orders_annotated.csv", help="Path to the heart rate orders CSV file.")
     parser.add_argument("--respiratory_rate_orders_file", type=str, default="data/processed/respiratory_rate_orders_annotated.csv", help="Path to the respiratory rate orders CSV file.")
     parser.add_argument("--temperature_orders_file", type=str, default="data/processed/temperature_orders_annotated.csv", help="Path to the temperature orders CSV file.")
     parser.add_argument("--oxygen_saturation_orders_file", type=str, default="data/processed/oxygen_saturation_orders_annotated.csv", help="Path to the oxygen saturation orders CSV file.")
-    parser.add_argument("--prediction_cache_path", type=str, default=None, help="Path to the offline sampled prediction cache CSV for rollout policies.")
+    parser.add_argument("--prediction_cache_path", type=str, default=None, help="Path to the offline sampled prediction cache CSV or split-cache directory.")
     parser.add_argument("--prediction_cache_run_names", type=str, default=None, help="Comma-separated run_name values to read from the prediction cache.")
     parser.add_argument("--prediction_match_tolerance_minutes", type=float, default=10.0, help="Tolerance for removing cached predictions that match real scheduled requests.")
     parser.add_argument("--prediction_lookahead_minutes", type=float, default=60.0, help="Prediction-cache horizon, in minutes, from the current simulator time.")
+    parser.add_argument("--prediction_cache_patient_filter_mode", type=str, default="active_floor", choices=["active_floor", "observed", "none"], help="Patient filter for rollout cache retrieval.")
 
     # environment parameters
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")

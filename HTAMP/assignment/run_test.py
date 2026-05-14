@@ -17,6 +17,7 @@ END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
 MAX_WORKERS = 100
 ROLLOUT_MODES = {5, 6, 7, 8}
+CACHE_POLICY_MODES = {3, *ROLLOUT_MODES}
 
 BASE = [
     "python", "-m", "HTAMP.assignment.evaluate_assignment",
@@ -42,6 +43,18 @@ PREDICTION_MATCH_TOLERANCE_MINUTES = float(
 )
 PREDICTION_LOOKAHEAD_MINUTES = float(
     os.getenv("HTAMP_PREDICTION_LOOKAHEAD_MINUTES", "60.0")
+)
+PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
+    "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
+    "active_floor",
+)
+PATIENT_ROOM_STAYS_FILE = os.getenv(
+    "HTAMP_PATIENT_ROOM_STAYS_FILE",
+    "data/processed/patient_room_stays.csv",
+)
+ADMISSIONS_DISCHARGES_FILE = os.getenv(
+    "HTAMP_ADMISSIONS_DISCHARGES_FILE",
+    "data/processed/admissions_discharges.csv",
 )
 
 
@@ -140,6 +153,8 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("d_tpts", mode=2, alpha=0.0),
     PolicySpec("d_tpts", mode=2, alpha=0.2),
 
+    PolicySpec("idle_pred", mode=3),
+
     PolicySpec("base_policy", mode=4),
 
     PolicySpec("adaptive_rollout", mode=5, allow_deallocation=True, allow_reweighting=True),
@@ -209,13 +224,16 @@ def policy_run_tag(p: PolicySpec) -> str:
     return tag
 
 
-def rollout_prediction_cache_args() -> list[str]:
+def prediction_cache_args() -> list[str]:
     if not PREDICTION_CACHE_PATH:
         return []
     args = [
         "--prediction_cache_path", PREDICTION_CACHE_PATH,
         "--prediction_match_tolerance_minutes", str(PREDICTION_MATCH_TOLERANCE_MINUTES),
         "--prediction_lookahead_minutes", str(PREDICTION_LOOKAHEAD_MINUTES),
+        "--prediction_cache_patient_filter_mode", PREDICTION_CACHE_PATIENT_FILTER_MODE,
+        "--patient_room_stays_file", PATIENT_ROOM_STAYS_FILE,
+        "--admissions_discharges_file", ADMISSIONS_DISCHARGES_FILE,
     ]
     if PREDICTION_CACHE_RUN_NAMES:
         args += ["--prediction_cache_run_names", PREDICTION_CACHE_RUN_NAMES]
@@ -233,8 +251,8 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
     ]
     if p.alpha is not None:
         cmd += ["--alpha", str(p.alpha)]
-    if p.mode in ROLLOUT_MODES:
-        cmd += rollout_prediction_cache_args()
+    if p.mode in CACHE_POLICY_MODES:
+        cmd += prediction_cache_args()
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd
@@ -291,12 +309,15 @@ def main():
     print("Floors:", FLOORS)
     print("Policies:", [policy_run_tag(p) for p in POLICIES])
     if PREDICTION_CACHE_PATH:
-        print("Rollout prediction cache:", PREDICTION_CACHE_PATH)
-        print("Rollout prediction cache run names:", PREDICTION_CACHE_RUN_NAMES or "<all>")
+        print("Prediction cache for idle_pred/rollout:", PREDICTION_CACHE_PATH)
+        print("Prediction cache run names:", PREDICTION_CACHE_RUN_NAMES or "<all>")
         print("Prediction lookahead minutes:", PREDICTION_LOOKAHEAD_MINUTES)
         print("Prediction match tolerance minutes:", PREDICTION_MATCH_TOLERANCE_MINUTES)
+        print("Prediction cache patient filter mode:", PREDICTION_CACHE_PATIENT_FILTER_MODE)
+        print("Patient room stays file:", PATIENT_ROOM_STAYS_FILE)
+        print("Admissions/discharges file:", ADMISSIONS_DISCHARGES_FILE)
     else:
-        print("Rollout prediction cache disabled.")
+        print("Prediction cache disabled for idle_pred/rollout.")
 
     jobs = [(day, floor, p) for floor in FLOORS for day in floor_days[floor] for p in POLICIES]
 

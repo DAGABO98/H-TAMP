@@ -1,28 +1,133 @@
-import heapq
 from typing import Optional
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers, TaskQueue
+from HTAMP.assignment.policies.prediction_cache import ActivePatientFloorFilter, OfflinePredictionCache
+from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.loc_dataclasses import TimeInterval
 from HTAMP.environment.traversal_dataclasses import TraversalNode
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
-from HTAMP.planning.planning_dataclasses import RequestsLists, TaskRequest
+from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskRequest
 from HTAMP.planning.state import PlanningState
+import pandas as pd
 
 
 class IdleTaskPrediction:
     
-    def __init__(self):
+    def __init__(self,
+                 date_stamp: Optional[pd.Timestamp] = None,
+                 end_hour: Optional[int] = None,
+                 floor_number: Optional[int] = None,
+                 initial_time: Optional[pd.Timestamp] = None,
+                 all_task_properties: Optional[AllTaskProperties] = None,
+                 annotated_data_files: Optional[AnnotatedDataFiles] = None,
+                 prediction_cache_path: Optional[str] = None,
+                 prediction_cache_run_names: Optional[str] = None,
+                 prediction_match_tolerance_minutes: float = 10.0,
+                 prediction_lookahead_minutes: float = 60.0):
         self.monitoring_requests_queue = TaskQueue()
         self.delivery_requests_queue = TaskQueue()
         self.prediction_tasks: list[TaskRequest] = []
+        self.assigned_prediction_request_ids: set[str] = set()
         self.prediction_file_path: Optional[str] = None
+        self.date_stamp = date_stamp
+        self.end_hour = end_hour
+        self.floor_number = floor_number
+        self.initial_time = initial_time
+        self.all_task_properties = all_task_properties
+        self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
+        self.prediction_lookahead_minutes = prediction_lookahead_minutes
+        self.prediction_cache = (
+            OfflinePredictionCache(
+                csv_path=prediction_cache_path,
+                date_stamp=date_stamp,
+                floor_number=int(floor_number),
+                selected_run_names=prediction_cache_run_names,
+            )
+            if prediction_cache_path and date_stamp is not None and floor_number is not None
+            else None
+        )
+        self.active_patient_filter = (
+            ActivePatientFloorFilter(
+                floor_number=int(floor_number),
+                annotated_visits_path=getattr(annotated_data_files, "annotated_visits", None),
+                annotated_admissions_discharges_path=getattr(
+                    annotated_data_files,
+                    "annotated_admissions_discharges",
+                    None,
+                ),
+            )
+            if floor_number is not None
+            else None
+        )
+
+    def _planning_horizon_end_timestamp(self) -> pd.Timestamp | None:
+        if self.date_stamp is None or self.end_hour is None:
+            return None
+        return pd.Timestamp(self.date_stamp).normalize() + pd.Timedelta(hours=int(self.end_hour))
+
+    def _current_timestamp(self, state: PlanningState) -> pd.Timestamp:
+        return pd.Timestamp(self.initial_time) + pd.Timedelta(seconds=float(state.simulator_time))
+
+    def _prediction_cache_ready(self) -> bool:
+        return (
+            self.prediction_cache is not None
+            and self.prediction_cache.enabled
+            and self.initial_time is not None
+            and self.all_task_properties is not None
+        )
+
+    def _flatten_prediction_sample(
+        self,
+        sample_bucket: dict[float, RequestsLists],
+    ) -> list[TaskRequest]:
+        prediction_tasks: list[TaskRequest] = []
+        for request_time in sorted(sample_bucket):
+            requests_lists = sample_bucket[request_time]
+            prediction_tasks.extend(
+                request
+                for request in (
+                    requests_lists.blood_pressure_requests
+                    + requests_lists.heart_rate_requests
+                    + requests_lists.respiratory_rate_requests
+                    + requests_lists.temperature_requests
+                    + requests_lists.oxygen_saturation_requests
+                    + requests_lists.medications_requests
+                )
+                if request.request_id not in self.assigned_prediction_request_ids
+            )
+        prediction_tasks.sort(key=lambda request: float(request.scheduled_time))
+        return prediction_tasks
     
     def _generate_prediction_tasks(self,
                                    state: PlanningState,
+                                   requests_lists: Optional[RequestsLists],
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator):
         self.prediction_tasks = []
-        # TODO extract tasks from requests in stored prediction file
+        if not self._prediction_cache_ready():
+            return
+        active_patient_keys = None
+        if self.active_patient_filter is not None:
+            active_patient_keys = self.active_patient_filter.active_patient_keys(
+                timestamp=self._current_timestamp(state),
+            )
+            if active_patient_keys is not None and not active_patient_keys:
+                return
+        sample_sets = self.prediction_cache.prediction_sample_sets(
+            state=state,
+            real_requests_lists=requests_lists,
+            initial_time=pd.Timestamp(self.initial_time),
+            all_task_properties=self.all_task_properties,
+            traversal_graph_generator=traversal_graph_generator,
+            lookahead_minutes=self.prediction_lookahead_minutes,
+            match_tolerance_minutes=self.prediction_match_tolerance_minutes,
+            planning_horizon_end_timestamp=self._planning_horizon_end_timestamp(),
+            filter_to_observed_patients=False,
+            patient_key_filter=active_patient_keys,
+        )
+        if not sample_sets:
+            return
+        self.prediction_tasks = self._flatten_prediction_sample(sample_sets[0])
 
     def _check_if_requests_in_queues_expired(self, state: PlanningState):
         AssignmentHelpers.remove_expired_requests_from_queue(queue=self.monitoring_requests_queue, 
@@ -40,27 +145,10 @@ class IdleTaskPrediction:
         for request in requests_lists.medications_requests:
             AssignmentHelpers.add_request_to_queue(request, self.delivery_requests_queue)
     
-    def _select_task_for_idle_robot(self,
-                                   robot_id: int,
-                                   state: PlanningState,
-                                   motion_planner: MotionPlanner,
-                                   traversal_graph_generator: TraversalGraphGenerator,
-                                   debug: bool) -> Optional[TaskRequest]:
-        shortest_time = float('inf')
-        selected_task = None
-        robot_node, initial_time = AssignmentHelpers.determine_robot_nodes_and_times(robot_id=robot_id,
-                                                                                     state=state)
-        for prediction_task in self.prediction_tasks:
-            trip_time = AssignmentHelpers.heuristic_cost_from_robot_to_request(current_request=prediction_task,
-                                                                               robot_node=robot_node,
-                                                                               robot_id=robot_id,
-                                                                               state=state,
-                                                                               motion_planner=motion_planner,
-                                                                               traversal_graph_generator=traversal_graph_generator)
-            if trip_time < shortest_time:
-                shortest_time = trip_time
-                selected_task = prediction_task
-        return selected_task
+    def _prediction_task_matches_robot_type(self, prediction_task: TaskRequest, robot_type: str) -> bool:
+        if robot_type == "delivery":
+            return prediction_task.request_type == "medication"
+        return prediction_task.request_type != "medication"
     
     def _determine_path_for_predicted_task(self,
                                            current_request: TaskRequest,
@@ -129,18 +217,24 @@ class IdleTaskPrediction:
                            motion_planner: MotionPlanner,
                            traversal_graph_generator: TraversalGraphGenerator,
                            debug: bool):
-        selected_task = self._select_task_for_idle_robot(robot_id=robot_id,
-                                                         state=state,
-                                                         motion_planner=motion_planner,
-                                                         traversal_graph_generator=traversal_graph_generator,
-                                                         debug=debug)
-        if selected_task is not None:
+        robot_type = state.simulator_config.robot_profiles[robot_id].robot_type
+        for selected_task in list(self.prediction_tasks):
+            if not self._prediction_task_matches_robot_type(
+                prediction_task=selected_task,
+                robot_type=robot_type,
+            ):
+                continue
             planned_path, planned_goal_indices, planned_time = self._determine_path_for_predicted_task(current_request=selected_task,
                                                                                              robot_id=robot_id,
                                                                                              state=state,
                                                                                              motion_planner=motion_planner,
                                                                                              traversal_graph_generator=traversal_graph_generator)
             if len(planned_path) > 0:
+                selected_task.schedule_task(
+                    assigned_robot_id=robot_id,
+                    planned_goal_indices=planned_goal_indices,
+                    planned_time=planned_time,
+                )
                 motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
                 motion_planner.reserve_path_for_agent(path=planned_path,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id])
@@ -148,7 +242,15 @@ class IdleTaskPrediction:
                 state.assign_robot_path(robot_id=robot_id,
                                         path=planned_path,
                                         traversal_graph=traversal_graph_generator.traversal_graph)
+                self.assigned_prediction_request_ids.add(selected_task.request_id)
                 self.prediction_tasks.remove(selected_task)
+                if debug:
+                    print(
+                        f"Assigned idle {robot_type} robot {robot_id} to predicted "
+                        f"request {selected_task.request_id} scheduled at "
+                        f"{selected_task.scheduled_time}."
+                    )
+                return
             
     
     def _assign_requests_to_available_robots(self,
@@ -157,6 +259,7 @@ class IdleTaskPrediction:
                                             traversal_graph_generator: TraversalGraphGenerator,
                                             robot_type: str,
                                             requests_queue: TaskQueue,
+                                            requests_lists: Optional[RequestsLists],
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         requests_to_add_back = []
@@ -201,6 +304,7 @@ class IdleTaskPrediction:
         if available_robots:
             print(f"Idle robots for {robot_type}: {available_robots}")
             self._generate_prediction_tasks(state=state,
+                                            requests_lists=requests_lists,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator)
         
@@ -210,31 +314,35 @@ class IdleTaskPrediction:
             self._handle_idle_robot(robot_id=idle_robot_id,
                                     state=state,
                                     motion_planner=motion_planner,
-                                    traversal_graph=traversal_graph_generator.traversal_graph,
+                                    traversal_graph_generator=traversal_graph_generator,
                                     debug=debug)
     
     def _assign_requests_for_monitoring_robots(self, 
                                           state: PlanningState, 
                                           motion_planner: MotionPlanner, 
                                           traversal_graph_generator: TraversalGraphGenerator,
+                                          requests_lists: Optional[RequestsLists],
                                           debug: bool):
         self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  robot_type="monitoring",
                                                  requests_queue=self.monitoring_requests_queue,
+                                                 requests_lists=requests_lists,
                                                  debug=debug)
     
     def _assign_requests_for_delivery_robots(self, 
                                           state: PlanningState, 
                                           motion_planner: MotionPlanner, 
                                           traversal_graph_generator: TraversalGraphGenerator,
+                                          requests_lists: Optional[RequestsLists],
                                           debug: bool):
         self._assign_requests_to_available_robots(state=state,
                                                  motion_planner=motion_planner,
                                                  traversal_graph_generator=traversal_graph_generator,
                                                  robot_type="delivery",
                                                  requests_queue=self.delivery_requests_queue,
+                                                 requests_lists=requests_lists,
                                                  debug=debug)
 
     def assign_requests_to_robots(self, 
@@ -251,10 +359,12 @@ class IdleTaskPrediction:
         self._assign_requests_for_monitoring_robots(state, 
                                                    motion_planner, 
                                                    traversal_graph_generator,
+                                                   requests_lists=requests_lists,
                                                    debug=debug)
         
         # Assignment logic for delivery robots
         self._assign_requests_for_delivery_robots(state, 
                                                  motion_planner, 
                                                  traversal_graph_generator,
+                                                 requests_lists=requests_lists,
                                                  debug=debug)

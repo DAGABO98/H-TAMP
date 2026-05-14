@@ -6,11 +6,15 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
+from HTAMP.data_processing.data_helpers import DataHelpers
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, RequestsLists, TaskProperties, TaskRequest
 from HTAMP.planning.state import PlanningState
 
 
+DEFAULT_ANNOTATED_VISITS_PATH = "data/processed/patient_room_stays.csv"
+DEFAULT_ANNOTATED_ADMISSIONS_DISCHARGES_PATH = "data/processed/admissions_discharges.csv"
+ENCOUNTER_ID_COLUMN = "Patient Encounter CSN"
 MONITORING_REQUEST_FIELDS = (
     "blood_pressure_requests",
     "heart_rate_requests",
@@ -93,6 +97,22 @@ def _safe_cache_component(value: Any, *, unknown: str = "unknown") -> str:
     return cleaned.strip("_") or unknown
 
 
+def _first_existing_column(frame: pd.DataFrame, candidates: Sequence[str]) -> str | None:
+    normalized_columns = {
+        str(column).strip().lower(): str(column)
+        for column in frame.columns
+    }
+    for candidate in candidates:
+        matched = normalized_columns.get(str(candidate).strip().lower())
+        if matched is not None:
+            return matched
+    return None
+
+
+def _resolve_path_with_default(path_value: str | Path | None, default_path: str) -> Path | None:
+    return _resolve_path(path_value) or _resolve_path(default_path)
+
+
 def _split_cache_shard_path(
     *,
     cache_dir: Path,
@@ -153,6 +173,178 @@ def _monitoring_requests(requests_lists: RequestsLists) -> list[TaskRequest]:
     for data_field in MONITORING_REQUEST_FIELDS:
         requests.extend(getattr(requests_lists, data_field))
     return requests
+
+
+class ActivePatientFloorFilter:
+    def __init__(
+        self,
+        *,
+        floor_number: int,
+        annotated_visits_path: str | Path | None = None,
+        annotated_admissions_discharges_path: str | Path | None = None,
+    ) -> None:
+        self.floor_number = int(floor_number)
+        self.room_stays = self._load_room_stays(annotated_visits_path)
+        self.admissions = self._load_admissions(annotated_admissions_discharges_path)
+
+    @property
+    def enabled(self) -> bool:
+        return not self.room_stays.empty
+
+    def _load_room_stays(self, path_value: str | Path | None) -> pd.DataFrame:
+        columns = ["patient_key", "encounter_key", "location", "start", "end", "floor_number"]
+        path = _resolve_path_with_default(path_value, DEFAULT_ANNOTATED_VISITS_PATH)
+        if path is None or not path.exists():
+            return pd.DataFrame(columns=columns)
+
+        room_df = pd.read_csv(path)
+        patient_col = _first_existing_column(room_df, ["patient_id", "MRN", "PAT_ID"])
+        location_col = _first_existing_column(room_df, ["location", "scheduled_room", "room"])
+        start_col = _first_existing_column(
+            room_df,
+            ["start", "scheduled_start", "IN_TIME", "HOSPITAL_ADMISSION"],
+        )
+        end_col = _first_existing_column(
+            room_df,
+            ["end", "scheduled_end", "OUT_TIME", "HOSPITAL_DISCHARGE"],
+        )
+        if patient_col is None or location_col is None or start_col is None or end_col is None:
+            return pd.DataFrame(columns=columns)
+
+        encounter_col = _first_existing_column(
+            room_df,
+            ["encounter_id", ENCOUNTER_ID_COLUMN, "PAT_ENC_CSN_ID"],
+        )
+        floor_col = _first_existing_column(room_df, ["floor", "floor_number", "__floor__"])
+        normalized = pd.DataFrame(
+            {
+                "patient_key": room_df[patient_col].map(_normalize_identifier),
+                "encounter_key": (
+                    room_df[encounter_col].map(_normalize_identifier)
+                    if encounter_col is not None
+                    else pd.Series("", index=room_df.index)
+                ),
+                "location": room_df[location_col].astype(str),
+                "start": pd.to_datetime(room_df[start_col], errors="coerce"),
+                "end": pd.to_datetime(room_df[end_col], errors="coerce"),
+            }
+        )
+        location_floor = normalized["location"].map(DataHelpers.extract_floor)
+        if floor_col is not None:
+            normalized["floor_number"] = pd.to_numeric(
+                room_df[floor_col],
+                errors="coerce",
+            ).fillna(location_floor)
+        else:
+            normalized["floor_number"] = location_floor
+        normalized = normalized.dropna(subset=["patient_key", "start", "floor_number"]).copy()
+        normalized["end"] = normalized["end"].fillna(pd.Timestamp.max)
+        normalized["floor_number"] = normalized["floor_number"].astype(int)
+        return normalized.sort_values(
+            ["patient_key", "start", "end"],
+            kind="mergesort",
+        ).reset_index(drop=True)
+
+    def _load_admissions(self, path_value: str | Path | None) -> pd.DataFrame:
+        columns = ["patient_key", "encounter_key", "admission_start", "discharge_end"]
+        path = _resolve_path_with_default(
+            path_value,
+            DEFAULT_ANNOTATED_ADMISSIONS_DISCHARGES_PATH,
+        )
+        if path is None or not path.exists():
+            return pd.DataFrame(columns=columns)
+
+        admissions_df = pd.read_csv(path)
+        patient_col = _first_existing_column(admissions_df, ["patient_id", "MRN", "PAT_ID"])
+        encounter_col = _first_existing_column(
+            admissions_df,
+            ["encounter_id", ENCOUNTER_ID_COLUMN, "PAT_ENC_CSN_ID"],
+        )
+        admission_col = _first_existing_column(
+            admissions_df,
+            ["admission_start", "admission", "HOSPITAL_ADMISSION", "Hospital Admission"],
+        )
+        discharge_col = _first_existing_column(
+            admissions_df,
+            ["discharge_end", "discharge", "HOSPITAL_DISCHARGE", "Hospital Discharge"],
+        )
+        if patient_col is None or admission_col is None:
+            return pd.DataFrame(columns=columns)
+
+        normalized = pd.DataFrame(
+            {
+                "patient_key": admissions_df[patient_col].map(_normalize_identifier),
+                "encounter_key": (
+                    admissions_df[encounter_col].map(_normalize_identifier)
+                    if encounter_col is not None
+                    else pd.Series("", index=admissions_df.index)
+                ),
+                "admission_start": pd.to_datetime(admissions_df[admission_col], errors="coerce"),
+                "discharge_end": (
+                    pd.to_datetime(admissions_df[discharge_col], errors="coerce")
+                    if discharge_col is not None
+                    else pd.Series(pd.NaT, index=admissions_df.index)
+                ),
+            }
+        )
+        normalized = normalized.dropna(subset=["patient_key", "admission_start"]).copy()
+        normalized["discharge_end"] = normalized["discharge_end"].fillna(pd.Timestamp.max)
+        return normalized.sort_values(
+            ["patient_key", "encounter_key", "admission_start"],
+            kind="mergesort",
+        ).reset_index(drop=True)
+
+    def _active_encounter_keys(
+        self,
+        *,
+        patient_key: str,
+        room_encounter_key: str,
+        timestamp: pd.Timestamp,
+    ) -> set[str]:
+        if self.admissions.empty:
+            return {room_encounter_key}
+        patient_admissions = self.admissions[self.admissions["patient_key"].eq(patient_key)]
+        if patient_admissions.empty:
+            return {room_encounter_key}
+        active_admissions = patient_admissions[
+            patient_admissions["admission_start"].le(timestamp)
+            & patient_admissions["discharge_end"].gt(timestamp)
+        ]
+        if room_encounter_key:
+            active_admissions = active_admissions[
+                active_admissions["encounter_key"].eq(room_encounter_key)
+            ]
+        if active_admissions.empty:
+            return set()
+        encounter_keys = {
+            _normalize_identifier(encounter_key)
+            for encounter_key in active_admissions["encounter_key"].tolist()
+        }
+        return encounter_keys or {room_encounter_key}
+
+    def active_patient_keys(self, *, timestamp: pd.Timestamp) -> set[tuple[str, str]] | None:
+        if not self.enabled:
+            return None
+        timestamp = pd.Timestamp(timestamp)
+        active_stays = self.room_stays[
+            self.room_stays["floor_number"].eq(int(self.floor_number))
+            & self.room_stays["start"].le(timestamp)
+            & self.room_stays["end"].gt(timestamp)
+        ]
+        active_keys: set[tuple[str, str]] = set()
+        for row in active_stays.itertuples(index=False):
+            patient_key = _normalize_identifier(getattr(row, "patient_key", ""))
+            if not patient_key:
+                continue
+            room_encounter_key = _normalize_identifier(getattr(row, "encounter_key", ""))
+            encounter_keys = self._active_encounter_keys(
+                patient_key=patient_key,
+                room_encounter_key=room_encounter_key,
+                timestamp=timestamp,
+            )
+            for encounter_key in encounter_keys:
+                active_keys.add((patient_key, encounter_key))
+        return active_keys
 
 
 def _remove_one_close_prediction(
@@ -307,11 +499,41 @@ class OfflinePredictionCache:
             keys.add((patient_id, encounter_id))
         return keys
 
+    def _filter_rows_to_patient_keys(
+        self,
+        *,
+        frame: pd.DataFrame,
+        patient_keys: set[tuple[str, str]],
+    ) -> pd.DataFrame:
+        if not patient_keys:
+            return frame.iloc[0:0].copy()
+
+        allowed_by_patient: dict[str, set[str]] = {}
+        for patient_id, encounter_id in patient_keys:
+            allowed_by_patient.setdefault(patient_id, set()).add(encounter_id)
+
+        def row_matches_patient_key(row: pd.Series) -> bool:
+            patient_id = str(row["patient_key"])
+            encounter_id = str(row["encounter_key"])
+            allowed_encounters = allowed_by_patient.get(patient_id)
+            if allowed_encounters is None:
+                return False
+            return not encounter_id or "" in allowed_encounters or encounter_id in allowed_encounters
+
+        return frame[
+            frame.apply(
+                row_matches_patient_key,
+                axis=1,
+            )
+        ].copy()
+
     def _latest_prefix_rows(
         self,
         *,
         current_timestamp: pd.Timestamp,
         state: PlanningState,
+        filter_to_observed_patients: bool = True,
+        patient_key_filter: set[tuple[str, str]] | None = None,
     ) -> pd.DataFrame:
         frame = self.frame
         if frame.empty:
@@ -320,25 +542,20 @@ class OfflinePredictionCache:
         if frame.empty:
             return frame
 
-        observed_keys = self._observed_patient_keys(state)
+        observed_keys = self._observed_patient_keys(state) if filter_to_observed_patients else set()
         if observed_keys:
-            observed_by_patient: dict[str, set[str]] = {}
-            for patient_id, encounter_id in observed_keys:
-                observed_by_patient.setdefault(patient_id, set()).add(encounter_id)
-
-            def row_matches_observed_key(row: pd.Series) -> bool:
-                patient_id = str(row["patient_key"])
-                encounter_id = str(row["encounter_key"])
-                observed_encounters = observed_by_patient.get(patient_id)
-                if observed_encounters is None:
-                    return False
-                return not encounter_id or "" in observed_encounters or encounter_id in observed_encounters
-
-            key_mask = frame.apply(
-                row_matches_observed_key,
-                axis=1,
+            frame = self._filter_rows_to_patient_keys(
+                frame=frame,
+                patient_keys=observed_keys,
             )
-            frame = frame[key_mask].copy()
+            if frame.empty:
+                return frame
+
+        if patient_key_filter is not None:
+            frame = self._filter_rows_to_patient_keys(
+                frame=frame,
+                patient_keys=patient_key_filter,
+            )
             if frame.empty:
                 return frame
 
@@ -449,6 +666,8 @@ class OfflinePredictionCache:
         lookahead_minutes: float,
         match_tolerance_minutes: float,
         planning_horizon_end_timestamp: pd.Timestamp | None = None,
+        filter_to_observed_patients: bool = True,
+        patient_key_filter: set[tuple[str, str]] | None = None,
     ) -> list[dict[float, RequestsLists]]:
         if not self.enabled:
             return []
@@ -467,6 +686,8 @@ class OfflinePredictionCache:
         prefix_rows = self._latest_prefix_rows(
             current_timestamp=current_timestamp,
             state=state,
+            filter_to_observed_patients=filter_to_observed_patients,
+            patient_key_filter=patient_key_filter,
         )
         if prefix_rows.empty:
             return []
