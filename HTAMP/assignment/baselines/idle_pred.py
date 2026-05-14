@@ -263,14 +263,16 @@ class IdleTaskPrediction:
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         requests_to_add_back = []
-        print(f"Available robots for {robot_type}: {available_robots}")
+        if debug:
+            print(f"Available robots for {robot_type}: {available_robots}")
         while available_robots:
             if not requests_queue.heap:
                 break  # No more requests to assign
 
             # Get the next request from the highest priority queue
             next_request_id = requests_queue.pop_task()
-            print(f"Assigning request {next_request_id} to {robot_type} robot")
+            if debug:
+                print(f"Assigning request {next_request_id} to {robot_type} robot")
             closest_robot_results = AssignmentHelpers.determine_closest_robot_to_request(request_id=next_request_id, 
                                                                     available_robots=available_robots, 
                                                                   state=state, 
@@ -280,7 +282,8 @@ class IdleTaskPrediction:
             
             closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
 
-            print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
+            if debug:
+                print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
             
             if closest_robot is not None:
                 AssignmentHelpers.assign_request_to_robot(state=state,
@@ -296,13 +299,16 @@ class IdleTaskPrediction:
             else:
                 # No feasible robot found for this request, re-add it to the queue
                 request = state.requests[next_request_id]
+                if debug:
+                    print(f"No feasible robot found for request {next_request_id}")
                 requests_to_add_back.append(request)
 
         for request in requests_to_add_back:
             AssignmentHelpers.add_request_to_queue(request, requests_queue)
         
         if available_robots:
-            print(f"Idle robots for {robot_type}: {available_robots}")
+            if debug:
+                print(f"Idle robots for {robot_type}: {available_robots}")
             self._generate_prediction_tasks(state=state,
                                             requests_lists=requests_lists,
                                             motion_planner=motion_planner,
