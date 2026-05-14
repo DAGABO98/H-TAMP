@@ -6,7 +6,7 @@ import pandas as pd
 from HTAMP.assignment.assignment_helpers import AssignmentHelpers
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
-from HTAMP.assignment.policies.prediction_cache import OfflinePredictionCache
+from HTAMP.assignment.policies.prediction_cache import ActivePatientFloorFilter, OfflinePredictionCache
 from HTAMP.environment.traversal_graph_gen import TraversalGraphGenerator
 from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists, TaskRequest, TimeSignal
@@ -103,10 +103,43 @@ class RolloutHelpers:
         prediction_lookahead_minutes: float,
         prediction_match_tolerance_minutes: float,
         planning_horizon_end_timestamp: pd.Timestamp | None = None,
+        prediction_cache_patient_filter_mode: str = "active_floor",
+        active_patient_filter: Optional[ActivePatientFloorFilter] = None,
         debug: bool = False,
     ) -> list[dict[float, RequestsLists]]:
         if prediction_cache is None or not prediction_cache.enabled:
             return []
+        current_timestamp = pd.Timestamp(initial_time) + pd.Timedelta(seconds=float(state.simulator_time))
+        filter_mode = str(prediction_cache_patient_filter_mode or "active_floor").strip().lower()
+        filter_to_observed_patients = False
+        patient_key_filter: set[tuple[str, str]] | None = None
+
+        if filter_mode == "active_floor":
+            if active_patient_filter is not None:
+                patient_key_filter = active_patient_filter.active_patient_keys(
+                    timestamp=current_timestamp,
+                )
+                if patient_key_filter is not None and not patient_key_filter:
+                    if debug:
+                        print("No active patients on the rollout floor; no cached predictions extracted.")
+                    return []
+            if patient_key_filter is None:
+                filter_to_observed_patients = True
+                if debug:
+                    print(
+                        "Active-floor patient filter unavailable; falling back to "
+                        "observed-patient prediction cache retrieval."
+                    )
+        elif filter_mode == "observed":
+            filter_to_observed_patients = True
+        elif filter_mode in {"none", "all_floor_day", "all"}:
+            filter_to_observed_patients = False
+        else:
+            raise ValueError(
+                "prediction_cache_patient_filter_mode must be one of "
+                "'active_floor', 'observed', or 'none'."
+            )
+
         sample_sets = prediction_cache.prediction_sample_sets(
             state=state,
             real_requests_lists=real_requests_lists,
@@ -116,9 +149,14 @@ class RolloutHelpers:
             lookahead_minutes=prediction_lookahead_minutes,
             match_tolerance_minutes=prediction_match_tolerance_minutes,
             planning_horizon_end_timestamp=planning_horizon_end_timestamp,
+            filter_to_observed_patients=filter_to_observed_patients,
+            patient_key_filter=patient_key_filter,
         )
         if debug:
-            print(f"Extracted {len(sample_sets)} prediction sample request set(s).")
+            print(
+                f"Extracted {len(sample_sets)} prediction sample request set(s) "
+                f"using cache patient filter mode '{filter_mode}'."
+            )
         return sample_sets
     
     @staticmethod

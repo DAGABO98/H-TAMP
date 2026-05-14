@@ -5,7 +5,7 @@ import pandas as pd
 from HTAMP.assignment.assignment_helpers import RequestsDict
 from HTAMP.assignment.policies.base_policy import FutureCostEstimation, Helpers
 from HTAMP.assignment.policies.basic_helpers import PolicyHelpers
-from HTAMP.assignment.policies.prediction_cache import OfflinePredictionCache
+from HTAMP.assignment.policies.prediction_cache import ActivePatientFloorFilter, OfflinePredictionCache
 from HTAMP.assignment.policies.rollout_helpers import RolloutHelpers
 from HTAMP.data_processing.processing_dataclasses import AnnotatedDataFiles
 from HTAMP.environment.robot_dataclasses import RobotProfile
@@ -32,7 +32,8 @@ class AdaptiveRollout:
                  prediction_cache_path: Optional[str] = None,
                  prediction_cache_run_names: Optional[str] = None,
                  prediction_match_tolerance_minutes: float = 10.0,
-                 prediction_lookahead_minutes: float = 60.0):
+                 prediction_lookahead_minutes: float = 60.0,
+                 prediction_cache_patient_filter_mode: str = "active_floor"):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -67,6 +68,16 @@ class AdaptiveRollout:
         )
         self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
         self.prediction_lookahead_minutes = prediction_lookahead_minutes
+        self.prediction_cache_patient_filter_mode = prediction_cache_patient_filter_mode
+        self.active_patient_filter = (
+            ActivePatientFloorFilter(
+                floor_number=floor_number,
+                annotated_visits_path=annotated_data_files.annotated_visits,
+                annotated_admissions_discharges_path=annotated_data_files.annotated_admissions_discharges,
+            )
+            if prediction_cache_path
+            else None
+        )
 
     def _planning_horizon_end_timestamp(self) -> pd.Timestamp:
         return pd.Timestamp(self.date_stamp).normalize() + pd.Timedelta(hours=int(self.end_hour))
@@ -529,6 +540,8 @@ class AdaptiveRollout:
             prediction_lookahead_minutes=self.prediction_lookahead_minutes,
             prediction_match_tolerance_minutes=self.prediction_match_tolerance_minutes,
             planning_horizon_end_timestamp=self._planning_horizon_end_timestamp(),
+            prediction_cache_patient_filter_mode=self.prediction_cache_patient_filter_mode,
+            active_patient_filter=self.active_patient_filter,
             debug=debug,
         )
 
