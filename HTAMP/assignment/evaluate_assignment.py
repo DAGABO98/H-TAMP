@@ -330,9 +330,6 @@ class AssignmentEvaluator:
                                                  frame_data=frame_data,
                                                  save_frame_data=save_frame_data,
                                                  debug=debug)
-        
-        
-
     
     def _generate_results_summary(self) -> pd.DataFrame:
         results_df = pd.DataFrame([r.to_dict() for r in self.state.requests.values()])
@@ -567,9 +564,9 @@ def main():
     parser = argparse.ArgumentParser(prog='evaluate_assignment.py',
                                      description='Evaluate assignment algorithms in a hospital floor environment.')
     # date_operational_range parameters
-    parser.add_argument("--year", type=int, dest='year', default=2024, help='Select year of interest.')
-    parser.add_argument("--month", type=int, dest='month', default=6, help='Select month of interest.')
-    parser.add_argument("--day", type=int, dest='day', default=24, help='Select day of interest.')
+    parser.add_argument("--year", type=int, dest='year', default=2025, help='Select year of interest.')
+    parser.add_argument("--month", type=int, dest='month', default=4, help='Select month of interest.')
+    parser.add_argument("--day", type=int, dest='day', default=6, help='Select day of interest.')
     parser.add_argument("--hour_start", type=int, dest='hour_start', default=8, help='Select starting hour of operational range.')
     parser.add_argument("--hour_end", type=int, dest='hour_end', default=9, help='Select ending hour of operational range.')
     parser.add_argument("--floor_number", type=int, dest='floor_number', default=9, help='Select floor number of interest.')

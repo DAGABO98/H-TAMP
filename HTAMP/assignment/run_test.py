@@ -16,6 +16,7 @@ START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
 MAX_WORKERS = 100
+ROLLOUT_MODES = {5, 6, 7, 8}
 
 BASE = [
     "python", "-m", "HTAMP.assignment.evaluate_assignment",
@@ -27,6 +28,21 @@ BASE = [
 ]
 
 LOG_ROOT = "results/policies/logs"
+
+PREDICTION_CACHE_PATH = os.getenv(
+    "HTAMP_PREDICTION_CACHE_PATH",
+    "data/prediction/offline_request_prediction_cache_by_floor_day",
+)
+PREDICTION_CACHE_RUN_NAMES = os.getenv(
+    "HTAMP_PREDICTION_CACHE_RUN_NAMES",
+    "final_vital_sign_flex_tpp_st_enhanced_marks,final_med_flex_tpp_st_no_conditioning",
+)
+PREDICTION_MATCH_TOLERANCE_MINUTES = float(
+    os.getenv("HTAMP_PREDICTION_MATCH_TOLERANCE_MINUTES", "10.0")
+)
+PREDICTION_LOOKAHEAD_MINUTES = float(
+    os.getenv("HTAMP_PREDICTION_LOOKAHEAD_MINUTES", "60.0")
+)
 
 
 # Only include dates whose (ISO year, ISO week) is in this explicit list
@@ -181,16 +197,29 @@ def policy_run_tag(p: PolicySpec) -> str:
     if p.allow_deallocation:
         tag += "_ropt"
     else:
-        if p.mode in [5, 6, 7, 8]:  # Only add nopt tag for heuristic rollout variants
+        if p.mode in ROLLOUT_MODES:  # Only add nopt tag for rollout variants
             tag += "_nopt"
 
     if p.allow_reweighting:
         tag += "_rwt"
     else:
-        if p.mode in [5, 6, 7, 8]:  # Only add norwt tag for heuristic rollout variants
+        if p.mode in ROLLOUT_MODES:  # Only add norwt tag for rollout variants
             tag += "_norwt"
     
     return tag
+
+
+def rollout_prediction_cache_args() -> list[str]:
+    if not PREDICTION_CACHE_PATH:
+        return []
+    args = [
+        "--prediction_cache_path", PREDICTION_CACHE_PATH,
+        "--prediction_match_tolerance_minutes", str(PREDICTION_MATCH_TOLERANCE_MINUTES),
+        "--prediction_lookahead_minutes", str(PREDICTION_LOOKAHEAD_MINUTES),
+    ]
+    if PREDICTION_CACHE_RUN_NAMES:
+        args += ["--prediction_cache_run_names", PREDICTION_CACHE_RUN_NAMES]
+    return args
 
 
 def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
@@ -204,6 +233,8 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
     ]
     if p.alpha is not None:
         cmd += ["--alpha", str(p.alpha)]
+    if p.mode in ROLLOUT_MODES:
+        cmd += rollout_prediction_cache_args()
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd
@@ -259,6 +290,13 @@ def main():
 
     print("Floors:", FLOORS)
     print("Policies:", [policy_run_tag(p) for p in POLICIES])
+    if PREDICTION_CACHE_PATH:
+        print("Rollout prediction cache:", PREDICTION_CACHE_PATH)
+        print("Rollout prediction cache run names:", PREDICTION_CACHE_RUN_NAMES or "<all>")
+        print("Prediction lookahead minutes:", PREDICTION_LOOKAHEAD_MINUTES)
+        print("Prediction match tolerance minutes:", PREDICTION_MATCH_TOLERANCE_MINUTES)
+    else:
+        print("Rollout prediction cache disabled.")
 
     jobs = [(day, floor, p) for floor in FLOORS for day in floor_days[floor] for p in POLICIES]
 
