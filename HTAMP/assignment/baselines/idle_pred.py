@@ -84,19 +84,43 @@ class IdleTaskPrediction:
         }
         return self.consumed_prediction_request_ids | active_prediction_ids
 
-    def _refresh_prediction_assignments(self, state: PlanningState, debug: bool) -> None:
+    def _prediction_route_finished(self, state: PlanningState, robot_id: int) -> bool:
+        path = state.robot_paths.get(robot_id, [])
+        if not path:
+            return True
+        return (
+            state.robots_next_nodes.get(robot_id) is None
+            and float(state.current_wait_times.get(robot_id, 0.0)) <= 0.0
+            and int(state.robots_current_node_index.get(robot_id, 0)) >= len(path) - 1
+        )
+
+    def _prediction_service_complete(self, state: PlanningState, prediction_task: TaskRequest) -> bool:
+        planned_time = float(getattr(prediction_task, "planned_time", -1.0))
+        return planned_time >= 0.0 and planned_time <= float(state.simulator_time)
+
+    def _refresh_prediction_assignments(
+        self,
+        *,
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        debug: bool,
+    ) -> None:
         for robot_id, prediction_task in list(self.robots_servicing_pred_requests.items()):
             if state.assigned_requests.get(robot_id):
                 self.robots_servicing_pred_requests.pop(robot_id, None)
                 continue
-            if float(prediction_task.planned_time) <= float(state.simulator_time):
-                self.consumed_prediction_request_ids.add(prediction_task.request_id)
-                self.robots_servicing_pred_requests.pop(robot_id, None)
-                if debug:
-                    print(
-                        f"Robot {robot_id} reached predicted request "
-                        f"{prediction_task.request_id} at time {state.simulator_time}."
-                    )
+            if self._prediction_service_complete(
+                state=state,
+                prediction_task=prediction_task,
+            ) or self._prediction_route_finished(state=state, robot_id=robot_id):
+                self._release_prediction_assignment(
+                    robot_id=robot_id,
+                    state=state,
+                    motion_planner=motion_planner,
+                    consumed=True,
+                    clear_reservations=True,
+                    debug=debug,
+                )
 
     def _release_prediction_assignment(
         self,
@@ -507,7 +531,11 @@ class IdleTaskPrediction:
                                   traversal_graph_generator: TraversalGraphGenerator,
                                   debug: bool):
         # Add new requests to the appropriate queues
-        self._refresh_prediction_assignments(state=state, debug=debug)
+        self._refresh_prediction_assignments(
+            state=state,
+            motion_planner=motion_planner,
+            debug=debug,
+        )
         self._check_if_requests_in_queues_expired(state)
         self._add_all_requests_to_queues(requests_lists)
 
