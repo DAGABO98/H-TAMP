@@ -27,7 +27,8 @@ class IdleTaskPrediction:
         self.monitoring_requests_queue = TaskQueue()
         self.delivery_requests_queue = TaskQueue()
         self.prediction_tasks: list[TaskRequest] = []
-        self.assigned_prediction_request_ids: set[str] = set()
+        self.consumed_prediction_request_ids: set[str] = set()
+        self.robots_servicing_pred_requests: dict[int, TaskRequest] = {}
         self.prediction_file_path: Optional[str] = None
         self.date_stamp = date_stamp
         self.end_hour = end_hour
@@ -76,6 +77,53 @@ class IdleTaskPrediction:
             and self.all_task_properties is not None
         )
 
+    def _unavailable_prediction_request_ids(self) -> set[str]:
+        active_prediction_ids = {
+            prediction_task.request_id
+            for prediction_task in self.robots_servicing_pred_requests.values()
+        }
+        return self.consumed_prediction_request_ids | active_prediction_ids
+
+    def _refresh_prediction_assignments(self, state: PlanningState, debug: bool) -> None:
+        for robot_id, prediction_task in list(self.robots_servicing_pred_requests.items()):
+            if state.assigned_requests.get(robot_id):
+                self.robots_servicing_pred_requests.pop(robot_id, None)
+                continue
+            if float(prediction_task.planned_time) <= float(state.simulator_time):
+                self.consumed_prediction_request_ids.add(prediction_task.request_id)
+                self.robots_servicing_pred_requests.pop(robot_id, None)
+                if debug:
+                    print(
+                        f"Robot {robot_id} reached predicted request "
+                        f"{prediction_task.request_id} at time {state.simulator_time}."
+                    )
+
+    def _release_prediction_assignment(
+        self,
+        *,
+        robot_id: int,
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        consumed: bool,
+        clear_reservations: bool,
+        debug: bool,
+    ) -> None:
+        prediction_task = self.robots_servicing_pred_requests.pop(robot_id, None)
+        if prediction_task is None:
+            return
+        if consumed:
+            self.consumed_prediction_request_ids.add(prediction_task.request_id)
+        if clear_reservations:
+            motion_planner.clear_reservations_for_agent(
+                robot_profile=state.simulator_config.robot_profiles[robot_id]
+            )
+        if debug:
+            status = "completed" if consumed else "preempted"
+            print(
+                f"Robot {robot_id} {status} predicted request "
+                f"{prediction_task.request_id}."
+            )
+
     def _flatten_prediction_sample(
         self,
         sample_bucket: dict[float, RequestsLists],
@@ -83,6 +131,7 @@ class IdleTaskPrediction:
         prediction_tasks: list[TaskRequest] = []
         for request_time in sorted(sample_bucket):
             requests_lists = sample_bucket[request_time]
+            unavailable_prediction_request_ids = self._unavailable_prediction_request_ids()
             prediction_tasks.extend(
                 request
                 for request in (
@@ -93,7 +142,7 @@ class IdleTaskPrediction:
                     + requests_lists.oxygen_saturation_requests
                     + requests_lists.medications_requests
                 )
-                if request.request_id not in self.assigned_prediction_request_ids
+                if request.request_id not in unavailable_prediction_request_ids
             )
         prediction_tasks.sort(key=lambda request: float(request.scheduled_time))
         return prediction_tasks
@@ -242,7 +291,7 @@ class IdleTaskPrediction:
                 state.assign_robot_path(robot_id=robot_id,
                                         path=planned_path,
                                         traversal_graph=traversal_graph_generator.traversal_graph)
-                self.assigned_prediction_request_ids.add(selected_task.request_id)
+                self.robots_servicing_pred_requests[robot_id] = selected_task
                 self.prediction_tasks.remove(selected_task)
                 if debug:
                     print(
@@ -251,6 +300,46 @@ class IdleTaskPrediction:
                         f"{selected_task.scheduled_time}."
                     )
                 return
+
+    def _determine_closest_robot_to_real_request(
+        self,
+        *,
+        request_id: str,
+        available_robots: list[int],
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        traversal_graph_generator: TraversalGraphGenerator,
+        debug: bool,
+    ) -> tuple[Optional[int], list[tuple[TraversalNode, TimeInterval]], list[int], float]:
+        closest_robot = None
+        closest_path = []
+        closest_planned_goal_indices = []
+        shortest_time = float("inf")
+
+        for robot_id in available_robots:
+            candidate_motion_planner = motion_planner
+            if robot_id in self.robots_servicing_pred_requests:
+                candidate_motion_planner = motion_planner.fork_with_reservations()
+                candidate_motion_planner.clear_reservations_for_agent(
+                    robot_profile=state.simulator_config.robot_profiles[robot_id]
+                )
+            path, planned_goal_indices, planned_time = (
+                AssignmentHelpers.determine_path_from_robot_location_to_request(
+                    request_id=request_id,
+                    robot_id=robot_id,
+                    state=state,
+                    motion_planner=candidate_motion_planner,
+                    traversal_graph_generator=traversal_graph_generator,
+                    debug=debug,
+                )
+            )
+            if len(path) > 0 and planned_time < shortest_time:
+                shortest_time = planned_time
+                closest_robot = robot_id
+                closest_path = path
+                closest_planned_goal_indices = planned_goal_indices
+
+        return closest_robot, closest_path, closest_planned_goal_indices, shortest_time
             
     
     def _assign_requests_to_available_robots(self,
@@ -263,29 +352,36 @@ class IdleTaskPrediction:
                                             debug: bool):
         available_robots = state.get_available_robots(robot_type=robot_type)
         requests_to_add_back = []
-        if debug:
-            print(f"Available robots for {robot_type}: {available_robots}")
+        print(f"Available robots for {robot_type}: {available_robots}")
         while available_robots:
             if not requests_queue.heap:
                 break  # No more requests to assign
 
             # Get the next request from the highest priority queue
             next_request_id = requests_queue.pop_task()
-            if debug:
-                print(f"Assigning request {next_request_id} to {robot_type} robot")
-            closest_robot_results = AssignmentHelpers.determine_closest_robot_to_request(request_id=next_request_id, 
-                                                                    available_robots=available_robots, 
-                                                                  state=state, 
-                                                                  motion_planner=motion_planner,
-                                                                  traversal_graph_generator=traversal_graph_generator,
-                                                                  debug=debug)
+            print(f"Assigning request {next_request_id} to {robot_type} robot")
+            closest_robot_results = self._determine_closest_robot_to_real_request(
+                request_id=next_request_id,
+                available_robots=available_robots,
+                state=state,
+                motion_planner=motion_planner,
+                traversal_graph_generator=traversal_graph_generator,
+                debug=debug,
+            )
             
             closest_robot, closest_path, closest_planned_goal_indices, shortest_time = closest_robot_results
 
-            if debug:
-                print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
+            print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
             
             if closest_robot is not None:
+                self._release_prediction_assignment(
+                    robot_id=closest_robot,
+                    state=state,
+                    motion_planner=motion_planner,
+                    consumed=False,
+                    clear_reservations=True,
+                    debug=debug,
+                )
                 AssignmentHelpers.assign_request_to_robot(state=state,
                                               request_id=next_request_id,
                                               robot_id=closest_robot,
@@ -299,24 +395,26 @@ class IdleTaskPrediction:
             else:
                 # No feasible robot found for this request, re-add it to the queue
                 request = state.requests[next_request_id]
-                if debug:
-                    print(f"No feasible robot found for request {next_request_id}")
                 requests_to_add_back.append(request)
 
         for request in requests_to_add_back:
             AssignmentHelpers.add_request_to_queue(request, requests_queue)
         
-        if available_robots:
-            if debug:
-                print(f"Idle robots for {robot_type}: {available_robots}")
+        prediction_available_robots = [
+            robot_id
+            for robot_id in available_robots
+            if robot_id not in self.robots_servicing_pred_requests
+        ]
+        if prediction_available_robots:
+            print(f"Idle robots for {robot_type}: {prediction_available_robots}")
             self._generate_prediction_tasks(state=state,
                                             requests_lists=requests_lists,
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator)
         
-        while available_robots:
+        while prediction_available_robots:
             # handle idle robots if needed
-            idle_robot_id = available_robots.pop()
+            idle_robot_id = prediction_available_robots.pop()
             self._handle_idle_robot(robot_id=idle_robot_id,
                                     state=state,
                                     motion_planner=motion_planner,
@@ -358,6 +456,7 @@ class IdleTaskPrediction:
                                   traversal_graph_generator: TraversalGraphGenerator,
                                   debug: bool):
         # Add new requests to the appropriate queues
+        self._refresh_prediction_assignments(state=state, debug=debug)
         self._check_if_requests_in_queues_expired(state)
         self._add_all_requests_to_queues(requests_lists)
 
