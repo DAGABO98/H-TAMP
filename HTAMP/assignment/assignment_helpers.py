@@ -193,8 +193,18 @@ class AssignmentHelpers:
                                 motion_planner: MotionPlanner,
                                 traversal_graph_generator: TraversalGraphGenerator,
                                 debug: bool):
+        planned_goal_index_offset = (
+            1
+            if state.robots_next_nodes.get(robot_id) is not None
+            and not state.assigned_requests.get(robot_id)
+            else 0
+        )
+        adjusted_planned_goal_indices = [
+            goal_index + planned_goal_index_offset
+            for goal_index in planned_goal_indices
+        ]
         state.requests[request_id].schedule_task(planned_time=planned_time,
-                                                planned_goal_indices=planned_goal_indices,
+                                                planned_goal_indices=adjusted_planned_goal_indices,
                                                 assigned_robot_id=robot_id)
 
         if debug:
