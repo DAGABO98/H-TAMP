@@ -445,7 +445,8 @@ class IdleTaskPrediction:
                                               planned_goal_indices=closest_planned_goal_indices,
                                               motion_planner=motion_planner,
                                               traversal_graph_generator=traversal_graph_generator,
-                                              debug=debug)
+                                              debug=debug,
+                                              adjust_goal_indices_for_idle_motion=True)
                 available_robots.remove(closest_robot)
             else:
                 # No feasible robot found for this request, re-add it to the queue

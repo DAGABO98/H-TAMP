@@ -192,10 +192,12 @@ class AssignmentHelpers:
                                 planned_goal_indices: list[int],
                                 motion_planner: MotionPlanner,
                                 traversal_graph_generator: TraversalGraphGenerator,
-                                debug: bool):
+                                debug: bool,
+                                adjust_goal_indices_for_idle_motion: bool = False):
         planned_goal_index_offset = (
             1
-            if state.robots_next_nodes.get(robot_id) is not None
+            if adjust_goal_indices_for_idle_motion
+            and state.robots_next_nodes.get(robot_id) is not None
             and not state.assigned_requests.get(robot_id)
             else 0
         )
