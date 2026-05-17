@@ -55,13 +55,13 @@ python -m HTAMP.team_composition.run_team_comp
 
 To plot histograms for team composition results:
 ```console
-python -m HTAMP.plotting.team_comp_plotting
+python -m HTAMP.plotting.team_comp.team_comp_plotting
 ```
 
 To plot box plots for comparison results:
 ```console
-python -m HTAMP.plotting.assignment_results_plotting --daily_stat mean
-python -m HTAMP.plotting.assignment_results_plotting --daily_stat p95
+python -m HTAMP.plotting.assignment.assignment_results_plotting --daily_stat mean
+python -m HTAMP.plotting.assignment.assignment_results_plotting --daily_stat p95
 ```
 
 To train all vital sign models:
