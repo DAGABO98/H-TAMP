@@ -44,6 +44,9 @@ PREDICTION_MATCH_TOLERANCE_MINUTES = float(
 PREDICTION_LOOKAHEAD_MINUTES = float(
     os.getenv("HTAMP_PREDICTION_LOOKAHEAD_MINUTES", "60.0")
 )
+PREDICTION_WEIGHT_BIN_MINUTES = float(
+    os.getenv("HTAMP_PREDICTION_WEIGHT_BIN_MINUTES", "5.0")
+)
 PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
     "active_floor",
@@ -231,6 +234,7 @@ def prediction_cache_args() -> list[str]:
         "--prediction_cache_path", PREDICTION_CACHE_PATH,
         "--prediction_match_tolerance_minutes", str(PREDICTION_MATCH_TOLERANCE_MINUTES),
         "--prediction_lookahead_minutes", str(PREDICTION_LOOKAHEAD_MINUTES),
+        "--prediction_weight_bin_minutes", str(PREDICTION_WEIGHT_BIN_MINUTES),
         "--prediction_cache_patient_filter_mode", PREDICTION_CACHE_PATIENT_FILTER_MODE,
         "--patient_room_stays_file", PATIENT_ROOM_STAYS_FILE,
         "--admissions_discharges_file", ADMISSIONS_DISCHARGES_FILE,
@@ -312,6 +316,7 @@ def main():
         print("Prediction cache for idle_pred/rollout:", PREDICTION_CACHE_PATH)
         print("Prediction cache run names:", PREDICTION_CACHE_RUN_NAMES or "<all>")
         print("Prediction lookahead minutes:", PREDICTION_LOOKAHEAD_MINUTES)
+        print("Prediction weight bin minutes:", PREDICTION_WEIGHT_BIN_MINUTES)
         print("Prediction match tolerance minutes:", PREDICTION_MATCH_TOLERANCE_MINUTES)
         print("Prediction cache patient filter mode:", PREDICTION_CACHE_PATIENT_FILTER_MODE)
         print("Patient room stays file:", PATIENT_ROOM_STAYS_FILE)

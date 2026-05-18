@@ -14,6 +14,7 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists
 from HTAMP.planning.request_handler import PlanningRequestHandler
 from HTAMP.planning.state import PlanningState
+from HTAMP.assignment.policies.weighing_function import PredictionWeightTracker
 
 class AdaptiveRollout:
     def __init__(self,
@@ -33,7 +34,8 @@ class AdaptiveRollout:
                  prediction_cache_run_names: Optional[str] = None,
                  prediction_match_tolerance_minutes: float = 10.0,
                  prediction_lookahead_minutes: float = 60.0,
-                 prediction_cache_patient_filter_mode: str = "active_floor"):
+                 prediction_cache_patient_filter_mode: str = "active_floor",
+                 prediction_weight_bin_minutes: float = 5.0):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -69,6 +71,12 @@ class AdaptiveRollout:
         self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
         self.prediction_lookahead_minutes = prediction_lookahead_minutes
         self.prediction_cache_patient_filter_mode = prediction_cache_patient_filter_mode
+        self.prediction_weight_tracker = PredictionWeightTracker(
+            bin_minutes=prediction_weight_bin_minutes,
+            default_floor=floor_number,
+            default_day=pd.Timestamp(date_stamp).date().isoformat(),
+        )
+        self._reweighting_trigger_reassignment = False
         self.active_patient_filter = (
             ActivePatientFloorFilter(
                 floor_number=floor_number,
@@ -129,8 +137,77 @@ class AdaptiveRollout:
     def _determine_if_reweighting_triggers_reassignment(self,
                                         state: PlanningState,
                                         debug: bool) -> bool:
-        # TODO: to be implemented once the prediction errors is calculated
-        return False
+        if not self._reweighting_trigger_reassignment:
+            return False
+
+        self._reweighting_trigger_reassignment = False
+        if debug:
+            print("Prediction weights changed enough to trigger reassignment.")
+        return True
+
+    def _extract_prediction_sample_sets(
+        self,
+        *,
+        state: PlanningState,
+        real_requests_lists: Optional[RequestsLists],
+        traversal_graph_generator: TraversalGraphGenerator,
+        remove_real_matches: bool,
+        debug: bool,
+    ) -> list[dict[float, RequestsLists]]:
+        return RolloutHelpers._extract_prediction_sample_sets(
+            prediction_cache=self.prediction_cache,
+            state=state,
+            real_requests_lists=real_requests_lists,
+            initial_time=self.initial_time,
+            all_task_properties=self.all_task_properties,
+            traversal_graph_generator=traversal_graph_generator,
+            prediction_lookahead_minutes=self.prediction_lookahead_minutes,
+            prediction_match_tolerance_minutes=self.prediction_match_tolerance_minutes,
+            planning_horizon_end_timestamp=self._planning_horizon_end_timestamp(),
+            prediction_cache_patient_filter_mode=self.prediction_cache_patient_filter_mode,
+            active_patient_filter=self.active_patient_filter,
+            remove_real_matches=remove_real_matches,
+            debug=debug,
+        )
+
+    def _update_prediction_weights(
+        self,
+        *,
+        state: PlanningState,
+        requests_lists: Optional[RequestsLists],
+        traversal_graph_generator: TraversalGraphGenerator,
+        debug: bool,
+    ) -> None:
+        if not self.allow_reweighting:
+            return
+        if self.prediction_cache is None or not self.prediction_cache.enabled:
+            return
+
+        self.prediction_weight_tracker.record_observed_requests(requests_lists)
+
+        if self.prediction_weight_tracker.should_record_prediction_snapshot(state.simulator_time):
+            raw_prediction_sample_sets = self._extract_prediction_sample_sets(
+                state=state,
+                real_requests_lists=requests_lists,
+                traversal_graph_generator=traversal_graph_generator,
+                remove_real_matches=False,
+                debug=debug,
+            )
+            self.prediction_weight_tracker.record_prediction_snapshot(
+                current_time=state.simulator_time,
+                prediction_sample_sets=raw_prediction_sample_sets,
+            )
+
+        changed_keys = self.prediction_weight_tracker.update_due_weights(state.simulator_time)
+        if changed_keys:
+            self._reweighting_trigger_reassignment = True
+            if debug:
+                print(f"Updated prediction weights for {len(changed_keys)} patient/floor/day request group(s).")
+
+    def _prediction_request_weight(self, request) -> float:
+        if not self.allow_reweighting:
+            return 1.0
+        return self.prediction_weight_tracker.weight_for_request(request)
     
     def _determine_if_deallocation_should_occur(self, 
                                                 min_pickup_deadline: float,
@@ -329,7 +406,8 @@ class AdaptiveRollout:
                                                                                         motion_planner=current_motion_planner,
                                                                                         traversal_graph_generator=traversal_graph_generator,
                                                                                         look_ahead_minutes=look_ahead_minutes,
-                                                                                        blocked_robots=current_blocked_robots)
+                                                                                        blocked_robots=current_blocked_robots,
+                                                                                        prediction_request_weight_fn=self._prediction_request_weight if self.allow_reweighting else None)
 
                 if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
                     min_path_cost = truncated_cost
@@ -379,7 +457,8 @@ class AdaptiveRollout:
                                                                                             motion_planner=current_motion_planner,
                                                                                             traversal_graph_generator=traversal_graph_generator,
                                                                                             look_ahead_minutes=look_ahead_minutes,
-                                                                                            blocked_robots=current_blocked_robots)
+                                                                                            blocked_robots=current_blocked_robots,
+                                                                                            prediction_request_weight_fn=self._prediction_request_weight if self.allow_reweighting else None)
 
                     if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
                         min_path_cost = truncated_cost
@@ -530,18 +609,18 @@ class AdaptiveRollout:
         min_pickup_deadline = self._add_all_real_requests_to_requests_dict(requests_lists=requests_lists,
                                                                            motion_planner=motion_planner,
                                                                            traversal_graph_generator=traversal_graph_generator)
-        prediction_sample_sets = RolloutHelpers._extract_prediction_sample_sets(
-            prediction_cache=self.prediction_cache,
+        self._update_prediction_weights(
+            state=state,
+            requests_lists=requests_lists,
+            traversal_graph_generator=traversal_graph_generator,
+            debug=debug,
+        )
+
+        prediction_sample_sets = self._extract_prediction_sample_sets(
             state=state,
             real_requests_lists=requests_lists,
-            initial_time=self.initial_time,
-            all_task_properties=self.all_task_properties,
             traversal_graph_generator=traversal_graph_generator,
-            prediction_lookahead_minutes=self.prediction_lookahead_minutes,
-            prediction_match_tolerance_minutes=self.prediction_match_tolerance_minutes,
-            planning_horizon_end_timestamp=self._planning_horizon_end_timestamp(),
-            prediction_cache_patient_filter_mode=self.prediction_cache_patient_filter_mode,
-            active_patient_filter=self.active_patient_filter,
+            remove_real_matches=True,
             debug=debug,
         )
 

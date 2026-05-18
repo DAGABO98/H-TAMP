@@ -668,6 +668,7 @@ class OfflinePredictionCache:
         planning_horizon_end_timestamp: pd.Timestamp | None = None,
         filter_to_observed_patients: bool = True,
         patient_key_filter: set[tuple[str, str]] | None = None,
+        remove_real_matches: bool = True,
     ) -> list[dict[float, RequestsLists]]:
         if not self.enabled:
             return []
@@ -720,10 +721,13 @@ class OfflinePredictionCache:
 
         sample_buckets: list[dict[float, RequestsLists]] = []
         for sample_index in sorted(sample_sets):
-            filtered_requests = remove_real_request_matches(
-                predicted_requests_lists=sample_sets[sample_index],
-                real_requests_lists=real_requests_lists,
-                tolerance_minutes=match_tolerance_minutes,
-            )
+            if remove_real_matches:
+                filtered_requests = remove_real_request_matches(
+                    predicted_requests_lists=sample_sets[sample_index],
+                    real_requests_lists=real_requests_lists,
+                    tolerance_minutes=match_tolerance_minutes,
+                )
+            else:
+                filtered_requests = copy.deepcopy(sample_sets[sample_index])
             sample_buckets.append(requests_lists_to_time_buckets(filtered_requests))
         return sample_buckets

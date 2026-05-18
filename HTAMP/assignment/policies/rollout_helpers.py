@@ -1,5 +1,5 @@
 import copy
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import pandas as pd
 
@@ -15,6 +15,13 @@ from HTAMP.planning.state import PlanningState, SimulatedState
 
 
 class RolloutHelpers:
+    @staticmethod
+    def _is_predicted_request(request: TaskRequest) -> bool:
+        return (
+            str(getattr(request, "request_id", "")).startswith("pred.")
+            or hasattr(request, "prediction_sample_index")
+            or hasattr(request, "prediction_prefix_id")
+        )
 
     @staticmethod
     def _remove_request_from_requests_lists(request_id: str, 
@@ -28,7 +35,11 @@ class RolloutHelpers:
                         break
 
     @staticmethod
-    def _extract_cost_for_assigned_requests(state: PlanningState | SimulatedState, rejection_penalty: float) -> list[float]:
+    def _extract_cost_for_assigned_requests(
+        state: PlanningState | SimulatedState,
+        rejection_penalty: float,
+        prediction_request_weight_fn: Optional[Callable[[TaskRequest], float]] = None,
+    ) -> Tuple[float, float]:
         unmodified_costs = []
         truncated_costs = []
         for request_id in state.requests.keys():
@@ -43,6 +54,11 @@ class RolloutHelpers:
             else:
                 cost = request_struct.planned_time - request_struct.scheduled_time
                 truncated_cost = max(cost, 0)
+
+            if prediction_request_weight_fn is not None and RolloutHelpers._is_predicted_request(request_struct):
+                weight = float(prediction_request_weight_fn(request_struct))
+                cost *= weight
+                truncated_cost *= weight
 
             unmodified_costs.append(cost)
             truncated_costs.append(truncated_cost)
@@ -105,6 +121,7 @@ class RolloutHelpers:
         planning_horizon_end_timestamp: pd.Timestamp | None = None,
         prediction_cache_patient_filter_mode: str = "active_floor",
         active_patient_filter: Optional[ActivePatientFloorFilter] = None,
+        remove_real_matches: bool = True,
         debug: bool = False,
     ) -> list[dict[float, RequestsLists]]:
         if prediction_cache is None or not prediction_cache.enabled:
@@ -151,6 +168,7 @@ class RolloutHelpers:
             planning_horizon_end_timestamp=planning_horizon_end_timestamp,
             filter_to_observed_patients=filter_to_observed_patients,
             patient_key_filter=patient_key_filter,
+            remove_real_matches=remove_real_matches,
         )
         if debug:
             print(
@@ -269,6 +287,7 @@ class RolloutHelpers:
                                                                        motion_planner: MotionPlanner,
                                                                        traversal_graph_generator: TraversalGraphGenerator,
                                                                        blocked_robots: Optional[set[int]] = None,
+                                                                       prediction_request_weight_fn: Optional[Callable[[TaskRequest], float]] = None,
                                                                        debug: bool=False) -> Tuple[float, float]:
         
         if debug:
@@ -314,7 +333,8 @@ class RolloutHelpers:
             print(f"2) Node reservation table after assigning future predicted requests: {current_node_reservation_table}")
         
         unmodified_cost, truncated_cost = RolloutHelpers._extract_cost_for_assigned_requests(state=simulated_state,
-                                                                                             rejection_penalty=current_state.simulator_config.rejection_penalty)
+                                                                                             rejection_penalty=current_state.simulator_config.rejection_penalty,
+                                                                                             prediction_request_weight_fn=prediction_request_weight_fn)
         
         return unmodified_cost, truncated_cost
 
@@ -329,6 +349,7 @@ class RolloutHelpers:
         traversal_graph_generator: TraversalGraphGenerator,
         look_ahead_minutes: int,
         blocked_robots: Optional[set[int]] = None,
+        prediction_request_weight_fn: Optional[Callable[[TaskRequest], float]] = None,
         debug: bool = False,
     ) -> Tuple[float, float]:
         if not prediction_sample_sets:
@@ -343,6 +364,7 @@ class RolloutHelpers:
                 motion_planner=motion_planner,
                 traversal_graph_generator=traversal_graph_generator,
                 blocked_robots=blocked_robots,
+                prediction_request_weight_fn=prediction_request_weight_fn,
                 debug=debug,
             )
 
@@ -370,6 +392,7 @@ class RolloutHelpers:
                 motion_planner=sample_motion_planner,
                 traversal_graph_generator=traversal_graph_generator,
                 blocked_robots=copy.deepcopy(blocked_robots),
+                prediction_request_weight_fn=prediction_request_weight_fn,
                 debug=debug,
             )
             raw_cost_sum += unmodified_cost

@@ -186,7 +186,8 @@ class AssignmentEvaluator:
                                        prediction_cache_run_names=getattr(self.args, "prediction_cache_run_names", None),
                                        prediction_match_tolerance_minutes=getattr(self.args, "prediction_match_tolerance_minutes", 10.0),
                                        prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0),
-                                       prediction_cache_patient_filter_mode=getattr(self.args, "prediction_cache_patient_filter_mode", "active_floor"))
+                                       prediction_cache_patient_filter_mode=getattr(self.args, "prediction_cache_patient_filter_mode", "active_floor"),
+                                       prediction_weight_bin_minutes=getattr(self.args, "prediction_weight_bin_minutes", 5.0))
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -603,6 +604,7 @@ def main():
     parser.add_argument("--prediction_match_tolerance_minutes", type=float, default=10.0, help="Tolerance for removing cached predictions that match real scheduled requests.")
     parser.add_argument("--prediction_lookahead_minutes", type=float, default=60.0, help="Prediction-cache horizon, in minutes, from the current simulator time.")
     parser.add_argument("--prediction_cache_patient_filter_mode", type=str, default="active_floor", choices=["active_floor", "observed", "none"], help="Patient filter for rollout cache retrieval.")
+    parser.add_argument("--prediction_weight_bin_minutes", type=float, default=5.0, help="Bin size, in minutes, for adaptive rollout prediction reliability weights.")
 
     # environment parameters
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")
