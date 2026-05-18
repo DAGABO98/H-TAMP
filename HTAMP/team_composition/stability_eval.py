@@ -1,5 +1,6 @@
 import argparse
 import copy
+import json
 import os
 import traceback
 import random
@@ -17,6 +18,17 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, DateStamp, RequestsLists, SimulatorConfig, TaskProperties, TaskRequest, TimeSignal
 from HTAMP.planning.request_handler import DailyRequestHandler
 from HTAMP.planning.state import PlanningState
+
+TEAM_COMPOSITION_RESULT_PREFIX = "TEAM_COMPOSITION_EVAL_RESULT "
+
+
+def get_rejection_category(reject_type: Optional[str]) -> Optional[str]:
+    if reject_type is None:
+        return None
+    if reject_type == "medication":
+        return "delivery"
+    return "monitoring"
+
 
 class StabilityEvaluator:
     def __init__(self, 
@@ -352,17 +364,58 @@ class StabilityExperiment():
                 else:
                     num_monitoring_robots += 1
 
+    def evaluate_team_composition(self,
+                                  num_monitoring_robots: int,
+                                  num_delivery_robots: int,
+                                  random_seed: Optional[int] = None) -> Optional[str]:
+        print(f"Evaluating fixed team composition: {num_monitoring_robots} monitoring robots, {num_delivery_robots} delivery robots")
+        robot_profiles = self._generate_robot_profiles(num_monitoring_robots=num_monitoring_robots,
+                                                        num_delivery_robots=num_delivery_robots)
+        stability_evaluator = StabilityEvaluator(args=self.args,
+                                                 team_size=num_monitoring_robots + num_delivery_robots,
+                                                 robot_profiles=robot_profiles,
+                                                 annotated_data_files=self.annotated_data_files,
+                                                 all_task_properties=self.all_task_properties,
+                                                 random_seed=random_seed)
+        reject_type = stability_evaluator.evaluate_assignment(start_date=self.start_date,
+                                                              end_date=self.end_date,
+                                                              hour_range=(self.args.hour_start, self.args.hour_end),
+                                                              request_dir=self.args.request_dir,
+                                                              use_saved_request_data=self.args.use_saved_request_data)
+        if reject_type is None:
+            print("Fixed team composition serviced all requests.")
+        else:
+            print(f"Fixed team composition rejected request type: {reject_type}")
+        return reject_type
+
 def run_experiment(args):
     start_date="2024-06-24"
     end_date="2025-06-29"
 
-    random_seed = 42
+    random_seed = getattr(args, "random_seed", 42)
 
     experiment = StabilityExperiment(args,
                             start_date=start_date,
                             end_date=end_date)
-    
-    experiment.determine_team_composition(random_seed=random_seed)
+
+    if getattr(args, "evaluate_fixed_team", False):
+        reject_type = experiment.evaluate_team_composition(num_monitoring_robots=args.num_monitoring_robots,
+                                                           num_delivery_robots=args.num_delivery_robots,
+                                                           random_seed=random_seed)
+        result = {
+            "status": "success" if reject_type is None else "rejected",
+            "reject_type": reject_type,
+            "rejection_category": get_rejection_category(reject_type),
+            "num_monitoring_robots": args.num_monitoring_robots,
+            "num_delivery_robots": args.num_delivery_robots,
+            "year": args.year,
+            "month": args.month,
+            "day": args.day,
+            "floor_number": args.floor_number,
+        }
+        print(f"{TEAM_COMPOSITION_RESULT_PREFIX}{json.dumps(result, sort_keys=True)}")
+    else:
+        experiment.determine_team_composition(random_seed=random_seed)
 
 def main():
     parser = argparse.ArgumentParser(prog='stability_eval.py',
@@ -393,6 +446,12 @@ def main():
     parser.add_argument("--fps", type=float, default=2.0, help="Frames per second for the grid world")
     parser.add_argument("--occupancy_reservations_file", type=str, default="data/occupancy_reservations.pkl", help="Path to the occupancy reservations file")
     parser.add_argument("--use_saved_data", action='store_true', help="Whether to use saved occupancy reservations data")
+
+    # fixed team composition parameters
+    parser.add_argument("--evaluate_fixed_team", action='store_true', help="Evaluate the given team composition once instead of searching from 1 monitoring and 1 delivery robot.")
+    parser.add_argument("--num_monitoring_robots", type=int, default=1, help="Number of monitoring robots to evaluate.")
+    parser.add_argument("--num_delivery_robots", type=int, default=1, help="Number of delivery robots to evaluate.")
+    parser.add_argument("--random_seed", type=int, default=42, help="Random seed used to select robot starting positions.")
 
     args = parser.parse_args()
     run_experiment(args)
