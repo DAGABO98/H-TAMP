@@ -48,10 +48,10 @@ class WeightConfig:
     eps:
         Small numerical constant.
     """
-    alpha_over: float = 0.05
-    alpha_time: float = 0.05
-    beta_over: float = 3.0
-    beta_time: float = 0.75
+    alpha_over: float = 0.1
+    alpha_time: float = 0.1
+    beta_over: float = 2.0
+    beta_time: float = 0.5
     lambda_min: float = 0.1
     ignore_zero_prediction_windows: bool = True
     eps: float = 1e-6
