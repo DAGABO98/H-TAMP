@@ -278,11 +278,33 @@ class RolloutHelpers:
         return combined_requests_lists
 
     @staticmethod
+    def _combine_requests_lists(*requests_lists_items: Optional[RequestsLists]) -> Optional[RequestsLists]:
+        combined_requests_lists = RequestsLists(blood_pressure_requests=[],
+                                              heart_rate_requests=[],
+                                              respiratory_rate_requests=[],
+                                              temperature_requests=[],
+                                              oxygen_saturation_requests=[],
+                                              medications_requests=[])
+        has_requests = False
+        for requests_lists in requests_lists_items:
+            if requests_lists is None:
+                continue
+            for data_field in combined_requests_lists.__dataclass_fields__.keys():
+                combined_list = getattr(combined_requests_lists, data_field)
+                requests_list = getattr(requests_lists, data_field)
+                combined_list.extend(copy.deepcopy(requests_list))
+                has_requests = has_requests or bool(requests_list)
+        if not has_requests:
+            return None
+        return combined_requests_lists
+
+    @staticmethod
     def _estimate_future_costs_for_scheduled_and_predicted_assignments(cost_estimator: FutureCostEstimation,
                                                                        current_state: PlanningState,
                                                                        requests_lists: Optional[RequestsLists],
                                                                        current_node_reservation_table: Optional[NodeReservationTable],
                                                                        current_predicted_requests_dict: dict[float, RequestsLists],
+                                                                       future_scheduled_requests_lists: Optional[RequestsLists],
                                                                        future_predicted_requests_dict: dict[float, RequestsLists],
                                                                        motion_planner: MotionPlanner,
                                                                        traversal_graph_generator: TraversalGraphGenerator,
@@ -319,6 +341,18 @@ class RolloutHelpers:
         
         if debug:
             print(f"2) Node reservation table after assigning current predicted requests: {current_node_reservation_table}")
+
+        cost_estimator.assign_requests_to_robots(state=current_state,
+                                                 simulated_state=simulated_state,
+                                                 node_reservation_table=current_node_reservation_table,
+                                                 requests_lists=future_scheduled_requests_lists,
+                                                 motion_planner=motion_planner,
+                                                 traversal_graph_generator=traversal_graph_generator,
+                                                 add_requests_in_request_lists=True,
+                                                 debug=debug)
+        
+        if debug:
+            print(f"2) Node reservation table after assigning future scheduled requests: {current_node_reservation_table}")
     
         future_combined_requests_lists = RolloutHelpers._convert_predicted_requests_dict_into_combined_requests_lists(predicted_requests_dict=future_predicted_requests_dict)
         cost_estimator.assign_requests_to_robots(state=current_state,
@@ -349,6 +383,7 @@ class RolloutHelpers:
         traversal_graph_generator: TraversalGraphGenerator,
         look_ahead_minutes: int,
         blocked_robots: Optional[set[int]] = None,
+        future_scheduled_requests_lists: Optional[RequestsLists] = None,
         prediction_request_weight_fn: Optional[Callable[[TaskRequest], float]] = None,
         debug: bool = False,
     ) -> Tuple[float, float]:
@@ -360,6 +395,7 @@ class RolloutHelpers:
                 requests_lists=requests_lists,
                 current_node_reservation_table=current_node_reservation_table,
                 current_predicted_requests_dict={},
+                future_scheduled_requests_lists=future_scheduled_requests_lists,
                 future_predicted_requests_dict={},
                 motion_planner=motion_planner,
                 traversal_graph_generator=traversal_graph_generator,
@@ -388,6 +424,7 @@ class RolloutHelpers:
                 requests_lists=copy.deepcopy(requests_lists),
                 current_node_reservation_table=sample_node_reservation_table,
                 current_predicted_requests_dict=current_predicted_requests_dict,
+                future_scheduled_requests_lists=copy.deepcopy(future_scheduled_requests_lists),
                 future_predicted_requests_dict=future_predicted_requests_dict,
                 motion_planner=sample_motion_planner,
                 traversal_graph_generator=traversal_graph_generator,

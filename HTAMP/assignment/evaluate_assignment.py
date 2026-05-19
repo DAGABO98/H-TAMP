@@ -187,7 +187,8 @@ class AssignmentEvaluator:
                                        prediction_match_tolerance_minutes=getattr(self.args, "prediction_match_tolerance_minutes", 10.0),
                                        prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0),
                                        prediction_cache_patient_filter_mode=getattr(self.args, "prediction_cache_patient_filter_mode", "active_floor"),
-                                       prediction_weight_bin_minutes=getattr(self.args, "prediction_weight_bin_minutes", 5.0))
+                                       prediction_weight_bin_minutes=getattr(self.args, "prediction_weight_bin_minutes", 5.0),
+                                       include_future_scheduled_requests=getattr(self.args, "include_future_scheduled_requests", False))
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -605,6 +606,7 @@ def main():
     parser.add_argument("--prediction_lookahead_minutes", type=float, default=60.0, help="Prediction-cache horizon, in minutes, from the current simulator time.")
     parser.add_argument("--prediction_cache_patient_filter_mode", type=str, default="active_floor", choices=["active_floor", "observed", "none"], help="Patient filter for rollout cache retrieval.")
     parser.add_argument("--prediction_weight_bin_minutes", type=float, default=5.0, help="Bin size, in minutes, for adaptive rollout prediction reliability weights.")
+    parser.add_argument("--include_future_scheduled_requests", action='store_true', help="Include the second scheduled-request window in adaptive rollout future-cost estimates and cached-prediction de-duplication.")
 
     # environment parameters
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")

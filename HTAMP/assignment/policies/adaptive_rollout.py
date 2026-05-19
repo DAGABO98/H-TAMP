@@ -35,7 +35,8 @@ class AdaptiveRollout:
                  prediction_match_tolerance_minutes: float = 10.0,
                  prediction_lookahead_minutes: float = 60.0,
                  prediction_cache_patient_filter_mode: str = "active_floor",
-                 prediction_weight_bin_minutes: float = 5.0):
+                 prediction_weight_bin_minutes: float = 5.0,
+                 include_future_scheduled_requests: bool = False):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -71,6 +72,7 @@ class AdaptiveRollout:
         self.prediction_match_tolerance_minutes = prediction_match_tolerance_minutes
         self.prediction_lookahead_minutes = prediction_lookahead_minutes
         self.prediction_cache_patient_filter_mode = prediction_cache_patient_filter_mode
+        self.include_future_scheduled_requests = include_future_scheduled_requests
         self.prediction_weight_tracker = PredictionWeightTracker(
             bin_minutes=prediction_weight_bin_minutes,
             default_floor=floor_number,
@@ -366,6 +368,7 @@ class AdaptiveRollout:
                                             requests_lists: RequestsLists,
                                             potential_assignments: list[int],
                                             prediction_sample_sets: list[dict[float, RequestsLists]],
+                                            future_scheduled_requests_lists: Optional[RequestsLists],
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
                                             traversal_graph_generator: TraversalGraphGenerator,
@@ -407,6 +410,7 @@ class AdaptiveRollout:
                                                                                         traversal_graph_generator=traversal_graph_generator,
                                                                                         look_ahead_minutes=look_ahead_minutes,
                                                                                         blocked_robots=current_blocked_robots,
+                                                                                        future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                                         prediction_request_weight_fn=self._prediction_request_weight if self.allow_reweighting else None)
 
                 if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
@@ -458,6 +462,7 @@ class AdaptiveRollout:
                                                                                             traversal_graph_generator=traversal_graph_generator,
                                                                                             look_ahead_minutes=look_ahead_minutes,
                                                                                             blocked_robots=current_blocked_robots,
+                                                                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                                             prediction_request_weight_fn=self._prediction_request_weight if self.allow_reweighting else None)
 
                     if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
@@ -476,6 +481,7 @@ class AdaptiveRollout:
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator,
                                    prediction_sample_sets: list[dict[float, RequestsLists]],
+                                   future_scheduled_requests_lists: Optional[RequestsLists],
                                    hour: int,
                                    minute: int,
                                    look_ahead_minutes: int,
@@ -502,6 +508,7 @@ class AdaptiveRollout:
                                                                 requests_lists=requests_lists,
                                                                 potential_assignments=potential_assignments,
                                                                 prediction_sample_sets=prediction_sample_sets,
+                                                                future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                 state=new_state,
                                                                 motion_planner=motion_planner,
                                                                 traversal_graph_generator=traversal_graph_generator,
@@ -520,6 +527,7 @@ class AdaptiveRollout:
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
                                   prediction_sample_sets: list[dict[float, RequestsLists]],
+                                  future_scheduled_requests_lists: Optional[RequestsLists],
                                   hour: int,
                                   minute: int,
                                   look_ahead_minutes: int,
@@ -532,6 +540,7 @@ class AdaptiveRollout:
                                                             motion_planner=motion_planner,
                                                             traversal_graph_generator=traversal_graph_generator,
                                                             prediction_sample_sets=prediction_sample_sets,
+                                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                             hour=hour,
                                                             minute=minute,
                                                             look_ahead_minutes=look_ahead_minutes,
@@ -616,9 +625,28 @@ class AdaptiveRollout:
             debug=debug,
         )
 
+        future_scheduled_requests_lists = None
+        prediction_match_requests_lists = requests_lists
+        if self.include_future_scheduled_requests:
+            future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(
+                date_stamp=self.date_stamp,
+                hour=hour,
+                minute=minute,
+                look_ahead_minutes=look_ahead_minutes,
+                end_hour=self.end_hour,
+                planning_request_handler=self.planning_request_handler,
+                initial_time=self.initial_time,
+                all_task_properties=self.all_task_properties,
+                traversal_graph_generator=traversal_graph_generator,
+            )
+            prediction_match_requests_lists = RolloutHelpers._combine_requests_lists(
+                requests_lists,
+                future_scheduled_requests_lists,
+            )
+
         prediction_sample_sets = self._extract_prediction_sample_sets(
             state=state,
-            real_requests_lists=requests_lists,
+            real_requests_lists=prediction_match_requests_lists,
             traversal_graph_generator=traversal_graph_generator,
             remove_real_matches=True,
             debug=debug,
@@ -641,6 +669,7 @@ class AdaptiveRollout:
                                             motion_planner=motion_planner,
                                             traversal_graph_generator=traversal_graph_generator,
                                             prediction_sample_sets=prediction_sample_sets,
+                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
                                             hour=hour,
                                             minute=minute,
                                             look_ahead_minutes=look_ahead_minutes,

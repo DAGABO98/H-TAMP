@@ -51,6 +51,10 @@ PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
     "active_floor",
 )
+INCLUDE_FUTURE_SCHEDULED_REQUESTS = os.getenv(
+    "HTAMP_INCLUDE_FUTURE_SCHEDULED_REQUESTS",
+    "0",
+).strip().lower() in {"1", "true", "yes", "on"}
 PATIENT_ROOM_STAYS_FILE = os.getenv(
     "HTAMP_PATIENT_ROOM_STAYS_FILE",
     "data/processed/patient_room_stays.csv",
@@ -257,6 +261,8 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
         cmd += ["--alpha", str(p.alpha)]
     if p.mode in CACHE_POLICY_MODES:
         cmd += prediction_cache_args()
+    if p.mode in ROLLOUT_MODES and INCLUDE_FUTURE_SCHEDULED_REQUESTS:
+        cmd += ["--include_future_scheduled_requests"]
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd
