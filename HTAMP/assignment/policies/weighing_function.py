@@ -39,6 +39,12 @@ class WeightConfig:
     lambda_min:
         Minimum allowed future-prediction weight.
 
+    ignore_zero_prediction_windows:
+        If True, windows with no predicted request mass do not update the
+        weight. This prevents sparse empty windows and missed requests from
+        increasing or decreasing a multiplier that only applies to predicted
+        future request costs.
+
     eps:
         Small numerical constant.
     """
@@ -47,6 +53,7 @@ class WeightConfig:
     beta_over: float = 3.0
     beta_time: float = 0.75
     lambda_min: float = 0.1
+    ignore_zero_prediction_windows: bool = True
     eps: float = 1e-6
 
 
@@ -696,6 +703,25 @@ def update_prediction_weight(
     A_over = float(diagnostics["A_over"])
     A_time = float(diagnostics["A_time"])
 
+    if (
+        config.ignore_zero_prediction_windows
+        and float(diagnostics["total_predicted_mass"]) <= config.eps
+    ):
+        lambda_t = (
+            config.lambda_min
+            + (1.0 - config.lambda_min)
+            * np.exp(
+                -config.beta_over * state.S_over
+                -config.beta_time * state.S_time
+            )
+        )
+        lambda_t = float(np.clip(lambda_t, config.lambda_min, 1.0))
+        diagnostics["S_over"] = float(state.S_over)
+        diagnostics["S_time"] = float(state.S_time)
+        diagnostics["lambda_t"] = lambda_t
+        diagnostics["ignored_zero_prediction_window"] = True
+        return lambda_t, state, diagnostics
+
     S_over = (
         (1.0 - config.alpha_over) * state.S_over
         + config.alpha_over * A_over
@@ -725,5 +751,6 @@ def update_prediction_weight(
     diagnostics["S_over"] = float(S_over)
     diagnostics["S_time"] = float(S_time)
     diagnostics["lambda_t"] = lambda_t
+    diagnostics["ignored_zero_prediction_window"] = False
 
     return lambda_t, new_state, diagnostics
