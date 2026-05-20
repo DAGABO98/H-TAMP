@@ -260,7 +260,8 @@ class AdaptiveRollout:
                                                 min_pickup_deadline: float,
                                                 state: PlanningState,
                                                 motion_planner: MotionPlanner,
-                                                traversal_graph_generator: TraversalGraphGenerator
+                                                traversal_graph_generator: TraversalGraphGenerator,
+                                                debug: bool = False,
                                                 ) -> bool:
         if not self.allow_deallocation:
             return False
@@ -268,14 +269,25 @@ class AdaptiveRollout:
         if min_pickup_deadline == float('inf'):
             return False
         
-        for request_id in self.unassigned_requests_dict.monitoring:
-            request = state.requests[request_id]
-            current_pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
-                                                                               request=request,
-                                                                               motion_planner=motion_planner,
-                                                                               traversal_graph_generator=traversal_graph_generator)
-            if current_pickup_deadline > min_pickup_deadline:
-                return True
+        for robot_id, assigned_request_ids in self.assigned_requests.items():
+            for request_id in assigned_request_ids:
+                request = state.requests[request_id]
+                if request.started:
+                    continue
+                current_pickup_deadline = PolicyHelpers._calculate_pickup_deadline(delivery_robot_profile=self.dummy_delivery_robot_profile,
+                                                                                   request=request,
+                                                                                   motion_planner=motion_planner,
+                                                                                   traversal_graph_generator=traversal_graph_generator)
+                if current_pickup_deadline > min_pickup_deadline:
+                    if debug:
+                        print(
+                            "New request triggers reassignment: assigned "
+                            f"request {request_id} on robot {robot_id} has "
+                            f"pickup deadline {current_pickup_deadline:.3f}, "
+                            f"which is later than new request deadline "
+                            f"{min_pickup_deadline:.3f}."
+                        )
+                    return True
         
         return False
     
@@ -318,7 +330,8 @@ class AdaptiveRollout:
         deallocate_flag = self._determine_if_deallocation_should_occur(min_pickup_deadline=min_pickup_deadline,
                                                                        state=state,
                                                                        motion_planner=motion_planner,
-                                                                       traversal_graph_generator=traversal_graph_generator)
+                                                                       traversal_graph_generator=traversal_graph_generator,
+                                                                       debug=debug)
         if self.allow_reweighting:
             weighting_trigger_reassignment = self._determine_if_reweighting_triggers_reassignment(state=state,
                                                                                                   debug=debug)
