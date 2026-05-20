@@ -30,6 +30,20 @@ BASE = [
 
 LOG_ROOT = "results/policies/logs"
 
+
+def optional_float_env(name: str) -> Optional[float]:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    return float(value)
+
+
+def optional_int_env(name: str) -> Optional[int]:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    return int(value)
+
 PREDICTION_CACHE_PATH = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATH",
     "data/prediction/offline_request_prediction_cache_by_floor_day",
@@ -46,6 +60,18 @@ PREDICTION_LOOKAHEAD_MINUTES = float(
 )
 PREDICTION_WEIGHT_BIN_MINUTES = float(
     os.getenv("HTAMP_PREDICTION_WEIGHT_BIN_MINUTES", "5.0")
+)
+PREDICTION_WEIGHT_ALPHA_OVER = optional_float_env("HTAMP_PREDICTION_WEIGHT_ALPHA_OVER")
+PREDICTION_WEIGHT_ALPHA_TIME = optional_float_env("HTAMP_PREDICTION_WEIGHT_ALPHA_TIME")
+PREDICTION_WEIGHT_BETA_OVER = optional_float_env("HTAMP_PREDICTION_WEIGHT_BETA_OVER")
+PREDICTION_WEIGHT_BETA_TIME = optional_float_env("HTAMP_PREDICTION_WEIGHT_BETA_TIME")
+PREDICTION_WEIGHT_LAMBDA_MIN = optional_float_env("HTAMP_PREDICTION_WEIGHT_LAMBDA_MIN")
+PREDICTION_WEIGHT_COLD_START_WEIGHT = optional_float_env("HTAMP_PREDICTION_WEIGHT_COLD_START_WEIGHT")
+PREDICTION_WEIGHT_FALLBACK_MIN_POSITIVE_PREDICTION_WINDOWS = optional_int_env(
+    "HTAMP_PREDICTION_WEIGHT_FALLBACK_MIN_POSITIVE_PREDICTION_WINDOWS"
+)
+PREDICTION_WEIGHT_PATIENT_CREDIBILITY_PRIOR = optional_float_env(
+    "HTAMP_PREDICTION_WEIGHT_PATIENT_CREDIBILITY_PRIOR"
 )
 PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
@@ -248,6 +274,30 @@ def prediction_cache_args() -> list[str]:
     return args
 
 
+def prediction_weight_args() -> list[str]:
+    args = []
+    optional_args = [
+        ("--prediction_weight_alpha_over", PREDICTION_WEIGHT_ALPHA_OVER),
+        ("--prediction_weight_alpha_time", PREDICTION_WEIGHT_ALPHA_TIME),
+        ("--prediction_weight_beta_over", PREDICTION_WEIGHT_BETA_OVER),
+        ("--prediction_weight_beta_time", PREDICTION_WEIGHT_BETA_TIME),
+        ("--prediction_weight_lambda_min", PREDICTION_WEIGHT_LAMBDA_MIN),
+        ("--prediction_weight_cold_start_weight", PREDICTION_WEIGHT_COLD_START_WEIGHT),
+        (
+            "--prediction_weight_fallback_min_positive_prediction_windows",
+            PREDICTION_WEIGHT_FALLBACK_MIN_POSITIVE_PREDICTION_WINDOWS,
+        ),
+        (
+            "--prediction_weight_patient_credibility_prior",
+            PREDICTION_WEIGHT_PATIENT_CREDIBILITY_PRIOR,
+        ),
+    ]
+    for flag, value in optional_args:
+        if value is not None:
+            args += [flag, str(value)]
+    return args
+
+
 def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
     cmd = BASE + [
         "--mode", str(p.mode),
@@ -263,6 +313,8 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
         cmd += prediction_cache_args()
     if p.mode in ROLLOUT_MODES and INCLUDE_FUTURE_SCHEDULED_REQUESTS:
         cmd += ["--include_future_scheduled_requests"]
+    if p.mode in ROLLOUT_MODES:
+        cmd += prediction_weight_args()
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd

@@ -188,6 +188,14 @@ class AssignmentEvaluator:
                                        prediction_lookahead_minutes=getattr(self.args, "prediction_lookahead_minutes", 60.0),
                                        prediction_cache_patient_filter_mode=getattr(self.args, "prediction_cache_patient_filter_mode", "active_floor"),
                                        prediction_weight_bin_minutes=getattr(self.args, "prediction_weight_bin_minutes", 5.0),
+                                       prediction_weight_alpha_over=getattr(self.args, "prediction_weight_alpha_over", None),
+                                       prediction_weight_alpha_time=getattr(self.args, "prediction_weight_alpha_time", None),
+                                       prediction_weight_beta_over=getattr(self.args, "prediction_weight_beta_over", None),
+                                       prediction_weight_beta_time=getattr(self.args, "prediction_weight_beta_time", None),
+                                       prediction_weight_lambda_min=getattr(self.args, "prediction_weight_lambda_min", None),
+                                       prediction_weight_cold_start_weight=getattr(self.args, "prediction_weight_cold_start_weight", None),
+                                       prediction_weight_fallback_min_positive_prediction_windows=getattr(self.args, "prediction_weight_fallback_min_positive_prediction_windows", None),
+                                       prediction_weight_patient_credibility_prior=getattr(self.args, "prediction_weight_patient_credibility_prior", None),
                                        include_future_scheduled_requests=getattr(self.args, "include_future_scheduled_requests", False))
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
@@ -606,6 +614,14 @@ def main():
     parser.add_argument("--prediction_lookahead_minutes", type=float, default=60.0, help="Prediction-cache horizon, in minutes, from the current simulator time.")
     parser.add_argument("--prediction_cache_patient_filter_mode", type=str, default="active_floor", choices=["active_floor", "observed", "none"], help="Patient filter for rollout cache retrieval.")
     parser.add_argument("--prediction_weight_bin_minutes", type=float, default=5.0, help="Bin size, in minutes, for adaptive rollout prediction reliability weights.")
+    parser.add_argument("--prediction_weight_alpha_over", type=float, default=None, help="EWMA update rate for adaptive rollout true-overprediction weights.")
+    parser.add_argument("--prediction_weight_alpha_time", type=float, default=None, help="EWMA update rate for adaptive rollout timing-error weights.")
+    parser.add_argument("--prediction_weight_beta_over", type=float, default=None, help="Penalty strength for adaptive rollout true-overprediction weights.")
+    parser.add_argument("--prediction_weight_beta_time", type=float, default=None, help="Penalty strength for adaptive rollout timing-error weights.")
+    parser.add_argument("--prediction_weight_lambda_min", type=float, default=None, help="Minimum adaptive rollout prediction weight.")
+    parser.add_argument("--prediction_weight_cold_start_weight", type=float, default=None, help="Conservative adaptive rollout prediction weight before fallback groups have enough positive-prediction evidence.")
+    parser.add_argument("--prediction_weight_fallback_min_positive_prediction_windows", type=int, default=None, help="Positive-prediction windows required before learned fallback weights can exceed the cold-start weight.")
+    parser.add_argument("--prediction_weight_patient_credibility_prior", type=float, default=None, help="Positive-prediction windows needed before patient-specific weights receive about half of the blended effective weight.")
     parser.add_argument("--include_future_scheduled_requests", action='store_true', help="Include the second scheduled-request window in adaptive rollout future-cost estimates and cached-prediction de-duplication.")
 
     # environment parameters

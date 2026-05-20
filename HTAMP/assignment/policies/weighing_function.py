@@ -39,6 +39,24 @@ class WeightConfig:
     lambda_min:
         Minimum allowed future-prediction weight.
 
+    cold_start_weight:
+        Conservative weight used before the broader fallback group has enough
+        positive-prediction evidence. Early learned fallback weights are capped
+        at this value so startup trust does not jump to 1.0.
+
+    fallback_min_positive_prediction_windows:
+        Number of positive-prediction windows required before the learned
+        floor/day/request-family fallback weight can exceed cold_start_weight.
+
+    patient_credibility_prior:
+        Number of positive-prediction windows needed before a patient-specific
+        weight receives about half of the effective weight. Larger values lean
+        more heavily on the floor/day/request-family fallback.
+
+    use_hierarchical_fallback:
+        If True, blend patient-specific weights with a broader
+        floor/day/request-family weight based on patient evidence.
+
     ignore_zero_prediction_windows:
         If True, windows with no predicted request mass do not update the
         weight. This prevents sparse empty windows and missed requests from
@@ -48,11 +66,15 @@ class WeightConfig:
     eps:
         Small numerical constant.
     """
-    alpha_over: float = 0.1
-    alpha_time: float = 0.1
-    beta_over: float = 2.0
-    beta_time: float = 0.5
-    lambda_min: float = 0.1
+    alpha_over: float = 0.3
+    alpha_time: float = 0.2
+    beta_over: float = 4.0
+    beta_time: float = 1.0
+    lambda_min: float = 0.05
+    cold_start_weight: float = 0.25
+    fallback_min_positive_prediction_windows: int = 3
+    patient_credibility_prior: float = 3.0
+    use_hierarchical_fallback: bool = True
     ignore_zero_prediction_windows: bool = True
     eps: float = 1e-6
 
@@ -83,6 +105,7 @@ class PredictionWeightTracker:
 
     MONITORING_FAMILY = "monitoring"
     DELIVERY_FAMILY = "delivery"
+    FALLBACK_PATIENT_ID = "__floor_day_request_family__"
 
     def __init__(
         self,
@@ -102,7 +125,8 @@ class PredictionWeightTracker:
 
         self.states: Dict[PredictionWeightKey, WeightState] = {}
         self.weights: Dict[PredictionWeightKey, float] = {}
-        self.diagnostics: Dict[Tuple[PredictionWeightKey, int], Dict[str, np.ndarray | float]] = {}
+        self.positive_prediction_windows: Dict[PredictionWeightKey, int] = {}
+        self.diagnostics: Dict[Tuple[PredictionWeightKey, int], Dict[str, np.ndarray | float | bool]] = {}
 
         self._observed_counts: Dict[Tuple[PredictionWeightKey, int], float] = {}
         self._observed_request_ids: set[str] = set()
@@ -113,6 +137,43 @@ class PredictionWeightTracker:
 
     def _bin_index(self, time_seconds: float) -> int:
         return int(float(time_seconds) // self.bin_size_seconds)
+
+    @classmethod
+    def _fallback_key_for_key(cls, key: PredictionWeightKey) -> PredictionWeightKey:
+        return PredictionWeightKey(
+            patient_id=cls.FALLBACK_PATIENT_ID,
+            floor=key.floor,
+            day=key.day,
+            request_family=key.request_family,
+        )
+
+    @classmethod
+    def _is_fallback_key(cls, key: PredictionWeightKey) -> bool:
+        return key.patient_id == cls.FALLBACK_PATIENT_ID
+
+    @classmethod
+    def _weight_keys_for_request_key(cls, key: PredictionWeightKey) -> Tuple[PredictionWeightKey, ...]:
+        return (key, cls._fallback_key_for_key(key))
+
+    def _clip_weight(self, weight: float) -> float:
+        return float(np.clip(float(weight), self.config.lambda_min, 1.0))
+
+    def _cold_start_weight(self) -> float:
+        return self._clip_weight(self.config.cold_start_weight)
+
+    def _fallback_weight_for_key(self, fallback_key: PredictionWeightKey) -> float:
+        cold_start_weight = self._cold_start_weight()
+        fallback_weight = self._clip_weight(
+            self.weights.get(fallback_key, cold_start_weight)
+        )
+        min_evidence = max(
+            int(self.config.fallback_min_positive_prediction_windows),
+            0,
+        )
+        evidence_count = self.positive_prediction_windows.get(fallback_key, 0)
+        if evidence_count < min_evidence:
+            return min(fallback_weight, cold_start_weight)
+        return fallback_weight
 
     @staticmethod
     def _normalize_identifier(value: object) -> str:
@@ -189,9 +250,10 @@ class PredictionWeightTracker:
                 continue
 
             request_bin = self._bin_index(float(getattr(request, "scheduled_time", 0.0)))
-            self._observed_counts[(key, request_bin)] = (
-                self._observed_counts.get((key, request_bin), 0.0) + 1.0
-            )
+            for weight_key in self._weight_keys_for_request_key(key):
+                self._observed_counts[(weight_key, request_bin)] = (
+                    self._observed_counts.get((weight_key, request_bin), 0.0) + 1.0
+                )
             if request_id:
                 self._observed_request_ids.add(request_id)
 
@@ -232,11 +294,12 @@ class PredictionWeightTracker:
                 offset = request_bin - current_bin
                 if offset not in (0, 1):
                     continue
-                counts = counts_by_key.setdefault(
-                    key,
-                    np.zeros((sample_count, 2), dtype=float),
-                )
-                counts[sample_index, offset] += 1.0
+                for weight_key in self._weight_keys_for_request_key(key):
+                    counts = counts_by_key.setdefault(
+                        weight_key,
+                        np.zeros((sample_count, 2), dtype=float),
+                    )
+                    counts[sample_index, offset] += 1.0
 
         self._prediction_sample_counts[current_bin] = sample_count
         self._prediction_windows[current_bin] = counts_by_key
@@ -299,6 +362,10 @@ class PredictionWeightTracker:
                 self.weights[key] = weight
                 self.states[key] = state
                 self.diagnostics[(key, bin_index)] = diagnostics
+                if float(diagnostics["total_predicted_mass"]) > self.config.eps:
+                    self.positive_prediction_windows[key] = (
+                        self.positive_prediction_windows.get(key, 0) + 1
+                    )
                 if abs(weight - previous_weight) > self.config.eps:
                     changed_keys.add(key)
 
@@ -310,7 +377,24 @@ class PredictionWeightTracker:
         key = self.key_for_request(request)
         if key is None:
             return 1.0
-        return self.weights.get(key, 1.0)
+
+        if not self.config.use_hierarchical_fallback:
+            return self.weights.get(key, 1.0)
+
+        fallback_key = self._fallback_key_for_key(key)
+        fallback_weight = self._fallback_weight_for_key(fallback_key)
+        patient_weight = self.weights.get(key, fallback_weight)
+        evidence_count = self.positive_prediction_windows.get(key, 0)
+        credibility_prior = max(float(self.config.patient_credibility_prior), 0.0)
+        if credibility_prior <= self.config.eps:
+            credibility = 1.0 if evidence_count > 0 else 0.0
+        else:
+            credibility = evidence_count / (evidence_count + credibility_prior)
+
+        return float(
+            credibility * patient_weight
+            + (1.0 - credibility) * fallback_weight
+        )
 
 
 def validate_inputs(
@@ -657,7 +741,7 @@ def update_prediction_weight(
     observed_counts: np.ndarray,
     state: Optional[WeightState] = None,
     config: Optional[WeightConfig] = None,
-) -> Tuple[float, WeightState, Dict[str, np.ndarray | float]]:
+) -> Tuple[float, WeightState, Dict[str, np.ndarray | float | bool]]:
     """
     Update the online prediction weight.
 

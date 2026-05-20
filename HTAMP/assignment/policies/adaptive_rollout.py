@@ -14,7 +14,7 @@ from HTAMP.planning.motion_planner import MotionPlanner
 from HTAMP.planning.planning_dataclasses import AllTaskProperties, NodeReservationTable, RequestsLists
 from HTAMP.planning.request_handler import PlanningRequestHandler
 from HTAMP.planning.state import PlanningState
-from HTAMP.assignment.policies.weighing_function import PredictionWeightTracker
+from HTAMP.assignment.policies.weighing_function import PredictionWeightTracker, WeightConfig
 
 class AdaptiveRollout:
     def __init__(self,
@@ -36,6 +36,14 @@ class AdaptiveRollout:
                  prediction_lookahead_minutes: float = 60.0,
                  prediction_cache_patient_filter_mode: str = "active_floor",
                  prediction_weight_bin_minutes: float = 5.0,
+                 prediction_weight_alpha_over: Optional[float] = None,
+                 prediction_weight_alpha_time: Optional[float] = None,
+                 prediction_weight_beta_over: Optional[float] = None,
+                 prediction_weight_beta_time: Optional[float] = None,
+                 prediction_weight_lambda_min: Optional[float] = None,
+                 prediction_weight_cold_start_weight: Optional[float] = None,
+                 prediction_weight_fallback_min_positive_prediction_windows: Optional[int] = None,
+                 prediction_weight_patient_credibility_prior: Optional[float] = None,
                  include_future_scheduled_requests: bool = False):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
@@ -73,8 +81,26 @@ class AdaptiveRollout:
         self.prediction_lookahead_minutes = prediction_lookahead_minutes
         self.prediction_cache_patient_filter_mode = prediction_cache_patient_filter_mode
         self.include_future_scheduled_requests = include_future_scheduled_requests
+        prediction_weight_config_kwargs = {
+            "alpha_over": prediction_weight_alpha_over,
+            "alpha_time": prediction_weight_alpha_time,
+            "beta_over": prediction_weight_beta_over,
+            "beta_time": prediction_weight_beta_time,
+            "lambda_min": prediction_weight_lambda_min,
+            "cold_start_weight": prediction_weight_cold_start_weight,
+            "fallback_min_positive_prediction_windows": prediction_weight_fallback_min_positive_prediction_windows,
+            "patient_credibility_prior": prediction_weight_patient_credibility_prior,
+        }
+        prediction_weight_config = WeightConfig(
+            **{
+                key: value
+                for key, value in prediction_weight_config_kwargs.items()
+                if value is not None
+            }
+        )
         self.prediction_weight_tracker = PredictionWeightTracker(
             bin_minutes=prediction_weight_bin_minutes,
+            config=prediction_weight_config,
             default_floor=floor_number,
             default_day=pd.Timestamp(date_stamp).date().isoformat(),
         )
@@ -204,7 +230,26 @@ class AdaptiveRollout:
         if changed_keys:
             self._reweighting_trigger_reassignment = True
             if debug:
-                print(f"Updated prediction weights for {len(changed_keys)} patient/floor/day request group(s).")
+                fallback_changed_count = sum(
+                    key.patient_id == PredictionWeightTracker.FALLBACK_PATIENT_ID
+                    for key in changed_keys
+                )
+                patient_changed_count = len(changed_keys) - fallback_changed_count
+                weights = list(self.prediction_weight_tracker.weights.values())
+                if weights:
+                    mean_weight = sum(weights) / len(weights)
+                    weight_summary = (
+                        f"min={min(weights):.3f}, mean={mean_weight:.3f}, "
+                        f"max={max(weights):.3f}"
+                    )
+                else:
+                    weight_summary = "no stored weights"
+                print(
+                    "Updated prediction weights for "
+                    f"{patient_changed_count} patient group(s) and "
+                    f"{fallback_changed_count} floor/family fallback group(s); "
+                    f"{weight_summary}."
+                )
 
     def _prediction_request_weight(self, request) -> float:
         if not self.allow_reweighting:
