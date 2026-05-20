@@ -104,7 +104,6 @@ class AdaptiveRollout:
             default_floor=floor_number,
             default_day=pd.Timestamp(date_stamp).date().isoformat(),
         )
-        self._reweighting_trigger_reassignment = False
         self.active_patient_filter = (
             ActivePatientFloorFilter(
                 floor_number=floor_number,
@@ -161,17 +160,6 @@ class AdaptiveRollout:
                 self.unassigned_requests_dict.add_request(request)
         
         return min_pickup_deadline
-    
-    def _determine_if_reweighting_triggers_reassignment(self,
-                                        state: PlanningState,
-                                        debug: bool) -> bool:
-        if not self._reweighting_trigger_reassignment:
-            return False
-
-        self._reweighting_trigger_reassignment = False
-        if debug:
-            print("Prediction weights changed enough to trigger reassignment.")
-        return True
 
     def _extract_prediction_sample_sets(
         self,
@@ -228,7 +216,6 @@ class AdaptiveRollout:
 
         changed_keys = self.prediction_weight_tracker.update_due_weights(state.simulator_time)
         if changed_keys:
-            self._reweighting_trigger_reassignment = True
             if debug:
                 fallback_changed_count = sum(
                     key.patient_id == PredictionWeightTracker.FALLBACK_PATIENT_ID
@@ -332,12 +319,7 @@ class AdaptiveRollout:
                                                                        motion_planner=motion_planner,
                                                                        traversal_graph_generator=traversal_graph_generator,
                                                                        debug=debug)
-        if self.allow_reweighting:
-            weighting_trigger_reassignment = self._determine_if_reweighting_triggers_reassignment(state=state,
-                                                                                                  debug=debug)
-            trigger_reassignment = deallocate_flag or weighting_trigger_reassignment
-        else:
-            trigger_reassignment = deallocate_flag
+        trigger_reassignment = deallocate_flag
 
         if min_pickup_deadline != float('inf'):
                 self.blocked_robots = set()
