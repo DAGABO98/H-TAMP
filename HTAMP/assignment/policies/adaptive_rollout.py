@@ -242,6 +242,172 @@ class AdaptiveRollout:
         if not self.allow_reweighting:
             return 1.0
         return self.prediction_weight_tracker.weight_for_request(request)
+
+    @staticmethod
+    def _count_requests_in_requests_lists(requests_lists: Optional[RequestsLists]) -> int:
+        if requests_lists is None:
+            return 0
+        return sum(
+            len(getattr(requests_lists, data_field))
+            for data_field in requests_lists.__dataclass_fields__.keys()
+        )
+
+    @classmethod
+    def _count_requests_in_prediction_dict(cls, prediction_dict: dict[float, RequestsLists]) -> int:
+        return sum(
+            cls._count_requests_in_requests_lists(requests_lists)
+            for requests_lists in prediction_dict.values()
+        )
+
+    @classmethod
+    def _prediction_sample_summary(
+        cls,
+        prediction_sample_sets: list[dict[float, RequestsLists]],
+        current_time: float,
+        look_ahead_minutes: int,
+    ) -> tuple[int, float, float]:
+        sample_count = len(prediction_sample_sets)
+        if sample_count <= 0:
+            return 0, 0.0, 0.0
+
+        current_predicted_count = 0
+        future_predicted_count = 0
+        for prediction_sample_set in prediction_sample_sets:
+            current_predictions, future_predictions = RolloutHelpers._split_predicted_requests_dict(
+                predicted_requests_dict=prediction_sample_set,
+                look_ahead_minutes=look_ahead_minutes,
+                current_time=current_time,
+            )
+            current_predicted_count += cls._count_requests_in_prediction_dict(current_predictions)
+            future_predicted_count += cls._count_requests_in_prediction_dict(future_predictions)
+
+        return (
+            sample_count,
+            current_predicted_count / float(sample_count),
+            future_predicted_count / float(sample_count),
+        )
+
+    @classmethod
+    def _iter_requests_from_requests_lists(cls, requests_lists: Optional[RequestsLists]):
+        if requests_lists is None:
+            return
+        for data_field in requests_lists.__dataclass_fields__.keys():
+            yield from getattr(requests_lists, data_field)
+
+    @classmethod
+    def _iter_requests_from_prediction_sample_sets(cls, prediction_sample_sets: list[dict[float, RequestsLists]]):
+        for prediction_sample_set in prediction_sample_sets:
+            for requests_lists in prediction_sample_set.values():
+                yield from cls._iter_requests_from_requests_lists(requests_lists)
+
+    def _prediction_weight_summary(self, prediction_sample_sets: list[dict[float, RequestsLists]]) -> str:
+        if not self.allow_reweighting:
+            return "disabled"
+
+        weights = [
+            float(self._prediction_request_weight(request))
+            for request in self._iter_requests_from_prediction_sample_sets(prediction_sample_sets)
+        ]
+        if not weights:
+            return "none"
+
+        mean_weight = sum(weights) / float(len(weights))
+        return (
+            f"n={len(weights)}, min={min(weights):.3f}, "
+            f"mean={mean_weight:.3f}, max={max(weights):.3f}"
+        )
+
+    def _estimate_candidate_future_costs(
+        self,
+        *,
+        current_state: PlanningState,
+        requests_lists: Optional[RequestsLists],
+        current_node_reservation_table: Optional[NodeReservationTable],
+        prediction_sample_sets: list[dict[float, RequestsLists]],
+        motion_planner: MotionPlanner,
+        traversal_graph_generator: TraversalGraphGenerator,
+        look_ahead_minutes: int,
+        blocked_robots: Optional[set[int]],
+        future_scheduled_requests_lists: Optional[RequestsLists],
+        debug: bool,
+    ) -> tuple[float, float, Optional[tuple[float, float]]]:
+        prediction_request_weight_fn = self._prediction_request_weight if self.allow_reweighting else None
+        weighted_raw_cost, weighted_truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
+            cost_estimator=self.cost_estimator,
+            current_state=current_state.fork(),
+            requests_lists=copy.deepcopy(requests_lists),
+            current_node_reservation_table=copy.deepcopy(current_node_reservation_table),
+            prediction_sample_sets=prediction_sample_sets,
+            motion_planner=motion_planner.fork_with_reservations(),
+            traversal_graph_generator=traversal_graph_generator,
+            look_ahead_minutes=look_ahead_minutes,
+            blocked_robots=copy.deepcopy(blocked_robots),
+            future_scheduled_requests_lists=copy.deepcopy(future_scheduled_requests_lists),
+            prediction_request_weight_fn=prediction_request_weight_fn,
+            debug=False,
+        )
+
+        unweighted_costs = None
+        if debug and self.allow_reweighting:
+            unweighted_costs = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
+                cost_estimator=self.cost_estimator,
+                current_state=current_state.fork(),
+                requests_lists=copy.deepcopy(requests_lists),
+                current_node_reservation_table=copy.deepcopy(current_node_reservation_table),
+                prediction_sample_sets=prediction_sample_sets,
+                motion_planner=motion_planner.fork_with_reservations(),
+                traversal_graph_generator=traversal_graph_generator,
+                look_ahead_minutes=look_ahead_minutes,
+                blocked_robots=copy.deepcopy(blocked_robots),
+                future_scheduled_requests_lists=copy.deepcopy(future_scheduled_requests_lists),
+                prediction_request_weight_fn=None,
+                debug=False,
+            )
+
+        return weighted_raw_cost, weighted_truncated_cost, unweighted_costs
+
+    def _print_candidate_decision_diagnostics(
+        self,
+        *,
+        robot_id: int,
+        request_id: int | str,
+        heuristic_cost: float,
+        weighted_raw_cost: float,
+        weighted_truncated_cost: float,
+        unweighted_costs: Optional[tuple[float, float]],
+        prediction_sample_sets: list[dict[float, RequestsLists]],
+        current_time: float,
+        look_ahead_minutes: int,
+        blocked_robots: Optional[set[int]],
+    ) -> None:
+        action = "wait" if request_id == -1 else f"assign {request_id}"
+        sample_count, avg_current_predictions, avg_future_predictions = self._prediction_sample_summary(
+            prediction_sample_sets=prediction_sample_sets,
+            current_time=current_time,
+            look_ahead_minutes=look_ahead_minutes,
+        )
+        unweighted_summary = ""
+        if unweighted_costs is not None:
+            unweighted_raw_cost, unweighted_truncated_cost = unweighted_costs
+            unweighted_summary = (
+                f", unweighted_raw={unweighted_raw_cost:.3f}, "
+                f"unweighted_truncated={unweighted_truncated_cost:.3f}, "
+                f"weight_delta_truncated={unweighted_truncated_cost - weighted_truncated_cost:.3f}"
+            )
+
+        print(
+            "Rollout candidate diagnostics: "
+            f"robot={robot_id}, action={action}, "
+            f"heuristic_cost={heuristic_cost:.3f}, "
+            f"weighted_raw={weighted_raw_cost:.3f}, "
+            f"weighted_truncated={weighted_truncated_cost:.3f}"
+            f"{unweighted_summary}, "
+            f"samples={sample_count}, "
+            f"avg_current_pred={avg_current_predictions:.2f}, "
+            f"avg_future_pred={avg_future_predictions:.2f}, "
+            f"prediction_weights={self._prediction_weight_summary(prediction_sample_sets)}, "
+            f"blocked_robots={sorted(blocked_robots) if blocked_robots else []}."
+        )
     
     def _determine_if_deallocation_should_occur(self, 
                                                 min_pickup_deadline: float,
@@ -422,10 +588,12 @@ class AdaptiveRollout:
         min_planned_time_to_reach_last_goal = float('inf')
         min_path_cost = float('inf')
         min_path_raw_cost = float('inf')
+        selected_diagnostics = None
         
         
         for i in range(len(potential_assignments)):
             request_id = potential_assignments[i][0]
+            heuristic_cost = potential_assignments[i][1]
             current_state = state.fork()
             current_motion_planner = motion_planner.fork_with_reservations()
             currently_assigned_request_ids = copy.deepcopy(self.assigned_requests[robot_id])
@@ -440,18 +608,31 @@ class AdaptiveRollout:
                 current_requests_lists = copy.deepcopy(requests_lists)
                 current_blocked_robots = copy.deepcopy(self.blocked_robots)
                 current_blocked_robots.add(robot_id)
-                unmodified_cost, truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
-                                                                                        cost_estimator=self.cost_estimator,
-                                                                                        current_state=current_state,
-                                                                                        requests_lists=current_requests_lists,
-                                                                                        current_node_reservation_table=current_node_reservation_table,
-                                                                                        prediction_sample_sets=prediction_sample_sets,
-                                                                                        motion_planner=current_motion_planner,
-                                                                                        traversal_graph_generator=traversal_graph_generator,
-                                                                                        look_ahead_minutes=look_ahead_minutes,
-                                                                                        blocked_robots=current_blocked_robots,
-                                                                                        future_scheduled_requests_lists=future_scheduled_requests_lists,
-                                                                                        prediction_request_weight_fn=self._prediction_request_weight if self.allow_reweighting else None)
+                unmodified_cost, truncated_cost, unweighted_costs = self._estimate_candidate_future_costs(
+                    current_state=current_state,
+                    requests_lists=current_requests_lists,
+                    current_node_reservation_table=current_node_reservation_table,
+                    prediction_sample_sets=prediction_sample_sets,
+                    motion_planner=current_motion_planner,
+                    traversal_graph_generator=traversal_graph_generator,
+                    look_ahead_minutes=look_ahead_minutes,
+                    blocked_robots=current_blocked_robots,
+                    future_scheduled_requests_lists=future_scheduled_requests_lists,
+                    debug=debug,
+                )
+                if debug:
+                    self._print_candidate_decision_diagnostics(
+                        robot_id=robot_id,
+                        request_id=request_id,
+                        heuristic_cost=heuristic_cost,
+                        weighted_raw_cost=unmodified_cost,
+                        weighted_truncated_cost=truncated_cost,
+                        unweighted_costs=unweighted_costs,
+                        prediction_sample_sets=prediction_sample_sets,
+                        current_time=state.simulator_time,
+                        look_ahead_minutes=look_ahead_minutes,
+                        blocked_robots=current_blocked_robots,
+                    )
 
                 if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
                     min_path_cost = truncated_cost
@@ -460,6 +641,7 @@ class AdaptiveRollout:
                     min_planned_goal_indices = None
                     min_planned_time_to_reach_last_goal = None
                     min_request_id = -1
+                    selected_diagnostics = (request_id, unmodified_cost, truncated_cost)
             else:
                 path_results = PolicyHelpers._get_planned_path_for_request_assignment(robot_id=robot_id,
                                                                             request_id=request_id,
@@ -492,18 +674,31 @@ class AdaptiveRollout:
                     RolloutHelpers._remove_request_from_requests_lists(request_id=request_id,
                                                                        requests_lists=current_requests_lists)
                     current_blocked_robots = copy.deepcopy(self.blocked_robots)
-                    unmodified_cost, truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
-                                                                                            cost_estimator=self.cost_estimator,
-                                                                                            current_state=current_state,
-                                                                                            requests_lists=current_requests_lists,
-                                                                                            current_node_reservation_table=current_node_reservation_table,
-                                                                                            prediction_sample_sets=prediction_sample_sets,
-                                                                                            motion_planner=current_motion_planner,
-                                                                                            traversal_graph_generator=traversal_graph_generator,
-                                                                                            look_ahead_minutes=look_ahead_minutes,
-                                                                                            blocked_robots=current_blocked_robots,
-                                                                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
-                                                                                            prediction_request_weight_fn=self._prediction_request_weight if self.allow_reweighting else None)
+                    unmodified_cost, truncated_cost, unweighted_costs = self._estimate_candidate_future_costs(
+                        current_state=current_state,
+                        requests_lists=current_requests_lists,
+                        current_node_reservation_table=current_node_reservation_table,
+                        prediction_sample_sets=prediction_sample_sets,
+                        motion_planner=current_motion_planner,
+                        traversal_graph_generator=traversal_graph_generator,
+                        look_ahead_minutes=look_ahead_minutes,
+                        blocked_robots=current_blocked_robots,
+                        future_scheduled_requests_lists=future_scheduled_requests_lists,
+                        debug=debug,
+                    )
+                    if debug:
+                        self._print_candidate_decision_diagnostics(
+                            robot_id=robot_id,
+                            request_id=request_id,
+                            heuristic_cost=heuristic_cost,
+                            weighted_raw_cost=unmodified_cost,
+                            weighted_truncated_cost=truncated_cost,
+                            unweighted_costs=unweighted_costs,
+                            prediction_sample_sets=prediction_sample_sets,
+                            current_time=state.simulator_time,
+                            look_ahead_minutes=look_ahead_minutes,
+                            blocked_robots=current_blocked_robots,
+                        )
 
                     if truncated_cost < min_path_cost or (truncated_cost == min_path_cost and unmodified_cost < min_path_raw_cost):
                         min_path_cost = truncated_cost
@@ -512,6 +707,17 @@ class AdaptiveRollout:
                         min_planned_goal_indices = planned_goal_indices
                         min_planned_time_to_reach_last_goal = planned_time_to_reach_last_goal
                         min_request_id = request_id
+                        selected_diagnostics = (request_id, unmodified_cost, truncated_cost)
+
+        if debug and selected_diagnostics is not None:
+            selected_request_id, selected_raw_cost, selected_truncated_cost = selected_diagnostics
+            selected_action = "wait" if selected_request_id == -1 else f"assign {selected_request_id}"
+            print(
+                "Rollout selected candidate: "
+                f"robot={robot_id}, action={selected_action}, "
+                f"weighted_raw={selected_raw_cost:.3f}, "
+                f"weighted_truncated={selected_truncated_cost:.3f}."
+            )
 
         return min_request_id, min_planned_path, min_planned_goal_indices, min_planned_time_to_reach_last_goal
     
