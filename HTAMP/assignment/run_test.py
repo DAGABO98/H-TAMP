@@ -15,7 +15,7 @@ IsoWeek = tuple[int, int]
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
-MAX_WORKERS = 100
+MAX_WORKERS = 60
 ROLLOUT_MODES = {5, 6, 7, 8}
 CACHE_POLICY_MODES = {3, *ROLLOUT_MODES}
 
@@ -77,10 +77,6 @@ PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
     "active_floor",
 )
-INCLUDE_FUTURE_SCHEDULED_REQUESTS = os.getenv(
-    "HTAMP_INCLUDE_FUTURE_SCHEDULED_REQUESTS",
-    "0",
-).strip().lower() in {"1", "true", "yes", "on"}
 PATIENT_ROOM_STAYS_FILE = os.getenv(
     "HTAMP_PATIENT_ROOM_STAYS_FILE",
     "data/processed/patient_room_stays.csv",
@@ -174,19 +170,20 @@ class PolicySpec:
     alpha: Optional[float] = None
     allow_deallocation: bool = False
     allow_reweighting: bool = False
+    include_future_scheduled_requests: bool = False
     extra_args: tuple[str, ...] = ()  # any extra CLI args you want to add
 
 
 POLICIES: list[PolicySpec] = [
-    PolicySpec("fleet_manager", mode=0),
+    # PolicySpec("fleet_manager", mode=0),
 
-    PolicySpec("tp_d", mode=1, alpha=0.0),
-    PolicySpec("tp_d", mode=1, alpha=0.2),
+    # PolicySpec("tp_d", mode=1, alpha=0.0),
+    # PolicySpec("tp_d", mode=1, alpha=0.2),
 
-    PolicySpec("d_tpts", mode=2, alpha=0.0),
-    PolicySpec("d_tpts", mode=2, alpha=0.2),
+    # PolicySpec("d_tpts", mode=2, alpha=0.0),
+    # PolicySpec("d_tpts", mode=2, alpha=0.2),
 
-    PolicySpec("idle_pred", mode=3),
+    # PolicySpec("idle_pred", mode=3),
 
     PolicySpec("base_policy", mode=4),
 
@@ -194,6 +191,11 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False),
     PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True),
     PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=False),
+
+    PolicySpec("adaptive_rollout", mode=5, allow_deallocation=True, allow_reweighting=True, include_future_scheduled_requests=True),
+    PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False, include_future_scheduled_requests=True),
+    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True, include_future_scheduled_requests=True),
+    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=False, include_future_scheduled_requests=True),
 ]
 
 
@@ -241,6 +243,9 @@ def policy_run_tag(p: PolicySpec) -> str:
     tag = f"{p.policy_name}"
     if p.alpha is not None:
         tag += f"_alpha{str(p.alpha)}"
+
+    if p.include_future_scheduled_requests:
+        tag += "_future_scheduled"
 
     if p.allow_deallocation:
         tag += "_ropt"
@@ -299,9 +304,10 @@ def prediction_weight_args() -> list[str]:
 
 
 def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
+    policy_name = policy_run_tag(p) if p.include_future_scheduled_requests else p.policy_name
     cmd = BASE + [
         "--mode", str(p.mode),
-        "--policy_name", p.policy_name,
+        "--policy_name", policy_name,
         "--year", str(day.year),
         "--month", str(day.month),
         "--day", str(day.day),
@@ -311,7 +317,7 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
         cmd += ["--alpha", str(p.alpha)]
     if p.mode in CACHE_POLICY_MODES:
         cmd += prediction_cache_args()
-    if p.mode in ROLLOUT_MODES and INCLUDE_FUTURE_SCHEDULED_REQUESTS:
+    if p.mode in ROLLOUT_MODES and p.include_future_scheduled_requests:
         cmd += ["--include_future_scheduled_requests"]
     if p.mode in ROLLOUT_MODES:
         cmd += prediction_weight_args()
