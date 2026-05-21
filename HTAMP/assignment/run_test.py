@@ -15,7 +15,7 @@ IsoWeek = tuple[int, int]
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
-MAX_WORKERS = 60
+MAX_WORKERS = 80
 ROLLOUT_MODES = {5, 6, 7, 8}
 CACHE_POLICY_MODES = {3, *ROLLOUT_MODES}
 
