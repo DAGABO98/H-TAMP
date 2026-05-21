@@ -24,6 +24,44 @@ from HTAMP.planning.state import PlanningState
 from HTAMP.plotting.planning.motion_planning_plotting import MotionPlanningPlotter
 from HTAMP.assignment.baselines.fleet_manager import FleetManager
 
+ROLLOUT_MODES = {5, 6, 7, 8}
+
+
+def get_rollout_variant_strings(mode: int) -> tuple[str, str]:
+    if mode == 5:
+        return "ropt", "rwt"
+    if mode == 6:
+        return "ropt", "norwt"
+    if mode == 7:
+        return "nopt", "rwt"
+    if mode == 8:
+        return "nopt", "norwt"
+    raise ValueError(f"Mode {mode} is not an adaptive rollout mode.")
+
+
+def get_policy_results_dir(args) -> str:
+    if args.policy_name in ["tp_d", "d_tpts"]:
+        return f"results/policies/{args.policy_name}_alpha{args.alpha}"
+
+    if args.mode in ROLLOUT_MODES:
+        deallocation_str, reweighting_str = get_rollout_variant_strings(args.mode)
+        rollout_name = "adaptive_rollout"
+        if getattr(args, "include_future_scheduled_requests", False):
+            rollout_name += "_future_scheduled"
+        return f"results/policies/{rollout_name}_{deallocation_str}_{reweighting_str}"
+
+    return f"results/policies/{args.policy_name}"
+
+
+def save_results_csv(results_df: pd.DataFrame, args) -> None:
+    policy_results_dir = get_policy_results_dir(args)
+    os.makedirs(policy_results_dir, exist_ok=True)
+    results_df.to_csv(
+        f"{policy_results_dir}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv",
+        index=False,
+    )
+
+
 class AssignmentEvaluator:
     def __init__(self, 
                  args, 
@@ -548,27 +586,7 @@ def run_experiment(args):
     
     if args.save_results_csv:
         os.makedirs("results/policies", exist_ok=True)
-        if args.policy_name in ["tp_d", "d_tpts"]:
-            os.makedirs(f"results/policies/{args.policy_name}_alpha{args.alpha}", exist_ok=True)
-            results_df.to_csv(f"results/policies/{args.policy_name}_alpha{args.alpha}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-        elif args.policy_name in ["adaptive_rollout"] and args.mode in [5, 6, 7, 8]:
-            if args.mode == 5:
-                deallocation_str = "ropt"
-                reweighting_str = "rwt"
-            elif args.mode == 6:
-                deallocation_str = "ropt"
-                reweighting_str = "norwt"
-            elif args.mode == 7:
-                deallocation_str = "nopt"
-                reweighting_str = "rwt"
-            else:  # mode == 8
-                deallocation_str = "nopt"
-                reweighting_str = "norwt"
-            os.makedirs(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}", exist_ok=True)
-            results_df.to_csv(f"results/policies/{args.policy_name}_{deallocation_str}_{reweighting_str}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
-        else:
-            os.makedirs(f"results/policies/{args.policy_name}", exist_ok=True)
-            results_df.to_csv(f"results/policies/{args.policy_name}/{args.year}-{args.month}-{args.day}_floor{args.floor_number}.csv", index=False)
+        save_results_csv(results_df=results_df, args=args)
 
     if frame_data is not None:
         MotionPlanningPlotter.generate_state_animation(occupancy_map=experiment.evaluator.tg_generator.occupancy_map,
