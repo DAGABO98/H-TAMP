@@ -39,6 +39,35 @@ DEFAULT_WEEK_BUCKETS_BY_FLOOR: FloorWeekBucketMap = {
     }
 }
 
+BASELINE_POLICIES = [
+    "fleet_manager",
+    "tp_d_alpha0.0",
+    "d_tpts_alpha0.0",
+    "tp_d_alpha0.2",
+    "d_tpts_alpha0.2",
+    "idle_pred",
+    "idle_prediction",
+]
+
+BASE_POLICY = "base_policy"
+
+ROLLOUT_VARIANT_SUFFIXES = [
+    "nopt_norwt",
+    "ropt_norwt",
+    "nopt_rwt",
+    "ropt_rwt",
+]
+
+ROLLOUT_POLICIES = [
+    f"adaptive_rollout_{suffix}"
+    for suffix in ROLLOUT_VARIANT_SUFFIXES
+]
+
+FUTURE_SCHEDULED_ROLLOUT_POLICIES = [
+    f"adaptive_rollout_future_scheduled_{suffix}"
+    for suffix in ROLLOUT_VARIANT_SUFFIXES
+]
+
 
 class AssignmentResultsPlotter:
     """
@@ -64,17 +93,30 @@ class AssignmentResultsPlotter:
         file_glob: str = "*.out",
         week_buckets: WeekBucketMap | None = None,
         week_buckets_by_floor: FloorWeekBucketMap | None = None,
+        include_future_scheduled_requests: bool = False,
     ):
-        self.policy_order = ["fleet_manager",
-                             "tp_d_alpha0.0",
-                             "d_tpts_alpha0.0",
-                             "tp_d_alpha0.2",
-                             "d_tpts_alpha0.2",
-                             "idle_prediction",
-                             "base_policy",
+        self.include_future_scheduled_requests = include_future_scheduled_requests
+        self.rollout_policies = list(ROLLOUT_POLICIES)
+        self.future_scheduled_rollout_policies = list(FUTURE_SCHEDULED_ROLLOUT_POLICIES)
+        self.selected_rollout_policies = (
+            self.future_scheduled_rollout_policies
+            if self.include_future_scheduled_requests
+            else self.rollout_policies
+        )
+        selected_ropt_rwt = (
+            "adaptive_rollout_future_scheduled_ropt_rwt"
+            if self.include_future_scheduled_requests
+            else "adaptive_rollout_ropt_rwt"
+        )
+        self.main_comparison_policies = BASELINE_POLICIES + [BASE_POLICY, selected_ropt_rwt]
+        self.all_rollout_ablation_policies = [BASE_POLICY] + self.rollout_policies + self.future_scheduled_rollout_policies
+        self.selected_rollout_ablation_policies = list(self.selected_rollout_policies)
+
+        self.policy_order = BASELINE_POLICIES + [
+                             BASE_POLICY,
                              "heuristic_rollout_ropt_rwt",
-                             "adaptive_rollout_nopt_norwt",
-                             "adaptive_rollout_ropt_rwt",]
+                             *self.rollout_policies,
+                             *self.future_scheduled_rollout_policies,]
 
         self.baseline_colors = {"human_team": "#7f0000",
                                 "fleet_manager": "#b30000",
@@ -82,19 +124,30 @@ class AssignmentResultsPlotter:
                                 "d_tpts_alpha0.0": "#ef6548",
                                 "tp_d_alpha0.2": "#fc8d59",
                                 "d_tpts_alpha0.2": "#fdbb84",
+                                "idle_pred": "#fdd49e",
                                 "idle_prediction": "#fdd49e",
                                 "vanilla_rollout_prempt": "#fee8c8"}
         
         self.our_methods_colors = {"base_policy": "#d9f0a3",
                                     "heuristic_rollout_ropt_rwt": "#addd8e",
                                     "adaptive_rollout_nopt_norwt": "#78c679",
-                                    "adaptive_rollout_ropt_rwt": "#006837"}
+                                    "adaptive_rollout_ropt_norwt": "#31a354",
+                                    "adaptive_rollout_nopt_rwt": "#238b45",
+                                    "adaptive_rollout_ropt_rwt": "#006837",
+                                    "adaptive_rollout_future_scheduled_nopt_norwt": "#bcbddc",
+                                    "adaptive_rollout_future_scheduled_ropt_norwt": "#9e9ac8",
+                                    "adaptive_rollout_future_scheduled_nopt_rwt": "#756bb1",
+                                    "adaptive_rollout_future_scheduled_ropt_rwt": "#54278f"}
         
         self.ablation_study_colors = {"base_policy": "#d9f0a3",
                                      "adaptive_rollout_nopt_norwt": "#addd8e",
                                      "adaptive_rollout_ropt_norwt": "#78c679",
                                      "adaptive_rollout_nopt_rwt": "#31a354",
-                                     "adaptive_rollout_ropt_rwt": "#006837"}
+                                     "adaptive_rollout_ropt_rwt": "#006837",
+                                     "adaptive_rollout_future_scheduled_nopt_norwt": "#bcbddc",
+                                     "adaptive_rollout_future_scheduled_ropt_norwt": "#9e9ac8",
+                                     "adaptive_rollout_future_scheduled_nopt_rwt": "#756bb1",
+                                     "adaptive_rollout_future_scheduled_ropt_rwt": "#54278f"}
         
         if week_buckets is None:
             week_buckets = DEFAULT_WEEK_BUCKETS
@@ -185,6 +238,8 @@ class AssignmentResultsPlotter:
                 colors.append(self.baseline_colors[p])
             elif p in self.our_methods_colors:
                 colors.append(self.our_methods_colors[p])
+            elif p in self.ablation_study_colors:
+                colors.append(self.ablation_study_colors[p])
             else:
                 print(f"[WARN] Policy '{p}' not categorized as baseline or our method. Assigning gray color.")
                 colors.append("lightgray")
@@ -241,6 +296,25 @@ class AssignmentResultsPlotter:
     def _ordered_policies(self, policies: list[str]) -> list[str]:
         rank = {p: i for i, p in enumerate(self.policy_order)}
         return sorted(policies, key=lambda p: (rank.get(p, 10**9), p))
+
+    def _filter_to_policy_subset(self,
+                                 df: pd.DataFrame,
+                                 policy_subset: list[str] | None,
+                                 policy_col: str = "policy") -> pd.DataFrame:
+        if policy_subset is None:
+            return df.copy()
+        return df[df[policy_col].isin(policy_subset)].copy()
+
+    @staticmethod
+    def _warn_missing_policies(policy_subset: list[str] | None,
+                               available_policies: list[str],
+                               context: str) -> None:
+        if policy_subset is None:
+            return
+        available_policy_set = set(available_policies)
+        missing = [policy for policy in policy_subset if policy not in available_policy_set]
+        if missing:
+            print(f"[WARN] Missing policies for {context}: {missing}")
     
     def _parse_all_logs(self) -> pd.DataFrame:
         if not self.logs_root_dir.exists():
@@ -409,12 +483,20 @@ class AssignmentResultsPlotter:
                     f"{str(r['policy'])[:30]:30s}  {n:12d}  {mean:14.4f}  {std:14.4f}  {mean:10.4f} ± {std:10.4f}"
                 )
     
-    def plot_box_per_policy_by_week_bucket(self) -> None:
+    def plot_box_per_policy_by_week_bucket(self,
+                                           policy_subset: list[str] | None = None,
+                                           output_subdir_name: str | None = None,
+                                           filename: str = "planning_time_per_request.png",
+                                           title_prefix: str = "Planning time per request by policy") -> None:
         for label, weeks, weeks_by_floor in self._iter_week_bucket_specs():
             out_subdir = self.out_dir / f"{label}"
+            if output_subdir_name is not None:
+                out_subdir = out_subdir / output_subdir_name
             out_subdir.mkdir(parents=True, exist_ok=True)
 
             sub = self.filter_to_weeks(self.logs_df, weeks, weeks_by_floor, floor_col="floor")
+            self._warn_missing_policies(policy_subset, sub["policy"].unique().tolist(), f"{title_prefix} ({label})")
+            sub = self._filter_to_policy_subset(sub, policy_subset)
             if sub.empty:
                 print(f"[WARN] No rows for bucket '{label}'. Skipping.")
                 continue
@@ -445,9 +527,9 @@ class AssignmentResultsPlotter:
                 med.set_color("black")
             plt.xticks(rotation=35, ha="right")
             plt.ylabel("Planning time per request (seconds) [per day-floor]")
-            plt.title(f"Planning time per request by policy — {label} demand weeks")
+            plt.title(f"{title_prefix} - {label} demand weeks")
             plt.tight_layout()
-            out_png = out_subdir / f"planning_time_per_request.png"
+            out_png = out_subdir / filename
             plt.savefig(out_png, dpi=200)
             plt.close()
             print(f"[INFO] Wrote plot: {out_png} in {out_subdir}")
@@ -711,7 +793,11 @@ class AssignmentResultsPlotter:
 
     def plot_wait_time_by_week_bucket(self,
                                       week_buckets: WeekBucketMap,
-                                      week_buckets_by_floor: FloorWeekBucketMap | None = None) -> None:
+                                      week_buckets_by_floor: FloorWeekBucketMap | None = None,
+                                      policy_subset: list[str] | None = None,
+                                      output_subdir_name: str | None = None,
+                                      filename_prefix: str = "wait_times",
+                                      title_prefix: str = "Wait time by policy") -> None:
         df = self.dailyfloor_stats_df.copy()
         iso = df["_day"].dt.isocalendar()
         df["iso_year"] = iso["year"].astype(int)
@@ -728,6 +814,8 @@ class AssignmentResultsPlotter:
                 for floor, week_values in week_buckets_by_floor.get(label, {}).items()
             }
             out_subdir = self.out_dir / f"{label}"
+            if output_subdir_name is not None:
+                out_subdir = out_subdir / output_subdir_name
             out_subdir.mkdir(parents=True, exist_ok=True)
 
             sub = self.filter_to_weeks(
@@ -736,6 +824,8 @@ class AssignmentResultsPlotter:
                 weeks_by_floor,
                 floor_col="_floor",
             )
+            self._warn_missing_policies(policy_subset, sub["policy"].unique().tolist(), f"{title_prefix} ({label})")
+            sub = self._filter_to_policy_subset(sub, policy_subset)
             if sub.empty:
                 print(f"[WARN] No rows for bucket '{label}'. Skipping.")
                 continue
@@ -767,15 +857,76 @@ class AssignmentResultsPlotter:
                 for med in bp["medians"]:
                     med.set_color("black")
                 plt.xticks(rotation=35, ha="right")
-                plt.xticks(rotation=35, ha="right")
                 plt.ylabel(f"Daily-per-floor {self.daily_stat} wait time (seconds), serviced only")
-                plt.title(f"Wait time by policy — request_type={req_type} — {label} demand weeks")
-                plt.tight_layout()
-
                 safe = self._safe_filename(req_type)
-                plt.savefig(out_subdir / f"wait_times_{self.daily_stat}_{safe}.png", dpi=200)
+                plt.title(f"{title_prefix} - request_type={req_type} - {label} demand weeks")
+                plt.tight_layout()
+                plt.savefig(out_subdir / f"{filename_prefix}_{self.daily_stat}_{safe}.png", dpi=200)
                 plt.close()
-                print(f"[INFO] Wrote plot: wait_times_{self.daily_stat}_{safe}.png in {out_subdir}")
+                print(f"[INFO] Wrote plot: {filename_prefix}_{self.daily_stat}_{safe}.png in {out_subdir}")
+
+    def plot_main_comparison_by_week_bucket(self) -> None:
+        suffix_label = "with future scheduled requests" if self.include_future_scheduled_requests else "without future scheduled requests"
+        self.plot_wait_time_by_week_bucket(
+            self.week_buckets,
+            self.week_buckets_by_floor,
+            policy_subset=self.main_comparison_policies,
+            filename_prefix="wait_times",
+            title_prefix=f"Main comparison ({suffix_label})",
+        )
+        self.plot_box_per_policy_by_week_bucket(
+            policy_subset=self.main_comparison_policies,
+            filename="planning_time_per_request.png",
+            title_prefix=f"Main comparison planning time ({suffix_label})",
+        )
+
+    def plot_all_rollout_ablation_by_week_bucket(self) -> None:
+        self.plot_wait_time_by_week_bucket(
+            self.week_buckets,
+            self.week_buckets_by_floor,
+            policy_subset=self.all_rollout_ablation_policies,
+            output_subdir_name="ablation_all_rollout_variants",
+            filename_prefix="all_rollout_variants_wait_times",
+            title_prefix="Ablation: all rollout variants plus base policy",
+        )
+        self.plot_box_per_policy_by_week_bucket(
+            policy_subset=self.all_rollout_ablation_policies,
+            output_subdir_name="ablation_all_rollout_variants",
+            filename="all_rollout_variants_planning_time_per_request.png",
+            title_prefix="Ablation: all rollout variant runtimes plus base policy",
+        )
+
+    def plot_selected_rollout_ablation_by_week_bucket(self) -> None:
+        suffix_label = "future scheduled" if self.include_future_scheduled_requests else "no future scheduled"
+        output_subdir_name = (
+            "ablation_future_scheduled_rollout_variants"
+            if self.include_future_scheduled_requests
+            else "ablation_rollout_variants"
+        )
+        filename_prefix = (
+            "future_scheduled_rollout_variants_wait_times"
+            if self.include_future_scheduled_requests
+            else "rollout_variants_wait_times"
+        )
+        runtime_filename = (
+            "future_scheduled_rollout_variants_planning_time_per_request.png"
+            if self.include_future_scheduled_requests
+            else "rollout_variants_planning_time_per_request.png"
+        )
+        self.plot_wait_time_by_week_bucket(
+            self.week_buckets,
+            self.week_buckets_by_floor,
+            policy_subset=self.selected_rollout_ablation_policies,
+            output_subdir_name=output_subdir_name,
+            filename_prefix=filename_prefix,
+            title_prefix=f"Ablation: rollout variants ({suffix_label})",
+        )
+        self.plot_box_per_policy_by_week_bucket(
+            policy_subset=self.selected_rollout_ablation_policies,
+            output_subdir_name=output_subdir_name,
+            filename=runtime_filename,
+            title_prefix=f"Ablation: rollout variant runtimes ({suffix_label})",
+        )
 
 
 def main():
@@ -786,6 +937,7 @@ def main():
     parser.add_argument("--file_glob", type=str, default="*.out", help="Glob pattern to find log files within each policy's log folder.")
     parser.add_argument("--type_col", type=str, default="request_type", help="Column name in CSVs that indicates request type.")
     parser.add_argument("--daily_stat", type=str, default="p95", choices=["mean", "p95"], help="Whether to compute daily mean or p95 wait times for boxplots.")
+    parser.add_argument("--include_future_scheduled_requests", action="store_true", help="Use future-scheduled adaptive rollout variants in the main comparison and selected four-variant ablation plots.")
     args = parser.parse_args()
 
     plotter = AssignmentResultsPlotter(
@@ -794,12 +946,14 @@ def main():
         type_col=args.type_col,
         daily_stat=args.daily_stat,
         logs_root_dir=args.logs_root_dir,
-        file_glob=args.file_glob
+        file_glob=args.file_glob,
+        include_future_scheduled_requests=args.include_future_scheduled_requests,
     )
 
     plotter.print_counts_per_policy_per_request_type()
-    plotter.plot_wait_time_by_week_bucket(plotter.week_buckets, plotter.week_buckets_by_floor)
-    plotter.plot_box_per_policy_by_week_bucket()
+    plotter.plot_main_comparison_by_week_bucket()
+    plotter.plot_all_rollout_ablation_by_week_bucket()
+    plotter.plot_selected_rollout_ablation_by_week_bucket()
     plotter.print_policy_mean_pm_std()
 
 if __name__ == "__main__":
