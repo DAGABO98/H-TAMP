@@ -193,11 +193,6 @@ POLICIES: list[PolicySpec] = [
 
     PolicySpec("base_policy", mode=4),
 
-    PolicySpec("adaptive_rollout", mode=5, allow_deallocation=True, allow_reweighting=True),
-    PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False),
-    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True),
-    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=False),
-
     PolicySpec("adaptive_rollout", mode=5, allow_deallocation=True, allow_reweighting=True, include_future_scheduled_requests=True),
     PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False, include_future_scheduled_requests=True),
     PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True, include_future_scheduled_requests=True),
