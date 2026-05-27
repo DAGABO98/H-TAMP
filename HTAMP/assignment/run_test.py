@@ -15,7 +15,7 @@ IsoWeek = tuple[int, int]
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
-MAX_WORKERS = 80
+MAX_WORKERS = 100
 ROLLOUT_MODES = {5, 6, 7, 8}
 CACHE_POLICY_MODES = {3, *ROLLOUT_MODES}
 
@@ -73,6 +73,12 @@ PREDICTION_WEIGHT_FALLBACK_MIN_POSITIVE_PREDICTION_WINDOWS = optional_int_env(
 PREDICTION_WEIGHT_PATIENT_CREDIBILITY_PRIOR = optional_float_env(
     "HTAMP_PREDICTION_WEIGHT_PATIENT_CREDIBILITY_PRIOR"
 )
+PREDICTION_ROLLOUT_SAMPLE_LIMIT = optional_int_env("HTAMP_PREDICTION_ROLLOUT_SAMPLE_LIMIT")
+if PREDICTION_ROLLOUT_SAMPLE_LIMIT is None:
+    PREDICTION_ROLLOUT_SAMPLE_LIMIT = 20
+ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT = optional_int_env("HTAMP_ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT")
+if ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT is None:
+    ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT = 10
 PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
     "active_floor",
@@ -175,15 +181,15 @@ class PolicySpec:
 
 
 POLICIES: list[PolicySpec] = [
-    # PolicySpec("fleet_manager", mode=0),
+    PolicySpec("fleet_manager", mode=0),
 
-    # PolicySpec("tp_d", mode=1, alpha=0.0),
-    # PolicySpec("tp_d", mode=1, alpha=0.2),
+    PolicySpec("tp_d", mode=1, alpha=0.0),
+    PolicySpec("tp_d", mode=1, alpha=0.2),
 
-    # PolicySpec("d_tpts", mode=2, alpha=0.0),
-    # PolicySpec("d_tpts", mode=2, alpha=0.2),
+    PolicySpec("d_tpts", mode=2, alpha=0.0),
+    PolicySpec("d_tpts", mode=2, alpha=0.2),
 
-    # PolicySpec("idle_pred", mode=3),
+    PolicySpec("idle_pred", mode=3),
 
     PolicySpec("base_policy", mode=4),
 
@@ -303,6 +309,13 @@ def prediction_weight_args() -> list[str]:
     return args
 
 
+def adaptive_rollout_performance_args() -> list[str]:
+    return [
+        "--prediction_rollout_sample_limit", str(PREDICTION_ROLLOUT_SAMPLE_LIMIT),
+        "--adaptive_rollout_candidate_limit", str(ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT),
+    ]
+
+
 def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
     policy_name = policy_run_tag(p) if p.include_future_scheduled_requests else p.policy_name
     cmd = BASE + [
@@ -321,6 +334,7 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
         cmd += ["--include_future_scheduled_requests"]
     if p.mode in ROLLOUT_MODES:
         cmd += prediction_weight_args()
+        cmd += adaptive_rollout_performance_args()
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd

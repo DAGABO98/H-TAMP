@@ -44,7 +44,9 @@ class AdaptiveRollout:
                  prediction_weight_cold_start_weight: Optional[float] = None,
                  prediction_weight_fallback_min_positive_prediction_windows: Optional[int] = None,
                  prediction_weight_patient_credibility_prior: Optional[float] = None,
-                 include_future_scheduled_requests: bool = False):
+                 include_future_scheduled_requests: bool = False,
+                 prediction_rollout_sample_limit: Optional[int] = 20,
+                 adaptive_rollout_candidate_limit: Optional[int] = 10):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -81,6 +83,16 @@ class AdaptiveRollout:
         self.prediction_lookahead_minutes = prediction_lookahead_minutes
         self.prediction_cache_patient_filter_mode = prediction_cache_patient_filter_mode
         self.include_future_scheduled_requests = include_future_scheduled_requests
+        self.prediction_rollout_sample_limit = (
+            int(prediction_rollout_sample_limit)
+            if prediction_rollout_sample_limit is not None and int(prediction_rollout_sample_limit) > 0
+            else None
+        )
+        self.adaptive_rollout_candidate_limit = (
+            int(adaptive_rollout_candidate_limit)
+            if adaptive_rollout_candidate_limit is not None and int(adaptive_rollout_candidate_limit) > 0
+            else None
+        )
         prediction_weight_config_kwargs = {
             "alpha_over": prediction_weight_alpha_over,
             "alpha_time": prediction_weight_alpha_time,
@@ -183,6 +195,7 @@ class AdaptiveRollout:
             prediction_cache_patient_filter_mode=self.prediction_cache_patient_filter_mode,
             active_patient_filter=self.active_patient_filter,
             remove_real_matches=remove_real_matches,
+            prediction_rollout_sample_limit=self.prediction_rollout_sample_limit,
             debug=debug,
         )
 
@@ -551,6 +564,7 @@ class AdaptiveRollout:
 
         potential_assignments = []
         for request_id in potential_request_ids:
+            request = state.requests[request_id]
             heuristic_cost = RolloutHelpers._estimate_heuristic_cost_to_fulfill_request(assigned_requests=self.assigned_requests,
                                                                                         node_reservation_table=self.node_reservation_table,
                                                                                         robot_id=robot_id,
@@ -560,9 +574,19 @@ class AdaptiveRollout:
                                                                                         traversal_graph_generator=traversal_graph_generator)
             if heuristic_cost == float('inf'):
                 continue
-            potential_assignments.append((request_id, heuristic_cost))
+            estimated_service_end = heuristic_cost + request.scheduled_time
+            pickup_deadline = PolicyHelpers._calculate_pickup_deadline(
+                delivery_robot_profile=self.dummy_delivery_robot_profile,
+                request=request,
+                motion_planner=motion_planner,
+                traversal_graph_generator=traversal_graph_generator,
+            )
+            potential_assignments.append((request_id, heuristic_cost, pickup_deadline, estimated_service_end))
         
-        potential_assignments.sort(key=lambda x: x[1])
+        potential_assignments.sort(key=lambda x: (x[2], x[3]))
+        if self.adaptive_rollout_candidate_limit is not None:
+            potential_assignments = potential_assignments[:self.adaptive_rollout_candidate_limit]
+        potential_assignments = [(request_id, heuristic_cost) for request_id, heuristic_cost, _, _ in potential_assignments]
         if len(potential_assignments) > 0:
             potential_assignments.append((-1, 0))
 

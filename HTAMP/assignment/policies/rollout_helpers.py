@@ -122,6 +122,7 @@ class RolloutHelpers:
         prediction_cache_patient_filter_mode: str = "active_floor",
         active_patient_filter: Optional[ActivePatientFloorFilter] = None,
         remove_real_matches: bool = True,
+        prediction_rollout_sample_limit: Optional[int] = None,
         debug: bool = False,
     ) -> list[dict[float, RequestsLists]]:
         if prediction_cache is None or not prediction_cache.enabled:
@@ -169,6 +170,7 @@ class RolloutHelpers:
             filter_to_observed_patients=filter_to_observed_patients,
             patient_key_filter=patient_key_filter,
             remove_real_matches=remove_real_matches,
+            sample_limit=prediction_rollout_sample_limit,
         )
         if debug:
             print(

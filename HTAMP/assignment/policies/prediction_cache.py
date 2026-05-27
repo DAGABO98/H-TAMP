@@ -669,6 +669,7 @@ class OfflinePredictionCache:
         filter_to_observed_patients: bool = True,
         patient_key_filter: set[tuple[str, str]] | None = None,
         remove_real_matches: bool = True,
+        sample_limit: int | None = None,
     ) -> list[dict[float, RequestsLists]]:
         if not self.enabled:
             return []
@@ -693,14 +694,34 @@ class OfflinePredictionCache:
         if prefix_rows.empty:
             return []
 
-        sample_sets: dict[int, RequestsLists] = {}
-        for sample_index in pd.to_numeric(prefix_rows["sample_index"], errors="coerce").dropna().unique():
-            sample_sets[int(sample_index)] = empty_requests_lists()
+        sample_indices = sorted(
+            int(sample_index)
+            for sample_index in pd.to_numeric(prefix_rows["sample_index"], errors="coerce").dropna().unique()
+        )
+        if sample_limit is not None and int(sample_limit) > 0 and len(sample_indices) > int(sample_limit):
+            limit = int(sample_limit)
+            if limit == 1:
+                sample_indices = [sample_indices[0]]
+            else:
+                selected_indices = {
+                    round(i * (len(sample_indices) - 1) / (limit - 1))
+                    for i in range(limit)
+                }
+                sample_indices = [sample_indices[i] for i in sorted(selected_indices)]
+
+        sample_index_set = set(sample_indices)
+        sample_sets: dict[int, RequestsLists] = {
+            sample_index: empty_requests_lists()
+            for sample_index in sample_indices
+        }
 
         request_rows = prefix_rows[
             _column_or_default(prefix_rows, "row_kind").astype(str).eq("sampled_request")
         ].copy()
         if not request_rows.empty:
+            request_rows = request_rows[
+                pd.to_numeric(request_rows["sample_index"], errors="coerce").isin(sample_index_set)
+            ].copy()
             time_mask = request_rows["scheduled_timestamp"].ge(current_timestamp) & request_rows[
                 "scheduled_timestamp"
             ].lt(horizon_timestamp)
