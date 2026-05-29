@@ -45,10 +45,15 @@ def get_policy_results_dir(args) -> str:
 
     if args.mode in ROLLOUT_MODES:
         deallocation_str, reweighting_str = get_rollout_variant_strings(args.mode)
+        rollout_suffix = f"_{deallocation_str}_{reweighting_str}"
+        if str(args.policy_name).endswith(rollout_suffix):
+            return f"results/policies/{args.policy_name}"
         rollout_name = "adaptive_rollout"
         if getattr(args, "include_future_scheduled_requests", False):
             rollout_name += "_future_scheduled"
-        return f"results/policies/{rollout_name}_{deallocation_str}_{reweighting_str}"
+        if getattr(args, "adaptive_rollout_candidate_limit", None) == 0:
+            rollout_name += "_uncapped"
+        return f"results/policies/{rollout_name}{rollout_suffix}"
 
     return f"results/policies/{args.policy_name}"
 

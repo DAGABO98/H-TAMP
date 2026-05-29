@@ -1,5 +1,4 @@
 import argparse
-import os
 import re
 import traceback
 import numpy as np
@@ -68,6 +67,16 @@ FUTURE_SCHEDULED_ROLLOUT_POLICIES = [
     for suffix in ROLLOUT_VARIANT_SUFFIXES
 ]
 
+UNCAPPED_ROLLOUT_POLICIES = [
+    f"adaptive_rollout_uncapped_{suffix}"
+    for suffix in ROLLOUT_VARIANT_SUFFIXES
+]
+
+FUTURE_SCHEDULED_UNCAPPED_ROLLOUT_POLICIES = [
+    f"adaptive_rollout_future_scheduled_uncapped_{suffix}"
+    for suffix in ROLLOUT_VARIANT_SUFFIXES
+]
+
 
 class AssignmentResultsPlotter:
     """
@@ -98,25 +107,45 @@ class AssignmentResultsPlotter:
         self.include_future_scheduled_requests = include_future_scheduled_requests
         self.rollout_policies = list(ROLLOUT_POLICIES)
         self.future_scheduled_rollout_policies = list(FUTURE_SCHEDULED_ROLLOUT_POLICIES)
+        self.uncapped_rollout_policies = list(UNCAPPED_ROLLOUT_POLICIES)
+        self.future_scheduled_uncapped_rollout_policies = list(FUTURE_SCHEDULED_UNCAPPED_ROLLOUT_POLICIES)
         self.selected_rollout_policies = (
             self.future_scheduled_rollout_policies
             if self.include_future_scheduled_requests
             else self.rollout_policies
+        )
+        self.selected_uncapped_rollout_policies = (
+            self.future_scheduled_uncapped_rollout_policies
+            if self.include_future_scheduled_requests
+            else self.uncapped_rollout_policies
         )
         selected_ropt_rwt = (
             "adaptive_rollout_future_scheduled_ropt_rwt"
             if self.include_future_scheduled_requests
             else "adaptive_rollout_ropt_rwt"
         )
-        self.main_comparison_policies = BASELINE_POLICIES + [BASE_POLICY, selected_ropt_rwt]
-        self.all_rollout_ablation_policies = [BASE_POLICY] + self.rollout_policies + self.future_scheduled_rollout_policies
-        self.selected_rollout_ablation_policies = list(self.selected_rollout_policies)
+        selected_uncapped_ropt_rwt = (
+            "adaptive_rollout_future_scheduled_uncapped_ropt_rwt"
+            if self.include_future_scheduled_requests
+            else "adaptive_rollout_uncapped_ropt_rwt"
+        )
+        self.main_comparison_policies = BASELINE_POLICIES + [BASE_POLICY, selected_ropt_rwt, selected_uncapped_ropt_rwt]
+        self.all_rollout_ablation_policies = (
+            [BASE_POLICY]
+            + self.rollout_policies
+            + self.future_scheduled_rollout_policies
+            + self.uncapped_rollout_policies
+            + self.future_scheduled_uncapped_rollout_policies
+        )
+        self.selected_rollout_ablation_policies = list(self.selected_rollout_policies) + list(self.selected_uncapped_rollout_policies)
 
         self.policy_order = BASELINE_POLICIES + [
                              BASE_POLICY,
                              "heuristic_rollout_ropt_rwt",
                              *self.rollout_policies,
-                             *self.future_scheduled_rollout_policies,]
+                             *self.future_scheduled_rollout_policies,
+                             *self.uncapped_rollout_policies,
+                             *self.future_scheduled_uncapped_rollout_policies,]
 
         self.baseline_colors = {"human_team": "#7f0000",
                                 "fleet_manager": "#b30000",
@@ -137,7 +166,15 @@ class AssignmentResultsPlotter:
                                     "adaptive_rollout_future_scheduled_nopt_norwt": "#bcbddc",
                                     "adaptive_rollout_future_scheduled_ropt_norwt": "#9e9ac8",
                                     "adaptive_rollout_future_scheduled_nopt_rwt": "#756bb1",
-                                    "adaptive_rollout_future_scheduled_ropt_rwt": "#54278f"}
+                                    "adaptive_rollout_future_scheduled_ropt_rwt": "#54278f",
+                                    "adaptive_rollout_uncapped_nopt_norwt": "#9ecae1",
+                                    "adaptive_rollout_uncapped_ropt_norwt": "#6baed6",
+                                    "adaptive_rollout_uncapped_nopt_rwt": "#3182bd",
+                                    "adaptive_rollout_uncapped_ropt_rwt": "#08519c",
+                                    "adaptive_rollout_future_scheduled_uncapped_nopt_norwt": "#fdd0a2",
+                                    "adaptive_rollout_future_scheduled_uncapped_ropt_norwt": "#fdae6b",
+                                    "adaptive_rollout_future_scheduled_uncapped_nopt_rwt": "#e6550d",
+                                    "adaptive_rollout_future_scheduled_uncapped_ropt_rwt": "#a63603"}
         
         self.ablation_study_colors = {"base_policy": "#d9f0a3",
                                      "adaptive_rollout_nopt_norwt": "#addd8e",
@@ -147,7 +184,15 @@ class AssignmentResultsPlotter:
                                      "adaptive_rollout_future_scheduled_nopt_norwt": "#bcbddc",
                                      "adaptive_rollout_future_scheduled_ropt_norwt": "#9e9ac8",
                                      "adaptive_rollout_future_scheduled_nopt_rwt": "#756bb1",
-                                     "adaptive_rollout_future_scheduled_ropt_rwt": "#54278f"}
+                                     "adaptive_rollout_future_scheduled_ropt_rwt": "#54278f",
+                                     "adaptive_rollout_uncapped_nopt_norwt": "#9ecae1",
+                                     "adaptive_rollout_uncapped_ropt_norwt": "#6baed6",
+                                     "adaptive_rollout_uncapped_nopt_rwt": "#3182bd",
+                                     "adaptive_rollout_uncapped_ropt_rwt": "#08519c",
+                                     "adaptive_rollout_future_scheduled_uncapped_nopt_norwt": "#fdd0a2",
+                                     "adaptive_rollout_future_scheduled_uncapped_ropt_norwt": "#fdae6b",
+                                     "adaptive_rollout_future_scheduled_uncapped_nopt_rwt": "#e6550d",
+                                     "adaptive_rollout_future_scheduled_uncapped_ropt_rwt": "#a63603"}
         
         if week_buckets is None:
             week_buckets = DEFAULT_WEEK_BUCKETS
@@ -937,7 +982,7 @@ def main():
     parser.add_argument("--file_glob", type=str, default="*.out", help="Glob pattern to find log files within each policy's log folder.")
     parser.add_argument("--type_col", type=str, default="request_type", help="Column name in CSVs that indicates request type.")
     parser.add_argument("--daily_stat", type=str, default="p95", choices=["mean", "p95"], help="Whether to compute daily mean or p95 wait times for boxplots.")
-    parser.add_argument("--include_future_scheduled_requests", action="store_true", help="Use future-scheduled adaptive rollout variants in the main comparison and selected four-variant ablation plots.")
+    parser.add_argument("--include_future_scheduled_requests", action="store_true", help="Use future-scheduled adaptive rollout variants in the main comparison and selected capped/uncapped ablation plots.")
     args = parser.parse_args()
 
     plotter = AssignmentResultsPlotter(

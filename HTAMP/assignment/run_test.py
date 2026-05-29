@@ -177,6 +177,7 @@ class PolicySpec:
     allow_deallocation: bool = False
     allow_reweighting: bool = False
     include_future_scheduled_requests: bool = False
+    adaptive_rollout_candidate_limit: Optional[int] = None
     extra_args: tuple[str, ...] = ()  # any extra CLI args you want to add
 
 
@@ -197,6 +198,11 @@ POLICIES: list[PolicySpec] = [
     PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False, include_future_scheduled_requests=True),
     PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True, include_future_scheduled_requests=True),
     PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=False, include_future_scheduled_requests=True),
+
+    PolicySpec("adaptive_rollout", mode=5, allow_deallocation=True, allow_reweighting=True, include_future_scheduled_requests=True, adaptive_rollout_candidate_limit=0),
+    PolicySpec("adaptive_rollout", mode=6, allow_deallocation=True, allow_reweighting=False, include_future_scheduled_requests=True, adaptive_rollout_candidate_limit=0),
+    PolicySpec("adaptive_rollout", mode=7, allow_deallocation=False, allow_reweighting=True, include_future_scheduled_requests=True, adaptive_rollout_candidate_limit=0),
+    PolicySpec("adaptive_rollout", mode=8, allow_deallocation=False, allow_reweighting=False, include_future_scheduled_requests=True, adaptive_rollout_candidate_limit=0),
 ]
 
 
@@ -247,6 +253,9 @@ def policy_run_tag(p: PolicySpec) -> str:
 
     if p.include_future_scheduled_requests:
         tag += "_future_scheduled"
+
+    if p.mode in ROLLOUT_MODES and p.adaptive_rollout_candidate_limit == 0:
+        tag += "_uncapped"
 
     if p.allow_deallocation:
         tag += "_ropt"
@@ -304,15 +313,20 @@ def prediction_weight_args() -> list[str]:
     return args
 
 
-def adaptive_rollout_performance_args() -> list[str]:
+def adaptive_rollout_performance_args(p: PolicySpec) -> list[str]:
+    candidate_limit = (
+        p.adaptive_rollout_candidate_limit
+        if p.adaptive_rollout_candidate_limit is not None
+        else ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT
+    )
     return [
         "--prediction_rollout_sample_limit", str(PREDICTION_ROLLOUT_SAMPLE_LIMIT),
-        "--adaptive_rollout_candidate_limit", str(ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT),
+        "--adaptive_rollout_candidate_limit", str(candidate_limit),
     ]
 
 
 def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
-    policy_name = policy_run_tag(p) if p.include_future_scheduled_requests else p.policy_name
+    policy_name = policy_run_tag(p) if p.mode in ROLLOUT_MODES else p.policy_name
     cmd = BASE + [
         "--mode", str(p.mode),
         "--policy_name", policy_name,
@@ -329,7 +343,7 @@ def build_cmd(day: dt.date, floor: int, p: PolicySpec) -> list[str]:
         cmd += ["--include_future_scheduled_requests"]
     if p.mode in ROLLOUT_MODES:
         cmd += prediction_weight_args()
-        cmd += adaptive_rollout_performance_args()
+        cmd += adaptive_rollout_performance_args(p)
     if p.extra_args:
         cmd += list(p.extra_args)
     return cmd
