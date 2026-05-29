@@ -189,34 +189,39 @@ class RolloutHelpers:
                                     initial_time: pd.Timestamp,
                                     all_task_properties:AllTaskProperties,
                                     traversal_graph_generator: TraversalGraphGenerator) -> RequestsLists:
-        if hour <= end_hour:
-            original_time_signal = TimeSignal(year=date_stamp.year,
-                                    month=date_stamp.month,
-                                    day=date_stamp.day,
-                                    hour=hour,
-                                    minute=minute)
-            
-            shifted_time_stamp = original_time_signal.time_stamp + pd.Timedelta(minutes=look_ahead_minutes)
-            if shifted_time_stamp.day != date_stamp.day:
-                return None
-            else:
-                if shifted_time_stamp.hour == end_hour and 60 - shifted_time_stamp.minute < look_ahead_minutes:
-                    return None
-                else:
-                    shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
-                                                 month=shifted_time_stamp.month,
-                                                 day=shifted_time_stamp.day,
-                                                 hour=shifted_time_stamp.hour,
-                                                 minute=shifted_time_stamp.minute)
-                    scheduled_requests_lists: RequestsLists = planning_request_handler.get_all_requests_for_time_signal(time_signal=shifted_time_signal,
-                                                                                                    initial_time=initial_time,
-                                                                                                    all_task_properties=all_task_properties,
-                                                                                                    look_ahead_minutes=look_ahead_minutes,
-                                                                                                    traversal_graph_generator=traversal_graph_generator)
-
-                return scheduled_requests_lists
-        else:
+        original_time_signal = TimeSignal(year=date_stamp.year,
+                                month=date_stamp.month,
+                                day=date_stamp.day,
+                                hour=hour,
+                                minute=minute)
+        original_time_stamp = original_time_signal.time_stamp
+        planning_horizon_end = pd.Timestamp(date_stamp).normalize() + pd.Timedelta(hours=int(end_hour))
+        if original_time_stamp >= planning_horizon_end:
             return None
+
+        shifted_time_stamp = original_time_stamp + pd.Timedelta(minutes=look_ahead_minutes)
+        if shifted_time_stamp >= planning_horizon_end:
+            return None
+
+        clamped_look_ahead_minutes = int(
+            (planning_horizon_end - shifted_time_stamp).total_seconds() // 60
+        )
+        clamped_look_ahead_minutes = min(int(look_ahead_minutes), clamped_look_ahead_minutes)
+        if clamped_look_ahead_minutes <= 0:
+            return None
+
+        shifted_time_signal = TimeSignal(year=shifted_time_stamp.year,
+                                         month=shifted_time_stamp.month,
+                                         day=shifted_time_stamp.day,
+                                         hour=shifted_time_stamp.hour,
+                                         minute=shifted_time_stamp.minute)
+        scheduled_requests_lists: RequestsLists = planning_request_handler.get_all_requests_for_time_signal(time_signal=shifted_time_signal,
+                                                                                        initial_time=initial_time,
+                                                                                        all_task_properties=all_task_properties,
+                                                                                        look_ahead_minutes=clamped_look_ahead_minutes,
+                                                                                        traversal_graph_generator=traversal_graph_generator)
+
+        return scheduled_requests_lists
     
     @staticmethod
     def _estimate_heuristic_cost_to_fulfill_request(assigned_requests: dict[int, list[str]],
