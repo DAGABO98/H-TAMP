@@ -895,6 +895,14 @@ class AdaptiveRollout:
             debug=debug,
         )
 
+        available_robots = self._get_available_robots(state=state,
+                                                      min_pickup_deadline=min_pickup_deadline,
+                                                      motion_planner=motion_planner,
+                                                      traversal_graph_generator=traversal_graph_generator,
+                                                      debug=debug)
+        if not available_robots:
+            return
+
         future_scheduled_requests_lists = None
         prediction_match_requests_lists = requests_lists
         if self.include_future_scheduled_requests:
@@ -922,25 +930,18 @@ class AdaptiveRollout:
             debug=debug,
         )
 
-        available_robots = self._get_available_robots(state=state,
-                                                      min_pickup_deadline=min_pickup_deadline,
-                                                      motion_planner=motion_planner,
-                                                      traversal_graph_generator=traversal_graph_generator,
-                                                      debug=debug)
-        
-        if available_robots:
-            Helpers.extract_node_reservations_from_state(state=state,
-                                                         assigned_requests=self.assigned_requests,
-                                                        node_reservation_table=self.node_reservation_table)
+        Helpers.extract_node_reservations_from_state(state=state,
+                                                     assigned_requests=self.assigned_requests,
+                                                     node_reservation_table=self.node_reservation_table)
 
-            # Assignment logic for robots
-            self._assign_requests_to_robots(state=state,
-                                            available_robots=available_robots,
-                                            motion_planner=motion_planner,
-                                            traversal_graph_generator=traversal_graph_generator,
-                                            prediction_sample_sets=prediction_sample_sets,
-                                            future_scheduled_requests_lists=future_scheduled_requests_lists,
-                                            hour=hour,
-                                            minute=minute,
-                                            look_ahead_minutes=look_ahead_minutes,
-                                            debug=debug)
+        # Assignment logic for robots
+        self._assign_requests_to_robots(state=state,
+                                        available_robots=available_robots,
+                                        motion_planner=motion_planner,
+                                        traversal_graph_generator=traversal_graph_generator,
+                                        prediction_sample_sets=prediction_sample_sets,
+                                        future_scheduled_requests_lists=future_scheduled_requests_lists,
+                                        hour=hour,
+                                        minute=minute,
+                                        look_ahead_minutes=look_ahead_minutes,
+                                        debug=debug)
