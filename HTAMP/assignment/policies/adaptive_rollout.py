@@ -46,7 +46,7 @@ class AdaptiveRollout:
                  prediction_weight_patient_credibility_prior: Optional[float] = None,
                  include_future_scheduled_requests: bool = False,
                  prediction_rollout_sample_limit: Optional[int] = 20,
-                 adaptive_rollout_candidate_limit: Optional[int] = 10):
+                 adaptive_rollout_candidate_limit: Optional[int] = 25):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
