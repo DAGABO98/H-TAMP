@@ -193,7 +193,9 @@ class AssignmentHelpers:
                                 motion_planner: MotionPlanner,
                                 traversal_graph_generator: TraversalGraphGenerator,
                                 debug: bool,
-                                adjust_goal_indices_for_idle_motion: bool = False):
+                                adjust_goal_indices_for_idle_motion: bool = True):
+        # assign_robot_path prepends the current path segment when an unassigned
+        # robot is already moving, so planned goal indices need the same offset.
         planned_goal_index_offset = (
             1
             if adjust_goal_indices_for_idle_motion
