@@ -35,6 +35,29 @@ class RolloutHelpers:
                         break
 
     @staticmethod
+    def _requests_lists_has_requests(requests_lists: Optional[RequestsLists]) -> bool:
+        if requests_lists is None:
+            return False
+        return any(
+            bool(getattr(requests_lists, data_field))
+            for data_field in requests_lists.__dataclass_fields__.keys()
+        )
+
+    @classmethod
+    def _prediction_sample_set_has_requests(cls, prediction_sample_set: dict[float, RequestsLists]) -> bool:
+        return any(
+            cls._requests_lists_has_requests(requests_lists)
+            for requests_lists in prediction_sample_set.values()
+        )
+
+    @classmethod
+    def _prediction_sample_sets_have_requests(cls, prediction_sample_sets: list[dict[float, RequestsLists]]) -> bool:
+        return any(
+            cls._prediction_sample_set_has_requests(prediction_sample_set)
+            for prediction_sample_set in prediction_sample_sets
+        )
+
+    @staticmethod
     def _extract_cost_for_assigned_requests(
         state: PlanningState | SimulatedState,
         rejection_penalty: float,
@@ -394,7 +417,7 @@ class RolloutHelpers:
         prediction_request_weight_fn: Optional[Callable[[TaskRequest], float]] = None,
         debug: bool = False,
     ) -> Tuple[float, float]:
-        if not prediction_sample_sets:
+        if not prediction_sample_sets or not RolloutHelpers._prediction_sample_sets_have_requests(prediction_sample_sets):
             cost_estimator.reset()
             return RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
                 cost_estimator=cost_estimator,
@@ -419,7 +442,7 @@ class RolloutHelpers:
             sample_node_reservation_table = copy.deepcopy(current_node_reservation_table)
             current_predicted_requests_dict, future_predicted_requests_dict = (
                 RolloutHelpers._split_predicted_requests_dict(
-                    predicted_requests_dict=copy.deepcopy(prediction_sample_set),
+                    predicted_requests_dict=prediction_sample_set,
                     look_ahead_minutes=look_ahead_minutes,
                     current_time=current_state.simulator_time,
                 )
@@ -428,14 +451,14 @@ class RolloutHelpers:
             unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
                 cost_estimator=cost_estimator,
                 current_state=sample_state,
-                requests_lists=copy.deepcopy(requests_lists),
+                requests_lists=requests_lists,
                 current_node_reservation_table=sample_node_reservation_table,
                 current_predicted_requests_dict=current_predicted_requests_dict,
-                future_scheduled_requests_lists=copy.deepcopy(future_scheduled_requests_lists),
+                future_scheduled_requests_lists=future_scheduled_requests_lists,
                 future_predicted_requests_dict=future_predicted_requests_dict,
                 motion_planner=sample_motion_planner,
                 traversal_graph_generator=traversal_graph_generator,
-                blocked_robots=copy.deepcopy(blocked_robots),
+                blocked_robots=blocked_robots,
                 prediction_request_weight_fn=prediction_request_weight_fn,
                 debug=debug,
             )

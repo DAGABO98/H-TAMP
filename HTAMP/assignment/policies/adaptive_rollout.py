@@ -348,14 +348,14 @@ class AdaptiveRollout:
         weighted_raw_cost, weighted_truncated_cost = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
             cost_estimator=self.cost_estimator,
             current_state=current_state.fork(),
-            requests_lists=copy.deepcopy(requests_lists),
+            requests_lists=requests_lists,
             current_node_reservation_table=copy.deepcopy(current_node_reservation_table),
             prediction_sample_sets=prediction_sample_sets,
             motion_planner=motion_planner.fork_with_reservations(),
             traversal_graph_generator=traversal_graph_generator,
             look_ahead_minutes=look_ahead_minutes,
-            blocked_robots=copy.deepcopy(blocked_robots),
-            future_scheduled_requests_lists=copy.deepcopy(future_scheduled_requests_lists),
+            blocked_robots=blocked_robots,
+            future_scheduled_requests_lists=future_scheduled_requests_lists,
             prediction_request_weight_fn=prediction_request_weight_fn,
             debug=False,
         )
@@ -365,14 +365,14 @@ class AdaptiveRollout:
             unweighted_costs = RolloutHelpers._estimate_average_future_costs_for_prediction_sample_sets(
                 cost_estimator=self.cost_estimator,
                 current_state=current_state.fork(),
-                requests_lists=copy.deepcopy(requests_lists),
+                requests_lists=requests_lists,
                 current_node_reservation_table=copy.deepcopy(current_node_reservation_table),
                 prediction_sample_sets=prediction_sample_sets,
                 motion_planner=motion_planner.fork_with_reservations(),
                 traversal_graph_generator=traversal_graph_generator,
                 look_ahead_minutes=look_ahead_minutes,
-                blocked_robots=copy.deepcopy(blocked_robots),
-                future_scheduled_requests_lists=copy.deepcopy(future_scheduled_requests_lists),
+                blocked_robots=blocked_robots,
+                future_scheduled_requests_lists=future_scheduled_requests_lists,
                 prediction_request_weight_fn=None,
                 debug=False,
             )
@@ -755,12 +755,16 @@ class AdaptiveRollout:
                                    hour: int,
                                    minute: int,
                                    look_ahead_minutes: int,
-                                   debug: bool):
+                                   debug: bool,
+                                   potential_assignments: Optional[list[tuple[object, float]]] = None):
         
-        potential_assignments, new_state = self._determine_potential_assignments_for_robot(robot_id=robot_id,
-                                                                                           state=state,
-                                                                                           motion_planner=motion_planner,
-                                                                                           traversal_graph_generator=traversal_graph_generator)
+        if potential_assignments is None:
+            potential_assignments, new_state = self._determine_potential_assignments_for_robot(robot_id=robot_id,
+                                                                                               state=state,
+                                                                                               motion_planner=motion_planner,
+                                                                                               traversal_graph_generator=traversal_graph_generator)
+        else:
+            new_state = state
         if len(potential_assignments) == 0:
             if state.simulator_config.robot_profiles[robot_id].robot_type == "delivery":
                 if self.unassigned_requests_dict.medication:
@@ -789,22 +793,80 @@ class AdaptiveRollout:
             assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal = path_results
             
             return assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal, new_state
-        
+
+    def _extract_rollout_prediction_context(
+        self,
+        *,
+        state: PlanningState,
+        requests_lists: Optional[RequestsLists],
+        traversal_graph_generator: TraversalGraphGenerator,
+        hour: int,
+        minute: int,
+        look_ahead_minutes: int,
+        debug: bool,
+    ) -> tuple[list[dict[float, RequestsLists]], Optional[RequestsLists]]:
+        future_scheduled_requests_lists = None
+        prediction_match_requests_lists = requests_lists
+        if self.include_future_scheduled_requests:
+            future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(
+                date_stamp=self.date_stamp,
+                hour=hour,
+                minute=minute,
+                look_ahead_minutes=look_ahead_minutes,
+                end_hour=self.end_hour,
+                planning_request_handler=self.planning_request_handler,
+                initial_time=self.initial_time,
+                all_task_properties=self.all_task_properties,
+                traversal_graph_generator=traversal_graph_generator,
+            )
+            prediction_match_requests_lists = RolloutHelpers._combine_requests_lists(
+                requests_lists,
+                future_scheduled_requests_lists,
+            )
+
+        prediction_sample_sets = self._extract_prediction_sample_sets(
+            state=state,
+            real_requests_lists=prediction_match_requests_lists,
+            traversal_graph_generator=traversal_graph_generator,
+            remove_real_matches=True,
+            debug=debug,
+        )
+        return prediction_sample_sets, future_scheduled_requests_lists
 
     def _assign_requests_to_robots(self,
                                   state: PlanningState,
                                   available_robots: set[int],
                                   motion_planner: MotionPlanner,
                                   traversal_graph_generator: TraversalGraphGenerator,
-                                  prediction_sample_sets: list[dict[float, RequestsLists]],
-                                  future_scheduled_requests_lists: Optional[RequestsLists],
+                                  requests_lists: Optional[RequestsLists],
                                   hour: int,
                                   minute: int,
                                   look_ahead_minutes: int,
                                   debug: bool):
         
+        prediction_context = None
 
         for robot_id in available_robots:
+            potential_assignments, _ = self._determine_potential_assignments_for_robot(robot_id=robot_id,
+                                                                                       state=state,
+                                                                                       motion_planner=motion_planner,
+                                                                                       traversal_graph_generator=traversal_graph_generator)
+            if potential_assignments:
+                if prediction_context is None:
+                    prediction_context = self._extract_rollout_prediction_context(
+                        state=state,
+                        requests_lists=requests_lists,
+                        traversal_graph_generator=traversal_graph_generator,
+                        hour=hour,
+                        minute=minute,
+                        look_ahead_minutes=look_ahead_minutes,
+                        debug=debug,
+                    )
+                prediction_sample_sets, future_scheduled_requests_lists = prediction_context
+            else:
+                prediction_sample_sets = []
+                future_scheduled_requests_lists = None
+
             path_results = self._generate_robot_assignment(robot_id=robot_id,
                                                             state=state,
                                                             motion_planner=motion_planner,
@@ -814,7 +876,8 @@ class AdaptiveRollout:
                                                             hour=hour,
                                                             minute=minute,
                                                             look_ahead_minutes=look_ahead_minutes,
-                                                            debug=debug)
+                                                            debug=debug,
+                                                            potential_assignments=potential_assignments)
             assigned_request_id, planned_path, planned_goal_indices, planned_time_to_reach_last_goal, new_state = path_results
             if assigned_request_id is not None:
                 if assigned_request_id == -1:
@@ -903,33 +966,6 @@ class AdaptiveRollout:
         if not available_robots:
             return
 
-        future_scheduled_requests_lists = None
-        prediction_match_requests_lists = requests_lists
-        if self.include_future_scheduled_requests:
-            future_scheduled_requests_lists = RolloutHelpers._extract_scheduled_requests(
-                date_stamp=self.date_stamp,
-                hour=hour,
-                minute=minute,
-                look_ahead_minutes=look_ahead_minutes,
-                end_hour=self.end_hour,
-                planning_request_handler=self.planning_request_handler,
-                initial_time=self.initial_time,
-                all_task_properties=self.all_task_properties,
-                traversal_graph_generator=traversal_graph_generator,
-            )
-            prediction_match_requests_lists = RolloutHelpers._combine_requests_lists(
-                requests_lists,
-                future_scheduled_requests_lists,
-            )
-
-        prediction_sample_sets = self._extract_prediction_sample_sets(
-            state=state,
-            real_requests_lists=prediction_match_requests_lists,
-            traversal_graph_generator=traversal_graph_generator,
-            remove_real_matches=True,
-            debug=debug,
-        )
-
         Helpers.extract_node_reservations_from_state(state=state,
                                                      assigned_requests=self.assigned_requests,
                                                      node_reservation_table=self.node_reservation_table)
@@ -939,8 +975,7 @@ class AdaptiveRollout:
                                         available_robots=available_robots,
                                         motion_planner=motion_planner,
                                         traversal_graph_generator=traversal_graph_generator,
-                                        prediction_sample_sets=prediction_sample_sets,
-                                        future_scheduled_requests_lists=future_scheduled_requests_lists,
+                                        requests_lists=requests_lists,
                                         hour=hour,
                                         minute=minute,
                                         look_ahead_minutes=look_ahead_minutes,
