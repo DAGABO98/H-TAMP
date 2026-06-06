@@ -558,21 +558,16 @@ class AdaptiveRollout:
         new_real_requests = RolloutHelpers._requests_lists_has_requests(requests_lists)
         newly_available_robots = set(available_robots) - self._last_available_robots
         pending_requests_changed = pending_request_ids != self._last_pending_request_ids
-        retry_due = (
-            self._last_rollout_decision_time is None
-            or current_time - self._last_rollout_decision_time >= self.adaptive_rollout_decision_interval_seconds
-        )
         should_run = bool(
             new_real_requests
             or newly_available_robots
             or pending_requests_changed
-            or retry_due
         )
 
         if debug and not should_run:
             print(
                 "Skipping adaptive rollout decision: no new request, "
-                "newly available robot, pending-request change, or retry interval."
+                "newly available robot, pending-request change"
             )
 
         self._last_available_robots = set(available_robots)
