@@ -514,7 +514,7 @@ class AdaptiveRollout:
         trigger_reassignment = deallocate_flag
 
         if min_pickup_deadline != float('inf'):
-                self.blocked_robots = set()
+            self.blocked_robots = set()
 
         if trigger_reassignment and self.allow_deallocation:
             self._deallocate_requests(state=state,
@@ -539,25 +539,6 @@ class AdaptiveRollout:
 
     def _pending_request_ids(self) -> set[str]:
         return set(self.unassigned_requests_dict.monitoring) | set(self.unassigned_requests_dict.medication)
-
-    def _reconsider_blocked_robots_if_due(self, state: PlanningState, debug: bool) -> None:
-        if not self.blocked_robots or not self._pending_request_ids():
-            return
-
-        current_time = float(state.simulator_time)
-        retry_due = (
-            self._last_rollout_decision_time is None
-            or current_time - self._last_rollout_decision_time >= self.adaptive_rollout_decision_interval_seconds
-        )
-        if not retry_due:
-            return
-
-        if debug:
-            print(
-                "Reconsidering blocked adaptive-rollout robot(s) after "
-                f"{self.adaptive_rollout_decision_interval_seconds:.1f}s retry interval."
-            )
-        self.blocked_robots = set()
 
     def _should_run_rollout_decision(
         self,
@@ -1051,7 +1032,6 @@ class AdaptiveRollout:
             traversal_graph_generator=traversal_graph_generator,
             debug=debug,
         )
-        self._reconsider_blocked_robots_if_due(state=state, debug=debug)
 
         available_robots = self._get_available_robots(state=state,
                                                       min_pickup_deadline=min_pickup_deadline,
