@@ -46,7 +46,8 @@ class AdaptiveRollout:
                  prediction_weight_patient_credibility_prior: Optional[float] = None,
                  include_future_scheduled_requests: bool = False,
                  prediction_rollout_sample_limit: Optional[int] = 20,
-                 adaptive_rollout_candidate_limit: Optional[int] = 25):
+                 adaptive_rollout_candidate_limit: Optional[int] = 25,
+                 adaptive_rollout_decision_interval_seconds: float = 10.0):
         self.unassigned_requests_dict = RequestsDict()
         self.dummy_delivery_robot_profile = RobotProfile(radius=0.10, speed=0.20, robot_id=-1, robot_type="delivery")
         self.assigned_requests:  dict[int, list[str]]  = {}
@@ -93,6 +94,13 @@ class AdaptiveRollout:
             if adaptive_rollout_candidate_limit is not None and int(adaptive_rollout_candidate_limit) > 0
             else None
         )
+        self.adaptive_rollout_decision_interval_seconds = max(
+            float(adaptive_rollout_decision_interval_seconds),
+            0.0,
+        )
+        self._last_rollout_decision_time: Optional[float] = None
+        self._last_available_robots: set[int] = set()
+        self._last_pending_request_ids: set[str] = set()
         prediction_weight_config_kwargs = {
             "alpha_over": prediction_weight_alpha_over,
             "alpha_time": prediction_weight_alpha_time,
@@ -337,11 +345,13 @@ class AdaptiveRollout:
         requests_lists: Optional[RequestsLists],
         current_node_reservation_table: Optional[NodeReservationTable],
         prediction_sample_sets: list[dict[float, RequestsLists]],
+        split_prediction_sample_sets: list[tuple[dict[float, RequestsLists], dict[float, RequestsLists]]],
         motion_planner: MotionPlanner,
         traversal_graph_generator: TraversalGraphGenerator,
         look_ahead_minutes: int,
         blocked_robots: Optional[set[int]],
         future_scheduled_requests_lists: Optional[RequestsLists],
+        best_truncated_cost: float,
         debug: bool,
     ) -> tuple[float, float, Optional[tuple[float, float]]]:
         prediction_request_weight_fn = self._prediction_request_weight if self.allow_reweighting else None
@@ -354,9 +364,11 @@ class AdaptiveRollout:
             motion_planner=motion_planner.fork_with_reservations(),
             traversal_graph_generator=traversal_graph_generator,
             look_ahead_minutes=look_ahead_minutes,
+            split_prediction_sample_sets=split_prediction_sample_sets,
             blocked_robots=blocked_robots,
             future_scheduled_requests_lists=future_scheduled_requests_lists,
             prediction_request_weight_fn=prediction_request_weight_fn,
+            early_stop_truncated_cost=None if debug else best_truncated_cost,
             debug=False,
         )
 
@@ -371,6 +383,7 @@ class AdaptiveRollout:
                 motion_planner=motion_planner.fork_with_reservations(),
                 traversal_graph_generator=traversal_graph_generator,
                 look_ahead_minutes=look_ahead_minutes,
+                split_prediction_sample_sets=split_prediction_sample_sets,
                 blocked_robots=blocked_robots,
                 future_scheduled_requests_lists=future_scheduled_requests_lists,
                 prediction_request_weight_fn=None,
@@ -524,6 +537,69 @@ class AdaptiveRollout:
 
         return available_robots
 
+    def _pending_request_ids(self) -> set[str]:
+        return set(self.unassigned_requests_dict.monitoring) | set(self.unassigned_requests_dict.medication)
+
+    def _reconsider_blocked_robots_if_due(self, state: PlanningState, debug: bool) -> None:
+        if not self.blocked_robots or not self._pending_request_ids():
+            return
+
+        current_time = float(state.simulator_time)
+        retry_due = (
+            self._last_rollout_decision_time is None
+            or current_time - self._last_rollout_decision_time >= self.adaptive_rollout_decision_interval_seconds
+        )
+        if not retry_due:
+            return
+
+        if debug:
+            print(
+                "Reconsidering blocked adaptive-rollout robot(s) after "
+                f"{self.adaptive_rollout_decision_interval_seconds:.1f}s retry interval."
+            )
+        self.blocked_robots = set()
+
+    def _should_run_rollout_decision(
+        self,
+        *,
+        state: PlanningState,
+        requests_lists: Optional[RequestsLists],
+        available_robots: set[int],
+        debug: bool,
+    ) -> bool:
+        pending_request_ids = self._pending_request_ids()
+        if not pending_request_ids:
+            self._last_available_robots = set(available_robots)
+            self._last_pending_request_ids = set()
+            return False
+
+        current_time = float(state.simulator_time)
+        new_real_requests = RolloutHelpers._requests_lists_has_requests(requests_lists)
+        newly_available_robots = set(available_robots) - self._last_available_robots
+        pending_requests_changed = pending_request_ids != self._last_pending_request_ids
+        retry_due = (
+            self._last_rollout_decision_time is None
+            or current_time - self._last_rollout_decision_time >= self.adaptive_rollout_decision_interval_seconds
+        )
+        should_run = bool(
+            new_real_requests
+            or newly_available_robots
+            or pending_requests_changed
+            or retry_due
+        )
+
+        if debug and not should_run:
+            print(
+                "Skipping adaptive rollout decision: no new request, "
+                "newly available robot, pending-request change, or retry interval."
+            )
+
+        self._last_available_robots = set(available_robots)
+        self._last_pending_request_ids = set(pending_request_ids)
+        if should_run:
+            self._last_rollout_decision_time = current_time
+        return should_run
+
     
     def _convert_requests_dict_to_requests_lists(self, state: PlanningState):
         requests_lists = RequestsLists(blood_pressure_requests=[], 
@@ -598,6 +674,7 @@ class AdaptiveRollout:
                                             requests_lists: RequestsLists,
                                             potential_assignments: list[int],
                                             prediction_sample_sets: list[dict[float, RequestsLists]],
+                                            split_prediction_sample_sets: list[tuple[dict[float, RequestsLists], dict[float, RequestsLists]]],
                                             future_scheduled_requests_lists: Optional[RequestsLists],
                                             state: PlanningState,
                                             motion_planner: MotionPlanner,
@@ -637,11 +714,13 @@ class AdaptiveRollout:
                     requests_lists=current_requests_lists,
                     current_node_reservation_table=current_node_reservation_table,
                     prediction_sample_sets=prediction_sample_sets,
+                    split_prediction_sample_sets=split_prediction_sample_sets,
                     motion_planner=current_motion_planner,
                     traversal_graph_generator=traversal_graph_generator,
                     look_ahead_minutes=look_ahead_minutes,
                     blocked_robots=current_blocked_robots,
                     future_scheduled_requests_lists=future_scheduled_requests_lists,
+                    best_truncated_cost=min_path_cost,
                     debug=debug,
                 )
                 if debug:
@@ -703,11 +782,13 @@ class AdaptiveRollout:
                         requests_lists=current_requests_lists,
                         current_node_reservation_table=current_node_reservation_table,
                         prediction_sample_sets=prediction_sample_sets,
+                        split_prediction_sample_sets=split_prediction_sample_sets,
                         motion_planner=current_motion_planner,
                         traversal_graph_generator=traversal_graph_generator,
                         look_ahead_minutes=look_ahead_minutes,
                         blocked_robots=current_blocked_robots,
                         future_scheduled_requests_lists=future_scheduled_requests_lists,
+                        best_truncated_cost=min_path_cost,
                         debug=debug,
                     )
                     if debug:
@@ -751,6 +832,7 @@ class AdaptiveRollout:
                                    motion_planner: MotionPlanner,
                                    traversal_graph_generator: TraversalGraphGenerator,
                                    prediction_sample_sets: list[dict[float, RequestsLists]],
+                                   split_prediction_sample_sets: list[tuple[dict[float, RequestsLists], dict[float, RequestsLists]]],
                                    future_scheduled_requests_lists: Optional[RequestsLists],
                                    hour: int,
                                    minute: int,
@@ -782,6 +864,7 @@ class AdaptiveRollout:
                                                                 requests_lists=requests_lists,
                                                                 potential_assignments=potential_assignments,
                                                                 prediction_sample_sets=prediction_sample_sets,
+                                                                split_prediction_sample_sets=split_prediction_sample_sets,
                                                                 future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                                 state=new_state,
                                                                 motion_planner=motion_planner,
@@ -804,7 +887,11 @@ class AdaptiveRollout:
         minute: int,
         look_ahead_minutes: int,
         debug: bool,
-    ) -> tuple[list[dict[float, RequestsLists]], Optional[RequestsLists]]:
+    ) -> tuple[
+        list[dict[float, RequestsLists]],
+        list[tuple[dict[float, RequestsLists], dict[float, RequestsLists]]],
+        Optional[RequestsLists],
+    ]:
         future_scheduled_requests_lists = None
         prediction_match_requests_lists = requests_lists
         if self.include_future_scheduled_requests:
@@ -831,7 +918,12 @@ class AdaptiveRollout:
             remove_real_matches=True,
             debug=debug,
         )
-        return prediction_sample_sets, future_scheduled_requests_lists
+        split_prediction_sample_sets = RolloutHelpers._split_prediction_sample_sets(
+            prediction_sample_sets=prediction_sample_sets,
+            look_ahead_minutes=look_ahead_minutes,
+            current_time=state.simulator_time,
+        )
+        return prediction_sample_sets, split_prediction_sample_sets, future_scheduled_requests_lists
 
     def _assign_requests_to_robots(self,
                                   state: PlanningState,
@@ -862,9 +954,10 @@ class AdaptiveRollout:
                         look_ahead_minutes=look_ahead_minutes,
                         debug=debug,
                     )
-                prediction_sample_sets, future_scheduled_requests_lists = prediction_context
+                prediction_sample_sets, split_prediction_sample_sets, future_scheduled_requests_lists = prediction_context
             else:
                 prediction_sample_sets = []
+                split_prediction_sample_sets = []
                 future_scheduled_requests_lists = None
 
             path_results = self._generate_robot_assignment(robot_id=robot_id,
@@ -872,6 +965,7 @@ class AdaptiveRollout:
                                                             motion_planner=motion_planner,
                                                             traversal_graph_generator=traversal_graph_generator,
                                                             prediction_sample_sets=prediction_sample_sets,
+                                                            split_prediction_sample_sets=split_prediction_sample_sets,
                                                             future_scheduled_requests_lists=future_scheduled_requests_lists,
                                                             hour=hour,
                                                             minute=minute,
@@ -957,6 +1051,7 @@ class AdaptiveRollout:
             traversal_graph_generator=traversal_graph_generator,
             debug=debug,
         )
+        self._reconsider_blocked_robots_if_due(state=state, debug=debug)
 
         available_robots = self._get_available_robots(state=state,
                                                       min_pickup_deadline=min_pickup_deadline,
@@ -964,6 +1059,15 @@ class AdaptiveRollout:
                                                       traversal_graph_generator=traversal_graph_generator,
                                                       debug=debug)
         if not available_robots:
+            self._last_available_robots = set()
+            return
+
+        if not self._should_run_rollout_decision(
+            state=state,
+            requests_lists=requests_lists,
+            available_robots=available_robots,
+            debug=debug,
+        ):
             return
 
         Helpers.extract_node_reservations_from_state(state=state,

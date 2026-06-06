@@ -79,6 +79,11 @@ if PREDICTION_ROLLOUT_SAMPLE_LIMIT is None:
 ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT = optional_int_env("HTAMP_ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT")
 if ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT is None:
     ADAPTIVE_ROLLOUT_CANDIDATE_LIMIT = 20
+ADAPTIVE_ROLLOUT_DECISION_INTERVAL_SECONDS = optional_float_env(
+    "HTAMP_ADAPTIVE_ROLLOUT_DECISION_INTERVAL_SECONDS"
+)
+if ADAPTIVE_ROLLOUT_DECISION_INTERVAL_SECONDS is None:
+    ADAPTIVE_ROLLOUT_DECISION_INTERVAL_SECONDS = 10.0
 PREDICTION_CACHE_PATIENT_FILTER_MODE = os.getenv(
     "HTAMP_PREDICTION_CACHE_PATIENT_FILTER_MODE",
     "active_floor",
@@ -317,6 +322,7 @@ def adaptive_rollout_performance_args(p: PolicySpec) -> list[str]:
     return [
         "--prediction_rollout_sample_limit", str(PREDICTION_ROLLOUT_SAMPLE_LIMIT),
         "--adaptive_rollout_candidate_limit", str(candidate_limit),
+        "--adaptive_rollout_decision_interval_seconds", str(ADAPTIVE_ROLLOUT_DECISION_INTERVAL_SECONDS),
     ]
 
 
@@ -401,6 +407,7 @@ def main():
         print("Prediction weight bin minutes:", PREDICTION_WEIGHT_BIN_MINUTES)
         print("Prediction match tolerance minutes:", PREDICTION_MATCH_TOLERANCE_MINUTES)
         print("Prediction cache patient filter mode:", PREDICTION_CACHE_PATIENT_FILTER_MODE)
+        print("Adaptive rollout decision interval seconds:", ADAPTIVE_ROLLOUT_DECISION_INTERVAL_SECONDS)
         print("Patient room stays file:", PATIENT_ROOM_STAYS_FILE)
         print("Admissions/discharges file:", ADMISSIONS_DISCHARGES_FILE)
     else:

@@ -241,7 +241,8 @@ class AssignmentEvaluator:
                                        prediction_weight_patient_credibility_prior=getattr(self.args, "prediction_weight_patient_credibility_prior", None),
                                        include_future_scheduled_requests=getattr(self.args, "include_future_scheduled_requests", False),
                                        prediction_rollout_sample_limit=getattr(self.args, "prediction_rollout_sample_limit", 20),
-                                       adaptive_rollout_candidate_limit=getattr(self.args, "adaptive_rollout_candidate_limit", 25))
+                                       adaptive_rollout_candidate_limit=getattr(self.args, "adaptive_rollout_candidate_limit", 25),
+                                       adaptive_rollout_decision_interval_seconds=getattr(self.args, "adaptive_rollout_decision_interval_seconds", 10.0))
             print(f"Initialized {str(policy_dict[mode].__name__)} policy with contextual information.")
         else:
             policy = policy_dict[mode]()
@@ -650,6 +651,7 @@ def main():
     parser.add_argument("--include_future_scheduled_requests", action='store_true', help="Include the second scheduled-request window in adaptive rollout future-cost estimates and cached-prediction de-duplication.")
     parser.add_argument("--prediction_rollout_sample_limit", type=int, default=20, help="Maximum cached prediction samples evaluated by adaptive rollout. Use 0 for all samples.")
     parser.add_argument("--adaptive_rollout_candidate_limit", type=int, default=25, help="Maximum heuristic-ranked request candidates evaluated per available robot in adaptive rollout. Use 0 for all candidates.")
+    parser.add_argument("--adaptive_rollout_decision_interval_seconds", type=float, default=10.0, help="Minimum seconds between repeated adaptive-rollout decisions when no new request, availability change, or queue change occurs. Use 1.0 to approximate per-second decisions.")
 
     # environment parameters
     parser.add_argument("--config_path", type=str, default="maps/hospital_floor/floor_config.yaml", help="Path to the configuration file")

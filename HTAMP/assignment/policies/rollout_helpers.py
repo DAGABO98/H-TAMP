@@ -57,6 +57,27 @@ class RolloutHelpers:
             for prediction_sample_set in prediction_sample_sets
         )
 
+    @classmethod
+    def _prediction_sample_split_has_requests(
+        cls,
+        prediction_sample_split: Tuple[dict[float, RequestsLists], dict[float, RequestsLists]],
+    ) -> bool:
+        current_predicted_requests_dict, future_predicted_requests_dict = prediction_sample_split
+        return (
+            cls._prediction_sample_set_has_requests(current_predicted_requests_dict)
+            or cls._prediction_sample_set_has_requests(future_predicted_requests_dict)
+        )
+
+    @classmethod
+    def _prediction_sample_splits_have_requests(
+        cls,
+        prediction_sample_splits: list[Tuple[dict[float, RequestsLists], dict[float, RequestsLists]]],
+    ) -> bool:
+        return any(
+            cls._prediction_sample_split_has_requests(prediction_sample_split)
+            for prediction_sample_split in prediction_sample_splits
+        )
+
     @staticmethod
     def _extract_cost_for_assigned_requests(
         state: PlanningState | SimulatedState,
@@ -130,6 +151,22 @@ class RolloutHelpers:
             else:
                 future_predicted_requests_dict[request_time] = predicted_requests_lists
         return current_predicted_requests_dict, future_predicted_requests_dict
+
+    @classmethod
+    def _split_prediction_sample_sets(
+        cls,
+        prediction_sample_sets: list[dict[float, RequestsLists]],
+        look_ahead_minutes: int,
+        current_time: float = 0.0,
+    ) -> list[Tuple[dict[float, RequestsLists], dict[float, RequestsLists]]]:
+        return [
+            cls._split_predicted_requests_dict(
+                predicted_requests_dict=prediction_sample_set,
+                look_ahead_minutes=look_ahead_minutes,
+                current_time=current_time,
+            )
+            for prediction_sample_set in prediction_sample_sets
+        ]
 
     @staticmethod
     def _extract_prediction_sample_sets(
@@ -412,12 +449,21 @@ class RolloutHelpers:
         motion_planner: MotionPlanner,
         traversal_graph_generator: TraversalGraphGenerator,
         look_ahead_minutes: int,
+        split_prediction_sample_sets: Optional[list[Tuple[dict[float, RequestsLists], dict[float, RequestsLists]]]] = None,
         blocked_robots: Optional[set[int]] = None,
         future_scheduled_requests_lists: Optional[RequestsLists] = None,
         prediction_request_weight_fn: Optional[Callable[[TaskRequest], float]] = None,
+        early_stop_truncated_cost: Optional[float] = None,
         debug: bool = False,
     ) -> Tuple[float, float]:
-        if not prediction_sample_sets or not RolloutHelpers._prediction_sample_sets_have_requests(prediction_sample_sets):
+        if split_prediction_sample_sets is None:
+            split_prediction_sample_sets = RolloutHelpers._split_prediction_sample_sets(
+                prediction_sample_sets=prediction_sample_sets,
+                look_ahead_minutes=look_ahead_minutes,
+                current_time=current_state.simulator_time,
+            )
+
+        if not split_prediction_sample_sets or not RolloutHelpers._prediction_sample_splits_have_requests(split_prediction_sample_sets):
             cost_estimator.reset()
             return RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
                 cost_estimator=cost_estimator,
@@ -436,17 +482,11 @@ class RolloutHelpers:
 
         raw_cost_sum = 0.0
         truncated_cost_sum = 0.0
-        for prediction_sample_set in prediction_sample_sets:
+        sample_count = float(len(split_prediction_sample_sets))
+        for current_predicted_requests_dict, future_predicted_requests_dict in split_prediction_sample_sets:
             sample_state = current_state.fork()
             sample_motion_planner = motion_planner.fork_with_reservations()
             sample_node_reservation_table = copy.deepcopy(current_node_reservation_table)
-            current_predicted_requests_dict, future_predicted_requests_dict = (
-                RolloutHelpers._split_predicted_requests_dict(
-                    predicted_requests_dict=prediction_sample_set,
-                    look_ahead_minutes=look_ahead_minutes,
-                    current_time=current_state.simulator_time,
-                )
-            )
             cost_estimator.reset()
             unmodified_cost, truncated_cost = RolloutHelpers._estimate_future_costs_for_scheduled_and_predicted_assignments(
                 cost_estimator=cost_estimator,
@@ -464,7 +504,10 @@ class RolloutHelpers:
             )
             raw_cost_sum += unmodified_cost
             truncated_cost_sum += truncated_cost
+            if early_stop_truncated_cost is not None and early_stop_truncated_cost < float("inf"):
+                truncated_lower_bound = truncated_cost_sum / sample_count
+                if truncated_lower_bound > early_stop_truncated_cost:
+                    return float("inf"), truncated_lower_bound
 
-        sample_count = float(len(prediction_sample_sets))
         return raw_cost_sum / sample_count, truncated_cost_sum / sample_count
         
