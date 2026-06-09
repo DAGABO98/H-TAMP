@@ -172,13 +172,21 @@ class IdleTaskPrediction:
         *,
         state: PlanningState,
         motion_planner: MotionPlanner,
+        robot_id: Optional[int] = None,
     ) -> MotionPlanner:
         if not self.robots_servicing_pred_requests:
             return motion_planner
+        robot_ids = (
+            [robot_id]
+            if robot_id is not None and robot_id in self.robots_servicing_pred_requests
+            else list(self.robots_servicing_pred_requests)
+        )
+        if not robot_ids:
+            return motion_planner
         candidate_motion_planner = motion_planner.fork_with_reservations()
-        for robot_id in self.robots_servicing_pred_requests:
+        for prediction_robot_id in robot_ids:
             candidate_motion_planner.clear_reservations_for_agent(
-                robot_profile=state.simulator_config.robot_profiles[robot_id]
+                robot_profile=state.simulator_config.robot_profiles[prediction_robot_id]
             )
         return candidate_motion_planner
 
@@ -373,12 +381,12 @@ class IdleTaskPrediction:
         closest_path = []
         closest_planned_goal_indices = []
         shortest_time = float("inf")
-        candidate_motion_planner = self._motion_planner_without_prediction_reservations(
-            state=state,
-            motion_planner=motion_planner,
-        )
-
         for robot_id in available_robots:
+            candidate_motion_planner = self._motion_planner_without_prediction_reservations(
+                state=state,
+                motion_planner=motion_planner,
+                robot_id=robot_id,
+            )
             path, planned_goal_indices, planned_time = (
                 AssignmentHelpers.determine_path_from_robot_location_to_request(
                     request_id=request_id,
@@ -430,7 +438,8 @@ class IdleTaskPrediction:
             print(f"Closest robot: {closest_robot}, Shortest time: {shortest_time}")
             
             if closest_robot is not None:
-                self._release_all_prediction_assignments(
+                self._release_prediction_assignment(
+                    robot_id=closest_robot,
                     state=state,
                     motion_planner=motion_planner,
                     consumed=False,
