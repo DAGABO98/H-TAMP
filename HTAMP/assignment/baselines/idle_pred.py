@@ -264,6 +264,82 @@ class IdleTaskPrediction:
         if robot_type == "delivery":
             return prediction_task.request_type == "medication"
         return prediction_task.request_type != "medication"
+
+    def _predicted_assignment_robot_path_if_reservable(
+        self,
+        *,
+        path: list[tuple[TraversalNode, TimeInterval]],
+        robot_id: int,
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        traversal_graph_generator: TraversalGraphGenerator,
+        debug: bool,
+        context: str,
+    ) -> Optional[list[tuple[TraversalNode, TimeInterval]]]:
+        validation_state = state.fork()
+        validation_motion_planner = motion_planner.fork_with_reservations()
+        robot_profile = validation_state.simulator_config.robot_profiles[robot_id]
+        validation_motion_planner.clear_reservations_for_agent(robot_profile=robot_profile)
+        try:
+            validation_state.assign_robot_path(
+                robot_id=robot_id,
+                path=path,
+                traversal_graph=traversal_graph_generator.traversal_graph,
+            )
+            robot_path = validation_state.robot_paths[robot_id]
+            validation_motion_planner.reserve_path_for_agent(
+                path=robot_path,
+                robot_profile=robot_profile,
+            )
+            return robot_path
+        except (AssertionError, ValueError) as exc:
+            if debug:
+                print(
+                    f"Skipping {context} for robot {robot_id}: "
+                    f"candidate path is not reservable ({exc})."
+                )
+            return None
+
+    def _real_assignment_is_reservable(
+        self,
+        *,
+        request_id: str,
+        robot_id: int,
+        planned_path: list[tuple[TraversalNode, TimeInterval]],
+        planned_time: float,
+        planned_goal_indices: list[int],
+        state: PlanningState,
+        motion_planner: MotionPlanner,
+        traversal_graph_generator: TraversalGraphGenerator,
+        debug: bool,
+    ) -> bool:
+        validation_state = state.fork()
+        validation_motion_planner = motion_planner.fork_with_reservations()
+        if robot_id in self.robots_servicing_pred_requests:
+            validation_motion_planner.clear_reservations_for_agent(
+                robot_profile=validation_state.simulator_config.robot_profiles[robot_id]
+            )
+        try:
+            AssignmentHelpers.assign_request_to_robot(
+                state=validation_state,
+                request_id=request_id,
+                robot_id=robot_id,
+                planned_path=planned_path,
+                planned_time=planned_time,
+                planned_goal_indices=planned_goal_indices,
+                motion_planner=validation_motion_planner,
+                traversal_graph_generator=traversal_graph_generator,
+                debug=False,
+                adjust_goal_indices_for_idle_motion=True,
+            )
+            return True
+        except (AssertionError, ValueError) as exc:
+            if debug:
+                print(
+                    f"Skipping real assignment of request {request_id} to robot {robot_id}: "
+                    f"candidate path is not reservable ({exc})."
+                )
+            return False
     
     def _determine_path_for_predicted_task(self,
                                            current_request: TaskRequest,
@@ -345,13 +421,24 @@ class IdleTaskPrediction:
                                                                                              motion_planner=motion_planner,
                                                                                              traversal_graph_generator=traversal_graph_generator)
             if len(planned_path) > 0:
+                robot_path = self._predicted_assignment_robot_path_if_reservable(
+                    path=planned_path,
+                    robot_id=robot_id,
+                    state=state,
+                    motion_planner=motion_planner,
+                    traversal_graph_generator=traversal_graph_generator,
+                    debug=debug,
+                    context=f"predicted request {selected_task.request_id}",
+                )
+                if robot_path is None:
+                    continue
                 selected_task.schedule_task(
                     assigned_robot_id=robot_id,
                     planned_goal_indices=planned_goal_indices,
                     planned_time=planned_time,
                 )
                 motion_planner.clear_reservations_for_agent(robot_profile=state.simulator_config.robot_profiles[robot_id])
-                motion_planner.reserve_path_for_agent(path=planned_path,
+                motion_planner.reserve_path_for_agent(path=robot_path,
                                                         robot_profile=state.simulator_config.robot_profiles[robot_id])
                 
                 state.assign_robot_path(robot_id=robot_id,
@@ -398,6 +485,18 @@ class IdleTaskPrediction:
                 )
             )
             if len(path) > 0 and planned_time < shortest_time:
+                if not self._real_assignment_is_reservable(
+                    request_id=request_id,
+                    robot_id=robot_id,
+                    planned_path=path,
+                    planned_time=planned_time,
+                    planned_goal_indices=planned_goal_indices,
+                    state=state,
+                    motion_planner=motion_planner,
+                    traversal_graph_generator=traversal_graph_generator,
+                    debug=debug,
+                ):
+                    continue
                 shortest_time = planned_time
                 closest_robot = robot_id
                 closest_path = path
