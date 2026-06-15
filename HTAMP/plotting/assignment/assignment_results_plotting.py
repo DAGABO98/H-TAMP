@@ -464,12 +464,24 @@ class AssignmentResultsPlotter:
                 if missing:
                     raise ValueError(f"{f} missing required columns: {sorted(missing)}")
 
-                # normalize & keep only what we need for counting
+                if {"planned_time", "scheduled_time"}.issubset(df_one.columns):
+                    planned = pd.to_numeric(df_one["planned_time"], errors="coerce")
+                    scheduled = pd.to_numeric(df_one["scheduled_time"], errors="coerce")
+                    wait_time = (planned - scheduled).clip(lower=0)
+                else:
+                    planned = pd.Series(np.nan, index=df_one.index)
+                    scheduled = pd.Series(np.nan, index=df_one.index)
+                    wait_time = pd.Series(np.nan, index=df_one.index)
+
+                # normalize & keep request-level data for counts and tables
                 tmp = pd.DataFrame({
                     "policy": policy,
                     "request_type": df_one[self.type_col].astype(str).fillna("UNKNOWN"),
                     "completed": df_one["completed"].fillna(False).astype(bool),
                     "rejected": df_one["rejected"].fillna(False).astype(bool),
+                    "planned_time": planned,
+                    "scheduled_time": scheduled,
+                    "wait_time": wait_time,
                     "_day": day,
                     "_floor": floor,
                 })
@@ -528,6 +540,131 @@ class AssignmentResultsPlotter:
                     f"{str(r['policy'])[:30]:30s}  {n:12d}  {mean:14.4f}  {std:14.4f}  {mean:10.4f} ± {std:10.4f}"
                 )
     
+    @staticmethod
+    def _format_mean_pm_std(mean: float, std: float, plus_minus: str = " +/- ") -> str:
+        if not np.isfinite(mean):
+            return ""
+        if not np.isfinite(std):
+            std = 0.0
+        return f"{mean:.2f}{plus_minus}{std:.2f}"
+
+    def _wait_time_stats_per_serviced_request_by_load(
+        self,
+        policy_subset: list[str] | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        load_display_names = {
+            "highest": "High",
+            "medium": "Medium",
+            "lowest": "Low",
+        }
+        mean_tables: dict[str, pd.Series] = {}
+        std_tables: dict[str, pd.Series] = {}
+        count_tables: dict[str, pd.Series] = {}
+        policies_seen: set[str] = set()
+
+        for label, weeks, weeks_by_floor in self._iter_week_bucket_specs():
+            display_label = load_display_names.get(label, str(label).title())
+            sub = self.filter_to_weeks(self.raw_requests_df, weeks, weeks_by_floor, floor_col="_floor")
+            self._warn_missing_policies(policy_subset, sub["policy"].unique().tolist(), f"average wait table ({label})")
+            sub = self._filter_to_policy_subset(sub, policy_subset)
+            serviced = sub[sub["completed"].fillna(False).astype(bool)].copy()
+            serviced["wait_time"] = pd.to_numeric(serviced["wait_time"], errors="coerce")
+            serviced = serviced.dropna(subset=["wait_time"])
+
+            if serviced.empty:
+                print(f"[WARN] No serviced requests with wait times for bucket '{label}'.")
+                mean_tables[display_label] = pd.Series(dtype=float)
+                std_tables[display_label] = pd.Series(dtype=float)
+                count_tables[display_label] = pd.Series(dtype=int)
+                continue
+
+            stats = serviced.groupby("policy")["wait_time"].agg(["mean", "std", "count"])
+            mean_tables[display_label] = stats["mean"]
+            std_tables[display_label] = stats["std"].fillna(0.0)
+            count_tables[display_label] = stats["count"].astype(int)
+            policies_seen.update(stats.index.astype(str).tolist())
+
+        if policy_subset is not None:
+            policies = self._ordered_policies(list(policy_subset))
+        else:
+            policies = self._ordered_policies(list(policies_seen))
+
+        mean_table = pd.DataFrame(mean_tables).reindex(policies)
+        std_table = pd.DataFrame(std_tables).reindex(policies)
+        count_table = pd.DataFrame(count_tables).reindex(policies)
+        mean_table.index.name = "policy"
+        std_table.index.name = "policy"
+        count_table.index.name = "policy"
+        return mean_table, std_table, count_table
+
+    def write_average_wait_time_ablation_table_by_load(
+        self,
+        policy_subset: list[str] | None,
+        output_subdir_name: str,
+        filename_prefix: str,
+        title: str,
+    ) -> None:
+        """
+        Writes request-level average wait time tables for each load bucket.
+
+        Unlike the boxplots, this averages directly over all serviced requests in
+        the bucket and does not pre-aggregate by day or floor.
+        """
+        out_subdir = self.out_dir / output_subdir_name
+        out_subdir.mkdir(parents=True, exist_ok=True)
+
+        mean_table, std_table, count_table = self._wait_time_stats_per_serviced_request_by_load(
+            policy_subset=policy_subset,
+        )
+        if mean_table.empty:
+            print(f"[WARN] No rows for {title}. Skipping table.")
+            return
+
+        mean_table = mean_table.round(2)
+        std_table = std_table.round(2)
+        csv_table = mean_table.copy().astype(object)
+        tex_table = mean_table.copy().astype(object)
+        for row in csv_table.index:
+            for col in csv_table.columns:
+                csv_table.loc[row, col] = self._format_mean_pm_std(
+                    mean_table.loc[row, col],
+                    std_table.loc[row, col],
+                )
+                tex_table.loc[row, col] = self._format_mean_pm_std(
+                    mean_table.loc[row, col],
+                    std_table.loc[row, col],
+                    plus_minus=r" $\pm$ ",
+                )
+
+        csv_path = out_subdir / f"{filename_prefix}.csv"
+        tex_path = out_subdir / f"{filename_prefix}.tex"
+        mean_csv_path = out_subdir / f"{filename_prefix}_mean_seconds.csv"
+        std_csv_path = out_subdir / f"{filename_prefix}_std_seconds.csv"
+        counts_csv_path = out_subdir / f"{filename_prefix}_serviced_counts.csv"
+
+        csv_table.to_csv(csv_path, na_rep="")
+        mean_table.to_csv(mean_csv_path, na_rep="")
+        std_table.to_csv(std_csv_path, na_rep="")
+        count_table.astype("Int64").to_csv(counts_csv_path, na_rep="")
+        tex_table.to_latex(
+            tex_path,
+            escape=False,
+            na_rep="--",
+            caption=title,
+            label=f"tab:{self._safe_filename(filename_prefix)}",
+        )
+
+        print("\n" + "=" * 100)
+        print(title)
+        print("Average +/- standard deviation wait time per serviced request (seconds); computed over requests, not day-floor aggregates.")
+        print("=" * 100)
+        print(csv_table.to_string(na_rep="--"))
+        print(f"[INFO] Wrote table: {csv_path}")
+        print(f"[INFO] Wrote LaTeX table: {tex_path}")
+        print(f"[INFO] Wrote numeric means: {mean_csv_path}")
+        print(f"[INFO] Wrote numeric standard deviations: {std_csv_path}")
+        print(f"[INFO] Wrote serviced-request counts: {counts_csv_path}")
+
     def plot_box_per_policy_by_week_bucket(self,
                                            policy_subset: list[str] | None = None,
                                            output_subdir_name: str | None = None,
@@ -926,19 +1063,26 @@ class AssignmentResultsPlotter:
         )
 
     def plot_all_rollout_ablation_by_week_bucket(self) -> None:
+        output_subdir_name = "ablation_all_rollout_variants"
         self.plot_wait_time_by_week_bucket(
             self.week_buckets,
             self.week_buckets_by_floor,
             policy_subset=self.all_rollout_ablation_policies,
-            output_subdir_name="ablation_all_rollout_variants",
+            output_subdir_name=output_subdir_name,
             filename_prefix="all_rollout_variants_wait_times",
             title_prefix="Ablation: all rollout variants plus base policy",
         )
         self.plot_box_per_policy_by_week_bucket(
             policy_subset=self.all_rollout_ablation_policies,
-            output_subdir_name="ablation_all_rollout_variants",
+            output_subdir_name=output_subdir_name,
             filename="all_rollout_variants_planning_time_per_request.png",
             title_prefix="Ablation: all rollout variant runtimes plus base policy",
+        )
+        self.write_average_wait_time_ablation_table_by_load(
+            policy_subset=self.all_rollout_ablation_policies,
+            output_subdir_name=output_subdir_name,
+            filename_prefix="all_rollout_variants_average_wait_time_per_serviced_request_by_load",
+            title="Ablation: average wait time per serviced request by load",
         )
 
     def plot_selected_rollout_ablation_by_week_bucket(self) -> None:
@@ -958,6 +1102,11 @@ class AssignmentResultsPlotter:
             if self.include_future_scheduled_requests
             else "rollout_variants_planning_time_per_request.png"
         )
+        table_filename_prefix = (
+            "future_scheduled_rollout_variants_average_wait_time_per_serviced_request_by_load"
+            if self.include_future_scheduled_requests
+            else "rollout_variants_average_wait_time_per_serviced_request_by_load"
+        )
         self.plot_wait_time_by_week_bucket(
             self.week_buckets,
             self.week_buckets_by_floor,
@@ -971,6 +1120,12 @@ class AssignmentResultsPlotter:
             output_subdir_name=output_subdir_name,
             filename=runtime_filename,
             title_prefix=f"Ablation: rollout variant runtimes ({suffix_label})",
+        )
+        self.write_average_wait_time_ablation_table_by_load(
+            policy_subset=self.selected_rollout_ablation_policies,
+            output_subdir_name=output_subdir_name,
+            filename_prefix=table_filename_prefix,
+            title=f"Ablation: rollout variants ({suffix_label}) average wait time per serviced request by load",
         )
 
 
