@@ -15,7 +15,7 @@ IsoWeek = tuple[int, int]
 START = dt.date(2024, 6, 24)
 END   = dt.date(2025, 6, 29)
 FLOORS = [2, 3, 7, 9]
-MAX_WORKERS = 100
+MAX_WORKERS = 58
 ROLLOUT_MODES = {5, 6, 7, 8}
 CACHE_POLICY_MODES = {3, *ROLLOUT_MODES}
 
@@ -24,8 +24,8 @@ BASE = [
     "--use_saved_data",
     "--use_saved_request_data",
     "--save_results_csv",
-    "--hour_start", "8",
-    "--hour_end", "9",
+    "--hour_start", "6",
+    "--hour_end", "18",
 ]
 
 LOG_ROOT = "results/policies/logs"
